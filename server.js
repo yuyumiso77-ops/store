@@ -398,6 +398,9 @@ async function handle(req, res) {
     if (!staff) return send(res, 400, { error: '직원 이름을 입력해 주세요.' });
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: '고객 반응을 선택해 주세요.' });
     if (!(b.sales in OPTIONS.sales)) return send(res, 400, { error: '판매 반응을 선택해 주세요.' });
+    // 판매 반응에 따라 이어지는 질문(2-1) 필수 확인
+    if (b.sales === 'good' && !pick(b.sellReasons, OPTIONS.sellReasons).length) return send(res, 400, { error: '잘 팔린 이유를 하나 이상 골라 주세요.' });
+    if (b.sales !== 'good' && !pick(b.noBuyReasons, OPTIONS.noBuyReasons).length) return send(res, 400, { error: '안 팔린 이유를 하나 이상 골라 주세요.' });
     // 고객 반응에 따라 이어지는 질문(1-1) 필수 확인
     const aspects = aspectsFor(product.category);
     const hasPros = pick(b.pros, aspects).length > 0 || cleanText(b.prosNote, 500) !== '';

@@ -55,11 +55,11 @@
         <span class="q">2. 판매 반응은 어땠나요? <span class="req">*</span></span>
         <div class="chips" id="sales"></div>
         <div id="sellBox" hidden>
-          <span class="q sub-q">2-1. 🔥 잘 팔린 이유는 뭐였나요? <span class="hint">(여러 개 선택)</span></span>
+          <span class="q sub-q">2-1. 🔥 잘 팔린 이유는 뭐였나요? <span class="req">*</span> <span class="hint">(여러 개 선택)</span></span>
           <div class="chips" id="sellReasons"></div>
         </div>
         <div id="reasonsBox" hidden>
-          <span class="q sub-q">2-1. 안 팔린 주된 이유 / 고객이 망설인 이유는 뭐였나요? <span class="hint">(여러 개 선택)</span></span>
+          <span class="q sub-q">2-1. 안 팔린 주된 이유 / 고객이 망설인 이유는 뭐였나요? <span class="req">*</span> <span class="hint">(여러 개 선택)</span></span>
           <div class="chips" id="noBuyReasons"></div>
         </div>
       </div>
@@ -338,6 +338,9 @@ $('form').onsubmit = async (e) => {
   try {
     const werr = whyError();
     if (werr) { $('why').scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error(werr); }
+    const serr = state.sales === 'good' && !state.sellReasons.length ? '2-1. 잘 팔린 이유를 하나 이상 골라 주세요.'
+      : state.sales && state.sales !== 'good' && !state.noBuyReasons.length ? '2-1. 안 팔린 이유를 하나 이상 골라 주세요.' : '';
+    if (serr) { $('sales').scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error(serr); }
     const body = { ...state, staff: $('staff').value, productId: $('product').value };
     TEXTS.forEach((id) => (body[id] = $(id).value));
     const res = await fetch('/api/evaluations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
