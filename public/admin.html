@@ -11,7 +11,7 @@
   <div class="product-head">
     <div>
       <h1>고객 반응 분석</h1>
-      <p class="sub">직원들이 기록한 고객 반응, 장단점, 개선 의견을 상품별로 모아 봅니다.</p>
+      <p class="sub">직원들이 기록한 고객 반응, 장단점, 개선 의견을 품목·상품별로 모아 봅니다.</p>
     </div>
     <div class="actions">
       <a class="btn" href="/" target="_blank">기록 화면 열기</a>
@@ -27,13 +27,14 @@
   <div class="card">
     <h2>상품 등록</h2>
     <form id="addForm" class="row">
-      <input type="text" id="name" placeholder="상품명 (예: 수제 딸기잼)" maxlength="100" required>
-      <input type="text" id="category" placeholder="분류 (선택, 예: 식품)" maxlength="50">
+      <select id="category" required style="flex:0 1 160px"><option value="">품목 선택</option></select>
+      <input type="text" id="name" placeholder="상품명 (예: 남성 쿨링 기능성 폴로 셔츠)" maxlength="100" required>
       <button class="btn accent" type="submit" style="flex:0 0 auto">추가</button>
     </form>
     <p class="error" id="addError"></p>
   </div>
 
+  <div class="chips" id="filter" style="margin-bottom:16px"></div>
   <div id="products"></div>
 </main>
 
@@ -86,11 +87,14 @@ function renderProduct(p) {
       stat(p.count, '기록 수'),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
       stat(p.buyRate == null ? '-' : p.buyRate + '%', '구매율'),
-      stat(`${p.outcomes.hold} / ${p.outcomes.no}`, '보류 / 미구매')),
+      stat(`${p.outcomes.hold} / ${p.outcomes.no}`, '보류 / 미구매'),
+      stat(p.triedBuyRate == null ? '-' : p.triedBuyRate + '%', `시착·시타 후 구매율 (${p.triedCount}건)`)),
     p.count ? el('div', { class: 'cols' },
       rank('👍 장점으로 꼽힌 것', p.pros, p.count),
       rank('👎 단점으로 꼽힌 것', p.cons, p.count),
       rank('🚫 구매하지 않은 이유', p.noBuyReasons, Math.max(1, p.outcomes.hold + p.outcomes.no))) : '',
+    p.missing.length ? el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '🔍 찾았지만 없던 사이즈·색상'),
+      el('ul', { class: 'comments' }, p.missing.map((x) => el('li', {}, x.missing, el('div', { class: 'meta' }, `${x.staff} · ${new Date(x.createdAt).toLocaleString('ko-KR')}`))))) : '',
     el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '직원 메모 (장점 · 단점 · 개선 아이디어)'), notes));
 }
 
@@ -110,9 +114,28 @@ async function load() {
   $('staffBox').replaceChildren(...(data.staff.length
     ? [el('span', { class: 'hint' }, '직원별 기록: '), ...data.staff.map((s) => el('span', { class: 'pill' }, `${s.name} ${s.n}`))]
     : []));
+  LAST = ps;
+  renderList();
+}
+
+// 품목 필터
+let LAST = [], FILTER = '', CATS = [];
+function renderList() {
+  $('filter').replaceChildren(...['', ...CATS].map((c) => {
+    const n = LAST.filter((p) => !c || p.category === c).length;
+    return el('button', { type: 'button', class: FILTER === c ? 'on' : '', onclick: () => { FILTER = c; renderList(); } }, `${c || '전체'} ${n}`);
+  }));
+  const ps = LAST.filter((p) => !FILTER || p.category === FILTER);
   $('products').replaceChildren(...(ps.length
     ? ps.slice().sort((a, b) => b.active - a.active || b.count - a.count).map(renderProduct)
-    : [el('div', { class: 'card hint' }, '위에서 조사할 상품을 먼저 등록해 주세요.')]));
+    : [el('div', { class: 'card hint' }, LAST.length ? '이 품목에 등록된 상품이 없어요.' : '위에서 조사할 상품을 먼저 등록해 주세요.')]));
+}
+
+async function init() {
+  const o = await api('/api/options');
+  CATS = o.categories;
+  CATS.forEach((c) => $('category').add(new Option(c, c)));
+  load();
 }
 function $(id) { return document.getElementById(id); }
 
@@ -121,11 +144,11 @@ $('addForm').onsubmit = async (e) => {
   $('addError').textContent = '';
   try {
     await api('/api/admin/products', { method: 'POST', body: JSON.stringify({ name: $('name').value, category: $('category').value }) });
-    e.target.reset();
+    $('name').value = '';
     load();
   } catch (ex) { $('addError').textContent = ex.message; }
 };
-load();
+init();
 </script>
 </body>
 </html>

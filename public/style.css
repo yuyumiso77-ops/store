@@ -110,3 +110,4 @@ textarea { min-height: 96px; resize: vertical; }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 16px; }
 .pill { display: inline-block; font-size: .75rem; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); margin-right: 4px; }
 .note-line { margin: 2px 0; }
+#addForm select { padding: 12px; }

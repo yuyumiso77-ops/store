@@ -1,5 +1,5 @@
 'use strict';
-// 매장 직원용 상품 고객반응 조사 서버 (외부 의존성 없음)
+// 골프웨어 매장 직원용 상품 고객반응 조사 서버 (외부 의존성 없음)
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -12,12 +12,27 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-// 선택지 (화면과 공유)
+// 선택지 (화면과 공유) — 골프웨어 매장용
+const COMMON_ASPECTS = ['디자인', '색상', '가격', '품질·마감', '브랜드'];
+const CATEGORY_ASPECTS = {
+  어패럴: ['핏·사이즈', '소재·촉감', '신축성', '통기성·쿨링', '보온성', '세탁·관리'],
+  골프화: ['사이즈·발볼', '착화감·쿠션', '접지력·스파이크', '무게', '방수'],
+  장갑: ['사이즈·핏', '그립감', '내구성', '통기성', '가죽·소재'],
+  용품: ['기능·성능', '무게·휴대성', '수납·구성', '내구성'],
+};
+const CATEGORIES = Object.keys(CATEGORY_ASPECTS);
+const aspectsFor = (category) => [...COMMON_ASPECTS, ...(CATEGORY_ASPECTS[category] || []), '기타'];
 const OPTIONS = {
-  aspects: ['가격', '품질', '맛', '향', '디자인·포장', '용량·크기', '사용 편의', '기능·효과', '브랜드', '기타'],
+  categories: CATEGORIES,
+  aspectsByCategory: Object.fromEntries(CATEGORIES.map((c) => [c, aspectsFor(c)])),
+  defaultAspects: aspectsFor(''),
   outcomes: { bought: '구매함', hold: '고민 후 보류', no: '구매 안 함' },
-  noBuyReasons: ['가격이 비쌈', '품질이 기대 이하', '취향에 안 맞음', '이미 비슷한 상품 있음', '용량·크기가 안 맞음', '다른 매장/온라인과 비교', '필요 없음', '기타'],
-  ageGroups: ['10대', '20대', '30대', '40대', '50대', '60대 이상'],
+  tried: { yes: '시착·시타함', no: '안 함' },
+  noBuyReasons: [
+    '가격이 비쌈', '맞는 사이즈 없음', '원하는 색상 없음', '디자인 취향 아님', '핏이 안 맞음', '착용감 불편',
+    '이미 비슷한 제품 있음', '온라인·타매장과 비교', '시즌이 안 맞음', '다음에 구매 예정', '기타',
+  ],
+  ageGroups: ['20대', '30대', '40대', '50대', '60대 이상'],
   genders: ['남성', '여성'],
   reactions: ['', '매우 부정적', '부정적', '보통', '긍정적', '매우 긍정적'],
 };
@@ -121,6 +136,12 @@ function summary() {
       avgReaction: avg(rs.map((r) => r.reaction)),
       outcomes,
       buyRate: rs.length ? Math.round((outcomes.bought / rs.length) * 100) : null,
+      triedCount: rs.filter((r) => r.tried === 'yes').length,
+      triedBuyRate: (() => {
+        const t = rs.filter((r) => r.tried === 'yes');
+        return t.length ? Math.round((t.filter((r) => r.outcome === 'bought').length / t.length) * 100) : null;
+      })(),
+      missing: rs.filter((r) => r.missing).slice(-15).reverse().map(({ missing, staff, createdAt }) => ({ missing, staff, createdAt })),
       pros: countBy(rs.map((r) => r.pros)),
       cons: countBy(rs.map((r) => r.cons)),
       noBuyReasons: countBy(rs.map((r) => r.noBuyReasons)),
@@ -169,7 +190,8 @@ async function handle(req, res) {
       const b = await readBody(req);
       const name = cleanText(b.name, 100);
       if (!name) return send(res, 400, { error: '상품명을 입력해 주세요.' });
-      const product = { id: crypto.randomUUID().slice(0, 8), name, category: cleanText(b.category, 50), active: true, createdAt: new Date().toISOString() };
+      if (!CATEGORIES.includes(b.category)) return send(res, 400, { error: '품목(어패럴·용품·골프화·장갑)을 선택해 주세요.' });
+      const product = { id: crypto.randomUUID().slice(0, 8), name, category: b.category, active: true, createdAt: new Date().toISOString() };
       db.products.push(product);
       saveDb();
       return send(res, 201, product);
@@ -182,18 +204,18 @@ async function handle(req, res) {
       const b = await readBody(req);
       if (typeof b.active === 'boolean') product.active = b.active;
       if (typeof b.name === 'string' && b.name.trim()) product.name = cleanText(b.name, 100);
-      if (typeof b.category === 'string') product.category = cleanText(b.category, 50);
+      if (CATEGORIES.includes(b.category)) product.category = b.category;
       saveDb();
       return send(res, 200, product);
     }
 
     if (m === 'GET' && p === '/api/admin/records.csv') {
       const names = Object.fromEntries(db.products.map((x) => [x.id, x.name]));
-      const rows = [['일시', '직원', '상품', '고객반응(1~5)', '구매결과', '미구매이유', '장점', '장점 메모', '단점', '단점 메모', '개선 아이디어', '연령대', '성별']];
+      const rows = [['일시', '직원', '상품', '고객반응(1~5)', '구매결과', '시착여부', '미구매이유', '장점', '장점 메모', '단점', '단점 메모', '개선 아이디어', '찾았지만 없던 사이즈·색상', '연령대', '성별']];
       db.records.forEach((r) =>
         rows.push([
-          r.createdAt, r.staff, names[r.productId] || r.productId, r.reaction, OPTIONS.outcomes[r.outcome],
-          r.noBuyReasons.join(', '), r.pros.join(', '), r.prosNote, r.cons.join(', '), r.consNote, r.improvement, r.ageGroup, r.gender,
+          r.createdAt, r.staff, names[r.productId] || r.productId, r.reaction, OPTIONS.outcomes[r.outcome], OPTIONS.tried[r.tried] || '',
+          r.noBuyReasons.join(', '), r.pros.join(', '), r.prosNote, r.cons.join(', '), r.consNote, r.improvement, r.missing || '', r.ageGroup, r.gender,
         ])
       );
       const csv = '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
@@ -225,12 +247,14 @@ async function handle(req, res) {
       staff,
       reaction: b.reaction,
       outcome: b.outcome,
+      tried: b.tried in OPTIONS.tried ? b.tried : '',
       noBuyReasons: b.outcome === 'bought' ? [] : pick(b.noBuyReasons, OPTIONS.noBuyReasons),
-      pros: pick(b.pros, OPTIONS.aspects),
+      pros: pick(b.pros, aspectsFor(product.category)),
       prosNote: cleanText(b.prosNote, 500),
-      cons: pick(b.cons, OPTIONS.aspects),
+      cons: pick(b.cons, aspectsFor(product.category)),
       consNote: cleanText(b.consNote, 500),
       improvement: cleanText(b.improvement, 500),
+      missing: cleanText(b.missing, 200),
       ageGroup: OPTIONS.ageGroups.includes(b.ageGroup) ? b.ageGroup : '',
       gender: OPTIONS.genders.includes(b.gender) ? b.gender : '',
       createdAt: new Date().toISOString(),

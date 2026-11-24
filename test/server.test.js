@@ -27,32 +27,39 @@ test('인증: 관리자/직원 분리', async () => {
   assert.strictEqual((await fetch(base + '/healthz')).status, 200);
 });
 
+test('품목 필수', async () => {
+  const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
+  assert.strictEqual(r.status, 400);
+});
+
 test('상품 등록 → 직원 기록 → 집계 → CSV', async () => {
-  const p = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '딸기잼', category: '식품' }) })).json();
+  const p = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '쿨링 폴로', category: '어패럴' }) })).json();
   const opts = await (await fetch(base + '/api/options', { headers: staff })).json();
-  assert.deepStrictEqual(opts.products.map((x) => x.name), ['딸기잼']);
+  assert.deepStrictEqual(opts.products.map((x) => x.name), ['쿨링 폴로']);
 
   const post = (b) => fetch(base + '/api/records', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '민지', ...b }) });
   assert.strictEqual((await post({ reaction: 4 })).status, 400); // 구매 결과 누락
   assert.strictEqual((await post({ reaction: 4, outcome: 'bought', staff: ' ' })).status, 400); // 이름 누락
 
-  assert.strictEqual((await post({ reaction: 5, outcome: 'bought', pros: ['맛', '맛', '없는항목'], prosNote: '=덜 달아요', noBuyReasons: ['가격이 비쌈'] })).status, 201);
-  assert.strictEqual((await post({ reaction: 2, outcome: 'no', pros: ['맛'], cons: ['가격'], noBuyReasons: ['가격이 비쌈'], improvement: '소용량 출시' })).status, 201);
+  assert.strictEqual((await post({ reaction: 5, outcome: 'bought', tried: 'yes', pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['가격이 비쌈'], missing: '105 네이비' })).status, 201);
+  assert.strictEqual((await post({ reaction: 2, outcome: 'no', tried: 'yes', pros: ['신축성'], cons: ['가격'], noBuyReasons: ['맞는 사이즈 없음'], improvement: '반팔 출시' })).status, 201);
 
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
   const ps = s.products[0];
   assert.strictEqual(s.totalRecords, 2);
   assert.strictEqual(ps.avgReaction, 3.5);
   assert.strictEqual(ps.buyRate, 50);
-  assert.deepStrictEqual(ps.pros, [{ name: '맛', n: 2 }]); // 중복·잘못된 항목 제거
+  assert.deepStrictEqual(ps.pros, [{ name: '신축성', n: 2 }]); // 중복·다른 품목 항목(그립감) 제거
   assert.deepStrictEqual(ps.cons, [{ name: '가격', n: 1 }]);
-  assert.deepStrictEqual(ps.noBuyReasons, [{ name: '가격이 비쌈', n: 1 }]); // 구매한 건은 미구매 이유 무시
+  assert.deepStrictEqual(ps.noBuyReasons, [{ name: '맞는 사이즈 없음', n: 1 }]); // 구매한 건은 미구매 이유 무시
+  assert.strictEqual(ps.triedBuyRate, 50);
+  assert.deepStrictEqual(ps.missing.map((x) => x.missing), ['105 네이비']);
   assert.deepStrictEqual(s.staff, [{ name: '민지', n: 2 }]);
 
   const csv = await (await fetch(base + '/api/admin/records.csv', { headers: admin })).text();
-  assert.match(csv, /딸기잼/);
-  assert.match(csv, /"'=덜 달아요"/);
-  assert.match(csv, /소용량 출시/);
+  assert.match(csv, /쿨링 폴로/);
+  assert.match(csv, /"'=스윙이 편해요"/);
+  assert.match(csv, /반팔 출시/);
 
   await fetch(base + `/api/admin/products/${p.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
   assert.deepStrictEqual((await (await fetch(base + '/api/options', { headers: staff })).json()).products, []);

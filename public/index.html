@@ -9,7 +9,7 @@
 <body>
 <main class="wrap">
   <h1>고객 반응 기록</h1>
-  <p class="sub">상품을 안내·판매하면서 고객의 반응과 의견을 기록해 주세요.</p>
+  <p class="sub">고객 응대 후 반응과 의견을 바로 기록해 주세요.</p>
 
   <form id="form" novalidate>
     <div class="card">
@@ -31,7 +31,9 @@
     </div>
 
     <div class="card">
-      <span class="q">구매 결과 <span class="req">*</span></span>
+      <span class="q">시착·시타 했나요? <span class="hint">(선택)</span></span>
+      <div class="chips" id="tried"></div>
+      <span class="q sub-q">구매 결과 <span class="req">*</span></span>
       <div class="chips" id="outcome"></div>
       <div id="reasonsBox" hidden>
         <span class="q sub-q">구매하지 않은 이유 <span class="hint">(여러 개 선택)</span></span>
@@ -40,20 +42,25 @@
     </div>
 
     <div class="card">
+      <label for="missing">🔍 찾았지만 없던 사이즈·색상 <span class="hint">(선택)</span></label>
+      <input type="text" id="missing" maxlength="200" placeholder="예: 남성 105 네이비 / 골프화 270mm 와이드">
+    </div>
+
+    <div class="card">
       <span class="q">👍 고객이 좋다고 한 점 <span class="hint">(여러 개 선택)</span></span>
       <div class="chips" id="pros"></div>
-      <input type="text" id="prosNote" maxlength="500" placeholder="구체적으로 (예: 덜 달아서 아이들 간식으로 좋대요)">
+      <input type="text" id="prosNote" maxlength="500" placeholder="구체적으로 (예: 신축성이 좋아서 스윙할 때 편하대요)">
     </div>
 
     <div class="card">
       <span class="q">👎 아쉽다고 한 점 <span class="hint">(여러 개 선택)</span></span>
       <div class="chips" id="cons"></div>
-      <input type="text" id="consNote" maxlength="500" placeholder="구체적으로 (예: 뚜껑이 잘 안 열려요)">
+      <input type="text" id="consNote" maxlength="500" placeholder="구체적으로 (예: 발볼이 좁아서 오래 신으면 아플 것 같대요)">
     </div>
 
     <div class="card">
       <label for="improvement">💡 개선 아이디어 / 고객 요청</label>
-      <textarea id="improvement" maxlength="500" placeholder="고객이 요청했거나 직원이 느낀 개선점 (예: 소용량 제품이 있으면 좋겠다)"></textarea>
+      <textarea id="improvement" maxlength="500" placeholder="고객 요청이나 직원이 느낀 개선점 (예: 같은 디자인으로 반팔도 나왔으면 좋겠다)"></textarea>
     </div>
 
     <div class="card">
@@ -69,7 +76,8 @@
 </main>
 
 <script>
-const state = { reaction: 0, outcome: '', noBuyReasons: [], pros: [], cons: [], ageGroup: '', gender: '' };
+const state = { reaction: 0, tried: '', outcome: '', noBuyReasons: [], pros: [], cons: [], ageGroup: '', gender: '' };
+let OPTS = null;
 const FACES = ['', '😠', '🙁', '😐', '🙂', '😍'];
 const $ = (id) => document.getElementById(id);
 
@@ -106,10 +114,17 @@ function paint(id) {
 async function init() {
   const res = await fetch('/api/options');
   const o = await res.json();
-  o.products.forEach((p) => {
-    const op = new Option(p.category ? `${p.name} (${p.category})` : p.name, p.id);
-    $('product').add(op);
+  OPTS = o;
+  // 품목별로 묶어서 표시
+  [...o.categories, ''].forEach((cat) => {
+    const list = o.products.filter((p) => (cat ? p.category === cat : !o.categories.includes(p.category)));
+    if (!list.length) return;
+    const g = document.createElement('optgroup');
+    g.label = cat || '기타';
+    list.forEach((p) => g.appendChild(new Option(p.name, p.id)));
+    $('product').appendChild(g);
   });
+  $('product').onchange = renderAspects;
   if (!o.products.length) $('error').textContent = '등록된 상품이 없어요. 관리자 화면에서 상품을 먼저 등록해 주세요.';
 
   chips('reaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${o.reactions[n]}`]));
@@ -121,8 +136,7 @@ async function init() {
     onChange: () => { $('reasonsBox').hidden = !state.outcome || state.outcome === 'bought'; },
   });
   chips('noBuyReasons', o.noBuyReasons.map((x) => [x, x]), { multi: true });
-  chips('pros', o.aspects.map((x) => [x, x]), { multi: true });
-  chips('cons', o.aspects.map((x) => [x, x]), { multi: true });
+  chips('tried', Object.entries(o.tried), { toggle: true });
   chips('ageGroup', o.ageGroups.map((x) => [x, x]), { toggle: true });
   chips('gender', o.genders.map((x) => [x, x]), { toggle: true });
 
@@ -133,14 +147,27 @@ async function init() {
   } catch {}
   const pid = new URLSearchParams(location.search).get('product');
   if (pid && o.products.some((p) => p.id === pid)) $('product').value = pid;
+  renderAspects();
+}
+
+// 선택한 상품의 품목에 맞는 장단점 항목 표시
+function renderAspects() {
+  const p = OPTS.products.find((x) => x.id === $('product').value);
+  const list = (p && OPTS.aspectsByCategory[p.category]) || OPTS.defaultAspects;
+  state.pros = state.pros.filter((x) => list.includes(x));
+  state.cons = state.cons.filter((x) => list.includes(x));
+  chips('pros', list.map((x) => [x, x]), { multi: true });
+  chips('cons', list.map((x) => [x, x]), { multi: true });
+  paint('pros');
+  paint('cons');
 }
 init();
 
 function resetForm() {
   // 직원 이름과 상품은 연속 기록을 위해 유지
-  Object.assign(state, { reaction: 0, outcome: '', noBuyReasons: [], pros: [], cons: [], ageGroup: '', gender: '' });
-  ['reaction', 'outcome', 'noBuyReasons', 'pros', 'cons', 'ageGroup', 'gender'].forEach(paint);
-  ['prosNote', 'consNote', 'improvement'].forEach((id) => ($(id).value = ''));
+  Object.assign(state, { reaction: 0, tried: '', outcome: '', noBuyReasons: [], pros: [], cons: [], ageGroup: '', gender: '' });
+  ['reaction', 'tried', 'outcome', 'noBuyReasons', 'pros', 'cons', 'ageGroup', 'gender'].forEach(paint);
+  ['prosNote', 'consNote', 'improvement', 'missing'].forEach((id) => ($(id).value = ''));
   $('reasonsBox').hidden = true;
 }
 
@@ -163,6 +190,7 @@ $('form').onsubmit = async (e) => {
       prosNote: $('prosNote').value,
       consNote: $('consNote').value,
       improvement: $('improvement').value,
+      missing: $('missing').value,
     };
     const res = await fetch('/api/records', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
