@@ -133,6 +133,8 @@ async function handle(req, res) {
   const p = url.pathname;
   const m = req.method;
 
+  if (m === 'GET' && p === '/healthz') return send(res, 200, { ok: true });
+
   // 고객용
   if (m === 'GET' && p === '/') return serveStatic(res, 'index.html');
   if (m === 'GET' && p === '/style.css') return serveStatic(res, 'style.css');

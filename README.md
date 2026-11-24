@@ -42,3 +42,18 @@ npm test
 
 - 고객이 휴대폰으로 접속하려면 서버가 같은 Wi-Fi 네트워크나 인터넷에 공개된 주소에서 실행되어야 합니다.
 - QR 코드 생성 라이브러리는 CDN(cdnjs)에서 불러옵니다. 인터넷이 안 되면 QR 대신 설문 주소가 표시됩니다.
+
+## Railway 배포
+
+1. https://railway.com 에 GitHub 계정으로 로그인합니다.
+2. **New Project → Deploy from GitHub repo → `store`** 를 선택합니다.
+   (저장소가 안 보이면 *Configure GitHub App*에서 `store` 접근을 허용하세요.)
+3. 서비스의 **Variables** 탭에서 아래 두 값을 추가합니다.
+   - `ADMIN_PASSWORD` = 관리자 비밀번호
+   - `DATA_DIR` = `/data`
+4. 서비스를 우클릭(또는 ⌘K) → **Attach Volume** → Mount path에 `/data` 를 입력합니다.
+   이 볼륨이 있어야 재배포해도 응답이 지워지지 않습니다.
+5. **Settings → Networking → Generate Domain** 을 누르면 `https://….up.railway.app` 주소가 생깁니다.
+6. 그 주소 + `/admin` 으로 들어가 상품을 등록하고 QR을 인쇄하면 끝입니다.
+
+이후 `main` 브랜치에 push하면 Railway가 자동으로 다시 배포합니다.
