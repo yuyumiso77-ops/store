@@ -123,7 +123,13 @@ function imageType(buf) {
   return null;
 }
 const imageUrl = (p) => (p.image ? `/images/${p.image}?v=${p.imageAt}` : null);
-const publicProduct = ({ id, code, name, category, type, active }) => ({ id, code: code || '', name, category, type: type || '', active });
+// 복종이 비어 있으면 상품명 앞부분이 알려진 복종과 정확히 같을 때만 사용 (예: "긴팔 티셔츠 (BLACK)" → 긴팔 티셔츠)
+function inferType(name, category) {
+  const head = String(name || '').split(' (')[0].trim();
+  return (TYPE_ORDER[category] || []).includes(head) ? head : '';
+}
+const typeOf = (p) => p.type || inferType(p.name, p.category);
+const publicProduct = (p) => ({ id: p.id, code: p.code || '', name: p.name, category: p.category, type: typeOf(p), active: p.active });
 
 function passwordOf(req) {
   const h = req.headers.authorization || '';
@@ -343,7 +349,7 @@ async function handle(req, res) {
       db.evaluations.forEach((e) => {
         const pr = prodOf[e.productId] || {};
         rows.push([
-          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.category || '', pr.type || '', e.reaction, OPTIONS.sales[e.sales],
+          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.category || '', pr.id ? typeOf(pr) : '', e.reaction, OPTIONS.sales[e.sales],
           e.noBuyReasons.join(', '), e.pros.join(', '), e.prosNote, e.cons.join(', '), e.consNote, e.missing, e.improvement,
           e.ageGroups.join(', '), e.genders.join(', '),
         ]);

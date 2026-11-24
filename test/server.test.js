@@ -69,6 +69,13 @@ test('상품 정보 일괄 등록(CSV 행)', async () => {
   const t = s.products.find((x) => x.code === 'FNJMT3101');
   assert.deepStrictEqual([t.name, t.category, t.type], ['긴팔 티 수정', '어패럴', '긴팔 티셔츠']); // 복종 공백 정리, 빈 값이면 유지
   assert.strictEqual(s.products.find((x) => x.code === 'FNJMP3601').name, 'FNJMP3601'); // 이름 없으면 품번
+  // 복종이 비어 있으면 상품명 앞부분으로 추정 (알려진 복종만)
+  await imp([{ code: 'INF-1', name: '팬츠 (BLACK)', category: '어패럴' }, { code: 'INF-2', name: '쿨링 폴로 (BLACK)', category: '어패럴' }]);
+  const s2 = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  assert.strictEqual(s2.products.find((x) => x.code === 'INF-1').type, '팬츠');
+  assert.strictEqual(s2.products.find((x) => x.code === 'INF-2').type, '');
+  for (const x of s2.products.filter((p) => p.code.startsWith('INF-')))
+    await fetch(base + `/api/admin/products/${x.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
   for (const x of s.products.filter((p) => ['FNJMT3101', 'FNJMP3601'].includes(p.code)))
     await fetch(base + `/api/admin/products/${x.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
 });
