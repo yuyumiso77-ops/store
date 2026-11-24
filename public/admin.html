@@ -210,15 +210,20 @@ function editForm(p) {
 async function shrink(file) {
   let bmp;
   try { bmp = await createImageBitmap(file); } catch { throw new Error('이미지를 읽을 수 없어요 (JPG·PNG·WEBP를 사용해 주세요)'); }
-  const scale = Math.min(1, 1000 / Math.max(bmp.width, bmp.height));
+  // 원본이 커도(수천 px, 수십 MB) 긴 변 1400px JPEG(보통 100~200KB)로 줄여서 올림
+  const scale = Math.min(1, 1400 / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas');
   c.width = Math.round(bmp.width * scale);
   c.height = Math.round(bmp.height * scale);
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, c.width, c.height);
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(bmp, 0, 0, c.width, c.height);
-  return new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+  bmp.close && bmp.close(); // 큰 사진 메모리 바로 해제
+  const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+  c.width = c.height = 0;
+  return blob;
 }
 async function uploadImage(file, code, category) {
   const blob = await shrink(file);
@@ -336,10 +341,26 @@ async function uploadMany(files) {
   let okCount = 0;
   const touched = new Set();
   const failed = [];
-  for (const f of images) {
+  // 3장씩 동시에 처리 + 진행 상황 표시
+  let done = 0;
+  const progress = el('li', { class: 'summary' }, '');
+  const showProgress = () => {
+    progress.textContent = `⏳ 사진 처리 중… ${done} / ${images.length}장 (창을 닫지 마세요)`;
+  };
+  if (images.length) { log.prepend(progress); showProgress(); }
+  UPLOADING = true;
+  const queue = images.slice();
+  const worker = async () => {
+    for (let f = queue.shift(); f; f = queue.shift()) {
+      await uploadOne(f);
+      done++;
+      showProgress();
+    }
+  };
+  const uploadOne = async (f) => {
     const code = codeFromName(f.name);
     const li = el('li', {}, `⏳ ${code}`);
-    log.prepend(li);
+    progress.isConnected ? progress.after(li) : log.prepend(li); // 진행 표시는 맨 위 유지
     try {
       const r = await uploadImage(f, code, category);
       const via = r.match && r.match.by === 'plc' ? ` → ${r.product.code} ${r.match.color || ''} (PLC ${r.match.plc})` : '';
@@ -354,7 +375,10 @@ async function uploadMany(files) {
       li.className = 'fail';
       failed.push(code);
     }
-  }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  UPLOADING = false;
+  progress.remove();
   if (images.length) {
     log.prepend(el('li', { class: failed.length ? 'fail summary' : 'summary' },
       `${failed.length ? '⚠️' : '🎉'} 이미지 완료: 사진 ${okCount}장 → 상품 ${touched.size}개에 반영 (상품마다 대표 1장 + 나머지 상세컷)` +
@@ -385,6 +409,8 @@ async function load() {
 }
 
 // 품목 필터
+let UPLOADING = false;
+window.addEventListener('beforeunload', (e) => { if (UPLOADING) { e.preventDefault(); e.returnValue = ''; } });
 let LAST = [], FILTER = '', TYPE = '', LINE = '', CATS = [], TYPE_ORDER = {}, LINES = [];
 const groupKey = (p) => `${p.line}|${p.category}|${p.type}`;
 const multiLine = () => new Set(LAST.map((p) => p.line)).size > 1;
