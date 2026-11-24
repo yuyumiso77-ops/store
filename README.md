@@ -51,7 +51,7 @@ npm test
    (저장소가 안 보이면 *Configure GitHub App*에서 `store` 접근을 허용하세요.)
 3. 서비스의 **Variables** 탭에서 아래 두 값을 추가합니다.
    - `ADMIN_PASSWORD` = 관리자 비밀번호
-   - `STAFF_PASSWORD` = 직원용 비밀번호 (기록 화면 접속용)
+   - `STAFF_PASSWORD` = 직원용 비밀번호 (평가 화면 접속용)
    - `DATA_DIR` = `/data`
 4. 서비스를 우클릭(또는 ⌘K) → **Attach Volume** → Mount path에 `/data` 를 입력합니다.
    이 볼륨이 있어야 재배포해도 응답이 지워지지 않습니다.
