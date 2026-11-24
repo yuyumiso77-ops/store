@@ -33,9 +33,14 @@
       <select id="upCategory" style="flex:0 1 160px"><option value="">품목 선택</option></select>
       <label class="drop" id="drop">
         <input type="file" id="files" accept="image/*,.csv" multiple hidden>
-        📷 이미지·CSV 선택 또는 여기로 끌어다 놓기 (여러 개 가능)
+        📷 이미지·CSV 파일 또는 <b>&nbsp;폴더째&nbsp;</b> 여기로 끌어다 놓기 (클릭하면 파일 선택)
+      </label>
+      <label class="btn" style="flex:0 0 auto;cursor:pointer">
+        <input type="file" id="folder" webkitdirectory multiple hidden>📁 폴더 선택
       </label>
     </div>
+    <p class="hint" style="margin:6px 0 0">OneDrive 폴더도 그대로 끌어다 놓으면 하위 폴더까지 이미지·CSV를 찾아 올립니다.
+      OneDrive에서 '필요할 때 다운로드' 상태인 파일은 읽는 데 시간이 걸릴 수 있어요.</p>
     <ul class="uplog" id="uplog"></ul>
 
     <details style="margin-top:12px">
@@ -209,6 +214,47 @@ async function uploadImage(file, code, category) {
   }
 }
 const codeFromName = (n) => n.replace(/\.[^.]+$/, '').trim();
+const IMG_EXT = /\.(jpe?g|png|webp|gif|bmp|avif)$/i;
+const isCsv = (f) => /\.csv$/i.test(f.name);
+const isJunk = (f) => /^(\.|~\$)/.test(f.name) || /^(thumbs\.db|desktop\.ini)$/i.test(f.name);
+
+// 끌어다 놓은 항목에서 폴더를 하위까지 펼쳐 파일 목록으로 만듦
+async function filesFromDrop(dt) {
+  const entries = [...dt.items].filter((i) => i.kind === 'file').map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null));
+  if (!entries.length || entries.some((e) => !e)) return [...dt.files];
+  const out = [];
+  async function walk(entry) {
+    if (entry.isFile) {
+      out.push(await new Promise((res, rej) => entry.file(res, rej)));
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      for (;;) {
+        const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        if (!batch.length) break;
+        for (const e of batch) await walk(e);
+      }
+    }
+  }
+  for (const e of entries) await walk(e);
+  return out;
+}
+
+// 이미지·CSV만 골라내고, 같은 품번이 여러 개면 마지막 것만 사용
+function prepareFiles(all) {
+  const log = $('uplog');
+  const keep = all.filter((f) => !isJunk(f) && (isCsv(f) || IMG_EXT.test(f.name)));
+  const skipped = all.length - keep.length;
+  const byCode = new Map();
+  const dups = new Set();
+  keep.filter((f) => !isCsv(f)).sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name)).forEach((f) => {
+    const c = codeFromName(f.name).toLowerCase();
+    if (byCode.has(c)) dups.add(codeFromName(f.name));
+    byCode.set(c, f);
+  });
+  if (all.length > 1 || skipped) log.prepend(el('li', { class: 'summary' }, `📂 파일 ${all.length}개 중 이미지 ${byCode.size}개 · CSV ${keep.filter(isCsv).length}개를 올립니다` + (skipped ? ` (그 외 ${skipped}개는 건너뜀)` : '')));
+  if (dups.size) log.prepend(el('li', { class: 'fail' }, `⚠️ 같은 품번의 이미지가 여러 개 있어 마지막 파일만 사용: ${[...dups].join(', ')}`));
+  return [...keep.filter(isCsv), ...[...byCode.values()].sort((a, b) => a.name.localeCompare(b.name))];
+}
 
 // 간단한 CSV 파서 (따옴표·쉼표·줄바꿈 처리)
 function parseCsv(text) {
@@ -392,11 +438,22 @@ async function init() {
   $('typeList').replaceChildren(...Object.values(TYPE_ORDER).flat().map((t) => el('option', { value: t })));
   CATS.forEach((c) => { $('category').add(new Option(c, c)); $('upCategory').add(new Option(c, c)); });
   $('search').oninput = renderList;
-  $('files').onchange = () => { uploadMany([...$('files').files]); $('files').value = ''; };
+  $('files').onchange = () => { uploadMany(prepareFiles([...$('files').files])); $('files').value = ''; };
+  $('folder').onchange = () => { uploadMany(prepareFiles([...$('folder').files])); $('folder').value = ''; };
   const drop = $('drop');
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
-  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); uploadMany([...e.dataTransfer.files].filter((f) => f.type.startsWith('image/') || /\.csv$/i.test(f.name))); };
+  drop.ondrop = async (e) => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    const dt = e.dataTransfer;
+    const li = el('li', {}, '⏳ 폴더를 읽는 중…');
+    $('uplog').prepend(li);
+    let files;
+    try { files = await filesFromDrop(dt); } catch { files = [...dt.files]; }
+    li.remove();
+    uploadMany(prepareFiles(files));
+  };
   load();
 }
 function $(id) { return document.getElementById(id); }
