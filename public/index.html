@@ -54,6 +54,10 @@
       <div class="card">
         <span class="q">2. 판매 반응은 어땠나요? <span class="req">*</span></span>
         <div class="chips" id="sales"></div>
+        <div id="sellBox" hidden>
+          <span class="q sub-q">2-1. 🔥 잘 팔린 이유는 뭐였나요? <span class="hint">(여러 개 선택)</span></span>
+          <div class="chips" id="sellReasons"></div>
+        </div>
         <div id="reasonsBox" hidden>
           <span class="q sub-q">2-1. 안 팔린 주된 이유 / 고객이 망설인 이유는 뭐였나요? <span class="hint">(여러 개 선택)</span></span>
           <div class="chips" id="noBuyReasons"></div>
@@ -85,7 +89,7 @@
 
 <script>
 const FACES = ['', '😠', '🙁', '😐', '🙂', '😍'];
-const FIELDS = { reaction: 0, sales: '', noBuyReasons: [], pros: [], cons: [], ageGroups: [], genders: [] };
+const FIELDS = { reaction: 0, sales: '', sellReasons: [], noBuyReasons: [], pros: [], cons: [], ageGroups: [], genders: [] };
 const TEXTS = ['prosNote', 'consNote', 'missing', 'improvement'];
 const state = structuredClone(FIELDS);
 let OPTS = null;
@@ -120,7 +124,10 @@ function paint(id) {
     b.classList.toggle('on', Array.isArray(v) ? v.includes(val) : v === val);
   });
 }
-const syncReasons = () => { $('reasonsBox').hidden = !state.sales || state.sales === 'good'; };
+const syncReasons = () => {
+  $('reasonsBox').hidden = !state.sales || state.sales === 'good';
+  $('sellBox').hidden = state.sales !== 'good';
+};
 
 // ---- 고객 반응에 따라 이어지는 질문 ----
 const HINT = ' <span class="hint">(여러 개 선택 · 메모 가능)</span>';
@@ -176,6 +183,7 @@ async function init() {
   ['pros', 'cons'].forEach((k) => ($(k + 'Toggle').onclick = () => { openExtra[k] = true; syncWhy(); $(k + 'Note').focus(); }));
   chips('sales', Object.entries(OPTS.sales), { onChange: syncReasons });
   chips('noBuyReasons', OPTS.noBuyReasons.map((x) => [x, x]), { multi: true });
+  chips('sellReasons', OPTS.sellReasons.map((x) => [x, x]), { multi: true });
   chips('ageGroups', OPTS.ageGroups.map((x) => [x, x]), { multi: true });
   chips('genders', OPTS.genders.map((x) => [x, x]), { multi: true });
   $('search').oninput = renderGrid;

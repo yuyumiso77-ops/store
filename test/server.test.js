@@ -116,7 +116,7 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
   assert.strictEqual((await post({ reaction: 5, sales: 'good', cons: ['가격'] })).status, 400); // 좋음인데 좋은 점 없음
   assert.strictEqual((await post({ reaction: 3, sales: 'normal' })).status, 400); // 보통인데 둘 다 없음
   assert.strictEqual((await post({ reaction: 2, sales: 'poor', consNote: '기장이 짧음', noBuyReasons: ['가격이 비쌈'] })).status, 201);
-  const upd = await post({ staff: '민 지', reaction: 5, sales: 'good', pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['가격이 비쌈'], missing: '105 네이비', ageGroups: ['40대', '50대', '90대'], genders: ['남성'] });
+  const upd = await post({ staff: '민 지', reaction: 5, sales: 'good', sellReasons: ['컬러가 좋음', '없는이유'], pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['가격이 비쌈'], missing: '105 네이비', ageGroups: ['40대', '50대', '90대'], genders: ['남성'] });
   assert.strictEqual(upd.status, 200);
   assert.strictEqual((await upd.json()).updated, true);
   // 준호
@@ -133,6 +133,7 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
   assert.deepStrictEqual(ps.sales, { good: 1, normal: 0, poor: 1 });
   assert.deepStrictEqual(ps.pros, [{ name: '신축성', n: 2 }]); // 중복·다른 품목 항목 제거
   assert.deepStrictEqual(ps.noBuyReasons, [{ name: '맞는 사이즈 없음', n: 1 }]); // 잘 팔림이면 이유 무시
+  assert.deepStrictEqual(ps.sellReasons, [{ name: '컬러가 좋음', n: 1 }]); // 잘 팔림일 때만, 목록 밖 값 제거
   assert.deepStrictEqual(ps.ageGroups, [{ name: '40대', n: 2 }, { name: '50대', n: 1 }]);
   assert.deepStrictEqual(ps.missing.map((x) => x.missing), ['105 네이비']);
   assert.ok(s.staff.some((x) => x.name === '민 지' && x.done === 1));
@@ -142,6 +143,7 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
   assert.match(csv, /"'=스윙이 편해요"/);
   assert.match(csv, /반팔 출시/);
   assert.match(csv, /잘 팔림/);
+  assert.match(csv, /컬러가 좋음/);
 
   await fetch(base + `/api/admin/products/${p.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
   assert.deepStrictEqual((await (await fetch(base + '/api/options', { headers: staff })).json()).products, []);

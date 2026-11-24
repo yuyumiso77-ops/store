@@ -38,6 +38,10 @@ const OPTIONS = {
   aspectsByCategory: Object.fromEntries(CATEGORIES.map((c) => [c, aspectsFor(c)])),
   defaultAspects: aspectsFor(''),
   sales: { good: '잘 팔림', normal: '보통', poor: '잘 안 팔림' },
+  sellReasons: [
+    '디자인이 좋음', '컬러가 좋음', '착용감·핏이 좋음', '품질·소재 만족', '기능성 (쿨링·보온 등)', '가격 대비 만족',
+    '시즌·날씨에 맞음', '브랜드 선호', '직원 추천·코디 제안', '프로모션·할인', '선물용', '기타',
+  ],
   noBuyReasons: [
     '가격이 비쌈', '맞는 사이즈 없음', '원하는 색상 없음', '디자인 취향 아님', '핏이 안 맞음', '착용감 불편',
     '이미 비슷한 제품 있음', '온라인·타매장과 비교', '시즌이 안 맞음', '기타',
@@ -186,6 +190,7 @@ function summary() {
       pros: countBy(es.map((e) => e.pros)),
       cons: countBy(es.map((e) => e.cons)),
       noBuyReasons: countBy(es.map((e) => e.noBuyReasons)),
+      sellReasons: countBy(es.map((e) => e.sellReasons || [])),
       ageGroups: countBy(es.map((e) => e.ageGroups)),
       genders: countBy(es.map((e) => e.genders)),
       missing: es.filter((e) => e.missing).map(({ missing, staff, updatedAt }) => ({ missing, staff, updatedAt })),
@@ -345,12 +350,12 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
       const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
-      const rows = [['수정일시', '직원', '품번', '상품', '품목', '복종', '고객반응(1~5)', '판매반응', '안 팔린 이유', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
+      const rows = [['수정일시', '직원', '품번', '상품', '품목', '복종', '고객반응(1~5)', '판매반응', '잘 팔린 이유', '안 팔린 이유', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
       db.evaluations.forEach((e) => {
         const pr = prodOf[e.productId] || {};
         rows.push([
           e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.category || '', pr.id ? typeOf(pr) : '', e.reaction, OPTIONS.sales[e.sales],
-          e.noBuyReasons.join(', '), e.pros.join(', '), e.prosNote, e.cons.join(', '), e.consNote, e.missing, e.improvement,
+          (e.sellReasons || []).join(', '), e.noBuyReasons.join(', '), e.pros.join(', '), e.prosNote, e.cons.join(', '), e.consNote, e.missing, e.improvement,
           e.ageGroups.join(', '), e.genders.join(', '),
         ]);
       });
@@ -407,6 +412,7 @@ async function handle(req, res) {
       reaction: b.reaction,
       sales: b.sales,
       noBuyReasons: b.sales === 'good' ? [] : pick(b.noBuyReasons, OPTIONS.noBuyReasons),
+      sellReasons: b.sales === 'good' ? pick(b.sellReasons, OPTIONS.sellReasons) : [],
       pros: pick(b.pros, aspectsFor(product.category)),
       prosNote: cleanText(b.prosNote, 500),
       cons: pick(b.cons, aspectsFor(product.category)),

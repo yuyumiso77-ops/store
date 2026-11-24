@@ -142,6 +142,7 @@ function renderProduct(p) {
     p.count ? el('div', { class: 'cols' },
       rank('👍 장점으로 꼽힌 것', p.pros, p.count),
       rank('👎 단점으로 꼽힌 것', p.cons, p.count),
+      rank('🔥 잘 팔린 이유', p.sellReasons, p.count),
       rank('🚫 안 팔린 이유', p.noBuyReasons, p.count),
       rank('👥 주 구매 고객층', [...p.ageGroups, ...p.genders], p.count)) : '',
     p.missing.length ? el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '🔍 자주 찾았는데 없던 사이즈·색상'),
