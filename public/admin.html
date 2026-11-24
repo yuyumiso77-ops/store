@@ -85,6 +85,15 @@ function rank(title, list, total) {
 }
 
 function renderProduct(p) {
+  const del = el('button', {
+    class: 'btn danger',
+    onclick: async () => {
+      const label = p.code && p.code !== p.name ? `${p.name} (${p.code})` : p.name;
+      const msg = `"${label}" 상품을 삭제할까요?\n이미지` + (p.count ? `와 직원 평가 ${p.count}건도` : '도') + ' 함께 지워지고 되돌릴 수 없어요.';
+      if (!confirm(msg)) return;
+      try { await api(`/api/admin/products/${p.id}`, { method: 'DELETE' }); load(); } catch (ex) { alert(ex.message); }
+    },
+  }, '삭제');
   const toggle = el('button', {
     class: 'btn',
     onclick: async () => { await api(`/api/admin/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ active: !p.active }) }); load(); },
@@ -112,7 +121,7 @@ function renderProduct(p) {
       el('div', {},
         el('h2', { style: 'margin:0 0 4px' }, p.name),
         el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
-    el('div', { class: 'actions' }, editBtn, imgBtn, toggle, fileIn));
+    el('div', { class: 'actions' }, editBtn, imgBtn, toggle, del, fileIn));
 
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
     head,

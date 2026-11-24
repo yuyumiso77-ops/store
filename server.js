@@ -229,6 +229,18 @@ async function handle(req, res) {
     }
 
     const pm = p.match(/^\/api\/admin\/products\/([\w-]+)$/);
+    // 상품 삭제: 이미지 파일과 그 상품의 평가도 함께 삭제
+    if (pm && m === 'DELETE') {
+      const product = db.products.find((x) => x.id === pm[1]);
+      if (!product) return send(res, 404, { error: '상품이 없습니다.' });
+      if (product.image) fs.rmSync(path.join(IMG_DIR, product.image), { force: true });
+      const before = db.evaluations.length;
+      db.evaluations = db.evaluations.filter((e) => e.productId !== product.id);
+      db.products = db.products.filter((x) => x.id !== product.id);
+      saveDb();
+      return send(res, 200, { ok: true, deletedEvaluations: before - db.evaluations.length });
+    }
+
     if (pm && m === 'PATCH') {
       const product = db.products.find((x) => x.id === pm[1]);
       if (!product) return send(res, 404, { error: '상품이 없습니다.' });
