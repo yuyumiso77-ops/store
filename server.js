@@ -65,13 +65,13 @@ function send(res, status, body, headers = {}) {
   res.end(isJson ? JSON.stringify(body) : body);
 }
 
-function readBody(req) {
+function readBody(req, max = 32 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > 32 * 1024) {
+      if (size > max) {
         reject(new Error('too large'));
         req.destroy();
       } else chunks.push(c);
@@ -247,6 +247,33 @@ async function handle(req, res) {
       return send(res, 200, product);
     }
 
+    // 상품 정보 일괄 등록/수정 (CSV: 품번, 상품명, 품목)
+    if (m === 'POST' && p === '/api/admin/products/import') {
+      const b = await readBody(req, 512 * 1024);
+      const rows = Array.isArray(b.rows) ? b.rows.slice(0, 2000) : [];
+      const result = { created: 0, updated: 0, errors: [] };
+      rows.forEach((r, i) => {
+        const code = cleanCode(r.code);
+        const name = cleanText(r.name, 100);
+        const category = typeof r.category === 'string' ? r.category.trim() : '';
+        const line = `${i + 2}행`;
+        if (!code || !validCode(code)) return result.errors.push(`${line}: 품번이 올바르지 않아요 (${code || '비어 있음'})`);
+        if (category && !CATEGORIES.includes(category)) return result.errors.push(`${line} ${code}: 품목은 ${CATEGORIES.join('·')} 중 하나여야 해요`);
+        const product = byCode(code);
+        if (product) {
+          if (name) product.name = name;
+          if (category) product.category = category;
+          result.updated++;
+        } else {
+          if (!category) return result.errors.push(`${line} ${code}: 새 품번은 품목이 필요해요`);
+          db.products.push({ id: crypto.randomUUID().slice(0, 8), code, name: name || code, category, active: true, createdAt: new Date().toISOString() });
+          result.created++;
+        }
+      });
+      saveDb();
+      return send(res, 200, result);
+    }
+
     // 이미지 업로드: 파일명(품번)으로 상품을 찾고, 없으면 새로 등록
     const im = p.match(/^\/api\/admin\/images\/([^/]+)$/);
     if (im && m === 'PUT') {
@@ -264,13 +291,14 @@ async function handle(req, res) {
         db.products.push(product);
         created = true;
       }
+      const hadImage = !!product.image;
       fs.mkdirSync(IMG_DIR, { recursive: true });
       if (product.image && product.image !== `${product.id}.${ext}`) fs.rmSync(path.join(IMG_DIR, product.image), { force: true });
       fs.writeFileSync(path.join(IMG_DIR, `${product.id}.${ext}`), buf);
       product.image = `${product.id}.${ext}`;
       product.imageAt = Date.now();
       saveDb();
-      return send(res, created ? 201 : 200, { created, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
+      return send(res, created ? 201 : 200, { created, hadImage, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
     }
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {

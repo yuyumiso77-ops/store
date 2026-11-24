@@ -27,12 +27,13 @@
   <div class="card">
     <h2>상품 이미지로 등록</h2>
     <p class="hint" style="margin-top:-6px">이미지 파일명이 <b>품번</b>이 됩니다 (예: <code>GM24-PL101.jpg</code> → 품번 GM24-PL101).
-      처음 보는 품번은 선택한 품목으로 새로 등록되고, 이미 있는 품번은 이미지만 바뀝니다.</p>
+      처음 보는 품번은 선택한 품목으로 새로 등록되고, 이미 있는 품번은 이미지만 바뀝니다.<br>
+      <b>상품 정보 CSV</b>(열: 품번, 상품명, 품목)를 이미지와 함께 넣으면 상품명·품목도 한 번에 등록됩니다.</p>
     <div class="row" style="align-items:center">
       <select id="upCategory" style="flex:0 1 160px"><option value="">품목 선택</option></select>
       <label class="drop" id="drop">
-        <input type="file" id="files" accept="image/*" multiple hidden>
-        📷 이미지 선택 또는 여기로 끌어다 놓기 (여러 장 가능)
+        <input type="file" id="files" accept="image/*,.csv" multiple hidden>
+        📷 이미지·CSV 선택 또는 여기로 끌어다 놓기 (여러 개 가능)
       </label>
     </div>
     <ul class="uplog" id="uplog"></ul>
@@ -173,16 +174,62 @@ async function uploadImage(file, code, category) {
 }
 const codeFromName = (n) => n.replace(/\.[^.]+$/, '').trim();
 
+// 간단한 CSV 파서 (따옴표·쉼표·줄바꿈 처리)
+function parseCsv(text) {
+  const rows = [];
+  let row = [], cell = '', q = false;
+  text = text.replace(/^\uFEFF/, '');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') q = false;
+      else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim()));
+}
+async function readCsvFile(f) {
+  const buf = await f.arrayBuffer();
+  let text = new TextDecoder('utf-8').decode(buf);
+  if (text.includes('\uFFFD')) text = new TextDecoder('euc-kr').decode(buf); // 엑셀 기본 저장(CP949) 대응
+  const [head, ...rows] = parseCsv(text);
+  const idx = (names) => head.findIndex((h) => names.includes(h.trim()));
+  const ci = idx(['품번', 'code', 'CODE', 'STYLE']), ni = idx(['상품명', 'name', '이름']), ki = idx(['품목', 'category']);
+  if (ci < 0) throw new Error('첫 줄에 "품번" 열이 필요해요');
+  return rows.map((r) => ({ code: (r[ci] || '').trim(), name: ni >= 0 ? (r[ni] || '').trim() : '', category: ki >= 0 ? (r[ki] || '').trim() : '' }));
+}
+
 async function uploadMany(files) {
   const log = $('uplog');
   const category = $('upCategory').value;
-  for (const f of files) {
+  // CSV 먼저 처리해서 상품명·품목을 만든 뒤 이미지를 붙임
+  for (const f of files.filter((f) => /\.csv$/i.test(f.name))) {
+    const li = el('li', {}, `⏳ ${f.name}`);
+    log.prepend(li);
+    try {
+      const rows = await readCsvFile(f);
+      const r = await api('/api/admin/products/import', { method: 'POST', body: JSON.stringify({ rows }) });
+      li.textContent = `📄 ${f.name} — 새 상품 ${r.created}개, 정보 수정 ${r.updated}개` + (r.errors.length ? `, 오류 ${r.errors.length}건` : '');
+      r.errors.slice(0, 20).forEach((e) => log.prepend(el('li', { class: 'fail' }, '❌ ' + e)));
+    } catch (ex) {
+      li.textContent = `❌ ${f.name} — ${ex.message}`;
+      li.className = 'fail';
+    }
+  }
+  for (const f of files.filter((f) => !/\.csv$/i.test(f.name))) {
     const code = codeFromName(f.name);
     const li = el('li', {}, `⏳ ${code}`);
     log.prepend(li);
     try {
       const r = await uploadImage(f, code, category);
-      li.textContent = r.created ? `✅ ${code} — 새 상품으로 등록 (${r.product.category})` : `🔄 ${code} — 이미지 교체 (${r.product.name})`;
+      li.textContent = r.created ? `✅ ${code} — 새 상품으로 등록 (${r.product.category})` : r.hadImage ? `🔄 ${code} — 이미지 교체 (${r.product.name})` : `🖼️ ${code} — 이미지 등록 (${r.product.name})`;
     } catch (ex) {
       li.textContent = `❌ ${code} — ${ex.message}`;
       li.className = 'fail';
@@ -235,7 +282,7 @@ async function init() {
   const drop = $('drop');
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
-  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); uploadMany([...e.dataTransfer.files].filter((f) => f.type.startsWith('image/'))); };
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); uploadMany([...e.dataTransfer.files].filter((f) => f.type.startsWith('image/') || /\.csv$/i.test(f.name))); };
   load();
 }
 function $(id) { return document.getElementById(id); }
