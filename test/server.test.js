@@ -8,7 +8,7 @@ const path = require('node:path');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'store-fb-'));
 process.env.ADMIN_PASSWORD = 'secret';
 process.env.STAFF_PASSWORD = 'staffpw';
-const { server } = require('../server');
+const { server, _setAiClient } = require('../server');
 
 let base;
 const basic = (pw) => ({ Authorization: 'Basic ' + Buffer.from('u:' + pw).toString('base64'), 'Content-Type': 'application/json' });
@@ -176,6 +176,63 @@ test('예전 데이터(사진 1장)로 서버 시작 가능', () => {
   fs.writeFileSync(path.join(dir, 'db.json'), JSON.stringify({ products: [{ id: 'old1', code: 'OLD-1', name: 'x', category: '어패럴', active: true, image: 'old1.jpg', imageAt: 1, imageRank: 0, imageIsSw: true }], evaluations: [] }));
   const out = execFileSync(process.execPath, ['-e', "const {server}=require('./server');const s=require('fs');console.log('ok')"], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR: dir } }).toString();
   assert.match(out, /ok/);
+});
+
+test('Z-TEC 매장 의견: 매장당 1회, 다시 저장하면 수정', async () => {
+  const post = (b) => fetch(base + '/api/ztec', { method: 'POST', headers: staff, body: JSON.stringify(b) });
+  assert.strictEqual((await post({ reaction: 4, ease: 'easy' })).status, 400); // 매장명 없음
+  assert.strictEqual((await post({ store: '강남점', ease: 'easy' })).status, 400); // 반응 없음
+  assert.strictEqual((await post({ store: '강남점', reaction: 4, ease: 'x' })).status, 400); // 난이도 없음
+  assert.strictEqual((await post({ store: '강남점', reaction: 4, ease: 'easy', good: '반응 좋음' })).status, 201);
+  assert.strictEqual((await post({ store: '강남 점', reaction: 2, ease: 'hard', bad: '설명 어려움' })).status, 200); // 같은 매장 → 수정
+  await post({ store: '부산점', reaction: 5, ease: 'easy', suggestion: '=POP 필요' });
+  const mine = await (await fetch(base + '/api/ztec/mine?store=' + encodeURIComponent('강남점'), { headers: staff })).json();
+  assert.deepStrictEqual([mine.reaction, mine.ease, mine.bad], [2, 'hard', '설명 어려움']);
+  const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  assert.deepStrictEqual([s.ztec.count, s.ztec.avgReaction, s.ztec.ease], [2, 3.5, { easy: 1, normal: 0, hard: 1 }]);
+  const csv = await (await fetch(base + '/api/admin/ztec.csv', { headers: admin })).text();
+  assert.match(csv, /부산점/);
+  assert.match(csv, /"'=POP 필요"/);
+});
+
+test('AI 의견 요약: 키 없으면 안내, 있으면 요약하고 저장(기준 같으면 재사용)', async () => {
+  // 키 없음
+  delete process.env.ANTHROPIC_API_KEY;
+  let r = await fetch(base + '/api/admin/ai-summary/ztec', { method: 'POST', headers: admin });
+  assert.strictEqual(r.status, 503);
+  assert.match((await r.json()).error, /ANTHROPIC_API_KEY/);
+  // 가짜 AI 클라이언트
+  process.env.ANTHROPIC_API_KEY = 'test';
+  let calls = 0, lastReq = null;
+  _setAiClient({ beta: { messages: { create: async (req) => {
+    calls++; lastReq = req;
+    return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ headline: '설명이 어렵다는 의견이 많음', strengths: ['반응 좋음'], weaknesses: ['설명 어려움 (1개 매장)'], requests: ['POP 필요'], actions: ['설명 POP 제작'] }) }] };
+  } } } });
+  r = await fetch(base + '/api/admin/ai-summary/ztec', { method: 'POST', headers: admin });
+  assert.strictEqual(r.status, 200);
+  let v = await r.json();
+  assert.strictEqual(v.summary.result.headline, '설명이 어렵다는 의견이 많음');
+  assert.strictEqual(v.stale, false);
+  assert.strictEqual(lastReq.model, 'claude-opus-5-5');
+  assert.strictEqual(lastReq.output_config.format.type, 'json_schema');
+  assert.match(lastReq.messages[0].content, /부산점/);
+  // 같은 기준이면 다시 부르지 않음 (force 없을 때)
+  await fetch(base + '/api/admin/ai-summary/ztec', { method: 'POST', headers: admin });
+  assert.strictEqual(calls, 1);
+  // 새 의견이 생기면 stale
+  await fetch(base + '/api/ztec', { method: 'POST', headers: staff, body: JSON.stringify({ store: '대구점', reaction: 3, ease: 'normal' }) });
+  v = await (await fetch(base + '/api/admin/ai-summary/ztec', { headers: admin })).json();
+  assert.strictEqual(v.stale, true);
+  // 거절되면 오류
+  _setAiClient({ beta: { messages: { create: async () => ({ stop_reason: 'refusal', content: [] }) } } });
+  r = await fetch(base + '/api/admin/ai-summary/ztec?force=1', { method: 'POST', headers: admin });
+  assert.strictEqual(r.status, 502);
+  // 의견 없는 상품은 400
+  const p = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '빈 상품', category: '용품' }) })).json();
+  assert.strictEqual((await fetch(base + `/api/admin/ai-summary/product:${p.id}`, { method: 'POST', headers: admin })).status, 400);
+  await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: admin });
+  delete process.env.ANTHROPIC_API_KEY;
+  _setAiClient(null);
 });
 
 test('품목 필수', async () => {

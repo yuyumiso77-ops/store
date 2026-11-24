@@ -53,15 +53,16 @@ const OPTIONS = {
   ageGroups: ['20대', '30대', '40대', '50대', '60대 이상'],
   genders: ['남성', '여성'],
   reactions: ['', '매우 나쁨', '나쁨', '보통', '좋음', '매우 좋음'],
+  ztecEase: { easy: '쉬웠다', normal: '보통', hard: '어려웠다' },
 };
 
 // ---------- 저장소 ----------
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { ...d, products: d.products || [], evaluations: d.evaluations || [] };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], summaries: d.summaries || {} };
   } catch {
-    return { products: [], evaluations: [] };
+    return { products: [], evaluations: [], ztec: [], summaries: {} };
   }
 }
 const db = loadDb();
@@ -262,7 +263,125 @@ function summary() {
     ...x,
     done: db.evaluations.filter((e) => e.staff === x.name && active.includes(e.productId)).length,
   }));
-  return { totalEvaluations: db.evaluations.length, activeProducts: active.length, staff, products };
+  return { totalEvaluations: db.evaluations.length, activeProducts: active.length, staff, products, ztec: ztecSummary(), aiEnabled: !!process.env.ANTHROPIC_API_KEY };
+}
+
+// ---------- Z-TEC 매장 의견 (매장당 1회) ----------
+function ztecSummary() {
+  const z = db.ztec;
+  const ease = { easy: 0, normal: 0, hard: 0 };
+  z.forEach((e) => ease[e.ease]++);
+  return {
+    count: z.length,
+    avgReaction: z.length ? Math.round((z.reduce((a, e) => a + e.reaction, 0) / z.length) * 10) / 10 : null,
+    reactionDist: [1, 2, 3, 4, 5].map((n) => z.filter((e) => e.reaction === n).length),
+    ease,
+    entries: z.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+  };
+}
+
+// ---------- AI 의견 요약 (Claude API) ----------
+// Railway Variables 에 ANTHROPIC_API_KEY 를 넣으면 켜짐
+let aiClient = null;
+function getAi() {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  if (!aiClient) {
+    const sdk = require('@anthropic-ai/sdk');
+    const Anthropic = sdk.default || sdk.Anthropic;
+    aiClient = new Anthropic();
+  }
+  return aiClient;
+}
+const SUMMARY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['headline', 'strengths', 'weaknesses', 'requests', 'actions'],
+  properties: {
+    headline: { type: 'string', description: '전체 의견을 한두 문장으로 요약' },
+    strengths: { type: 'array', items: { type: 'string' }, description: '자주 나온 좋은 점 (많이 나온 순, 최대 5개)' },
+    weaknesses: { type: 'array', items: { type: 'string' }, description: '자주 나온 아쉬운 점 (많이 나온 순, 최대 5개)' },
+    requests: { type: 'array', items: { type: 'string' }, description: '매장·고객의 개선 요청과 아이디어 (최대 5개)' },
+    actions: { type: 'array', items: { type: 'string' }, description: 'MD·영업이 바로 검토할 만한 조치 제안 (최대 3개)' },
+  },
+};
+const SUMMARY_SYSTEM = [
+  '당신은 골프웨어 브랜드의 MD를 돕는 분석가입니다.',
+  '여러 매장이 남긴 상품 평가와 의견을 읽고, 바쁜 MD가 1분 안에 파악할 수 있게 한국어로 요약합니다.',
+  '여러 매장에서 반복해서 나온 내용을 우선하고, 몇 매장에서 나왔는지 대략 함께 적어 주세요 (예: "기장이 짧다 (12개 매장)").',
+  '한 매장만 말한 내용은 중요해 보일 때만 넣고, 의견에 없는 내용은 지어내지 마세요.',
+  '각 항목은 짧은 한 문장으로 씁니다.',
+].join('\n');
+const inflight = new Map();
+async function runSummary(key, title, body) {
+  const ai = getAi();
+  if (!ai) {
+    const err = new Error('AI 요약을 쓰려면 Railway Variables에 ANTHROPIC_API_KEY를 추가해 주세요.');
+    err.status = 503;
+    throw err;
+  }
+  if (inflight.has(key)) return inflight.get(key);
+  const job = (async () => {
+    const response = await ai.beta.messages.create({
+      model: 'claude-opus-5-5',
+      max_tokens: 16000,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default', // 거절 시 서버가 알맞은 모델로 다시 시도
+      system: SUMMARY_SYSTEM,
+      output_config: { format: { type: 'json_schema', schema: SUMMARY_SCHEMA } },
+      messages: [{ role: 'user', content: `# ${title}\n\n${body}` }],
+    });
+    if (response.stop_reason === 'refusal') throw Object.assign(new Error('AI가 이 내용을 요약하지 못했어요.'), { status: 502 });
+    if (response.stop_reason === 'max_tokens') throw Object.assign(new Error('요약이 너무 길어져 중단됐어요. 다시 시도해 주세요.'), { status: 502 });
+    const text = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+    return JSON.parse(text);
+  })();
+  inflight.set(key, job);
+  try {
+    return await job;
+  } finally {
+    inflight.delete(key);
+  }
+}
+// 요약할 내용과 '기준'(평가 수·최근 수정 시각)을 만든다. 기준이 바뀌면 다시 요약 필요
+function summarySource(key) {
+  if (key === 'ztec') {
+    const z = db.ztec;
+    if (!z.length) return null;
+    const zs = ztecSummary();
+    const lines = z.map((e) => `- [${e.store}] 반응 ${OPTIONS.reactions[e.reaction]}, 설명 ${OPTIONS.ztecEase[e.ease]}` +
+      (e.good ? ` / 좋은 점: ${e.good}` : '') + (e.bad ? ` / 아쉬운 점: ${e.bad}` : '') + (e.suggestion ? ` / 제안: ${e.suggestion}` : ''));
+    return {
+      basis: `${z.length}:${z.reduce((a, e) => (e.updatedAt > a ? e.updatedAt : a), '')}`,
+      title: 'Z-TEC (기능성 라인)에 대한 매장 의견',
+      body: `응답 매장 ${zs.count}곳, 평균 고객 반응 ${zs.avgReaction}/5, 설명 쉬움 ${zs.ease.easy}·보통 ${zs.ease.normal}·어려움 ${zs.ease.hard}\n\n매장 의견:\n${lines.join('\n')}`,
+      count: z.length,
+    };
+  }
+  const id = key.replace(/^product:/, '');
+  const product = db.products.find((x) => x.id === id);
+  if (!product) return null;
+  const es = db.evaluations.filter((e) => e.productId === id);
+  if (!es.length) return null;
+  const ps = summary().products.find((x) => x.id === id);
+  const top = (list) => list.slice(0, 6).map((x) => `${x.name} ${x.n}`).join(', ') || '없음';
+  const lines = es.filter((e) => e.prosNote || e.consNote || e.improvement || e.missing).map((e) =>
+    `- [${e.staff}] 반응 ${OPTIONS.reactions[e.reaction]}, 판매 ${OPTIONS.sales[e.sales]}` +
+    (e.prosNote ? ` / 좋은 점: ${e.prosNote}` : '') + (e.consNote ? ` / 아쉬운 점: ${e.consNote}` : '') +
+    (e.improvement ? ` / 개선: ${e.improvement}` : '') + (e.missing ? ` / 없던 사이즈·색상: ${e.missing}` : ''));
+  return {
+    basis: `${es.length}:${es.reduce((a, e) => (e.updatedAt > a ? e.updatedAt : a), '')}`,
+    title: `${product.code} ${product.name} (${typeOf(product) || product.category})`,
+    body: [
+      `평가 매장 ${es.length}곳, 평균 고객 반응 ${ps.avgReaction}/5, 판매 반응 잘 팔림 ${ps.sales.good}·보통 ${ps.sales.normal}·잘 안 팔림 ${ps.sales.poor}`,
+      `장점으로 꼽힌 항목(횟수): ${top(ps.pros)}`,
+      `단점으로 꼽힌 항목(횟수): ${top(ps.cons)}`,
+      `판매를 도운 요인: ${top(ps.sellReasons)}`,
+      `판매를 막은 요인: ${top(ps.noBuyReasons)}`,
+      '',
+      lines.length ? `매장 메모:\n${lines.join('\n')}` : '매장 메모: 없음 (위 항목 집계만으로 요약해 주세요)',
+    ].join('\n'),
+    count: es.length,
+  };
 }
 
 // ---------- 라우팅 ----------
@@ -291,6 +410,39 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/admin') return serveStatic(res, 'admin.html');
     if (m === 'GET' && p === '/api/admin/summary') return send(res, 200, summary());
+
+    // AI 의견 요약: GET = 저장된 요약, POST = 새로 요약
+    const sm = p.match(/^\/api\/admin\/ai-summary\/(ztec|product:[\w-]+)$/);
+    if (sm) {
+      const key = sm[1];
+      const src = summarySource(key);
+      const saved = db.summaries[key] || null;
+      const view = () => ({ summary: db.summaries[key] || null, stale: !!(db.summaries[key] && src && db.summaries[key].basis !== src.basis), aiEnabled: !!process.env.ANTHROPIC_API_KEY });
+      if (m === 'GET') return send(res, 200, view());
+      if (m === 'POST') {
+        if (!src) return send(res, 400, { error: '요약할 의견이 아직 없어요.' });
+        if (saved && saved.basis === src.basis && url.searchParams.get('force') !== '1') return send(res, 200, view());
+        try {
+          const result = await runSummary(key, src.title, src.body);
+          db.summaries[key] = { basis: src.basis, count: src.count, at: new Date().toISOString(), result };
+          saveDb();
+          return send(res, 200, view());
+        } catch (ex) {
+          console.error('AI 요약 실패:', ex.status, ex.message);
+          if (ex.status === 503 && !getAi()) return send(res, 503, { error: ex.message }); // 키 없음
+          if (ex.status === 401) return send(res, 502, { error: 'ANTHROPIC_API_KEY가 올바르지 않아요. Railway Variables의 키를 확인해 주세요.' });
+          if (ex.status === 429) return send(res, 502, { error: 'AI 사용량이 많아 잠시 막혔어요. 1~2분 뒤 다시 시도해 주세요.' });
+          return send(res, 502, { error: `AI 요약에 실패했어요. 잠시 후 다시 시도해 주세요.` });
+        }
+      }
+    }
+
+    if (m === 'GET' && p === '/api/admin/ztec.csv') {
+      const rows = [['수정일시', '매장명', 'Z-TEC 고객 반응(1~5)', '설명 난이도', '좋았던 점', '아쉬웠던 점', '다음 시즌 제안']];
+      db.ztec.forEach((e) => rows.push([e.updatedAt, e.store, e.reaction, OPTIONS.ztecEase[e.ease], e.good, e.bad, e.suggestion]));
+      const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+      return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="ztec.csv"' });
+    }
 
     if (m === 'POST' && p === '/api/admin/products') {
       const b = await readBody(req);
@@ -501,6 +653,25 @@ async function handle(req, res) {
     return send(res, 200, { ...OPTIONS, products: db.products.filter((x) => x.active).map((x) => ({ ...publicProduct(x), imageUrl: imageUrl(x) })) });
   }
 
+  // Z-TEC 매장 의견 (매장당 1회, 다시 저장하면 수정)
+  if (m === 'GET' && p === '/api/ztec/mine') {
+    const store = cleanText(url.searchParams.get('store'), 30);
+    return send(res, 200, (store && db.ztec.find((e) => sameName(e.store, store))) || null);
+  }
+  if (m === 'POST' && p === '/api/ztec') {
+    const b = await readBody(req);
+    const store = cleanText(b.store, 30);
+    if (!store) return send(res, 400, { error: '매장명을 먼저 입력해 주세요.' });
+    if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: 'Z-TEC 고객 반응을 선택해 주세요.' });
+    if (!(b.ease in OPTIONS.ztecEase)) return send(res, 400, { error: '설명 난이도를 선택해 주세요.' });
+    const data = { store, reaction: b.reaction, ease: b.ease, good: cleanText(b.good, 500), bad: cleanText(b.bad, 500), suggestion: cleanText(b.suggestion, 500), updatedAt: new Date().toISOString() };
+    const existing = db.ztec.find((e) => sameName(e.store, store));
+    if (existing) Object.assign(existing, data);
+    else db.ztec.push({ id: crypto.randomUUID(), createdAt: data.updatedAt, ...data });
+    saveDb();
+    return send(res, existing ? 200 : 201, { ok: true, updated: !!existing });
+  }
+
   // 내가 평가한 목록 (이어서 하기·수정용)
   if (m === 'GET' && p === '/api/evaluations/mine') {
     const staff = cleanText(url.searchParams.get('staff'), 30);
@@ -572,4 +743,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server };
+module.exports = { server, _setAiClient: (c) => (aiClient = c) }; // _setAiClient: 테스트용

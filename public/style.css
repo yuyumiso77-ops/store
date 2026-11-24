@@ -229,3 +229,14 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 }
 .group-title { flex-wrap: wrap; }
 @media (max-width: 760px) { .group-title small { flex-basis: 100%; } }
+.ztec { border-left: 4px solid #e0a100; }
+.ztec-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.ztec-head .btn:disabled { opacity: .5; cursor: default; }
+#ztecBody textarea { min-height: 64px; }
+.ai { background: var(--accent-soft); border-radius: 12px; padding: 12px 14px; }
+.ai-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ai-head { font-weight: 600; margin: 10px 0 6px; }
+.ai-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.ai-sec ul { margin: 4px 0 0; padding-left: 18px; font-size: .9rem; }
+.ai-sec li { margin: 2px 0; }
+.ai-btn:disabled { opacity: .6; cursor: default; }

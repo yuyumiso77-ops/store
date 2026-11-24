@@ -18,6 +18,31 @@
       <div class="hint" id="progress"></div>
     </div>
 
+    <!-- Z-TEC 매장 의견: 매장당 한 번 (상품 평가와 별도) -->
+    <div class="card ztec">
+      <div class="ztec-head">
+        <div>
+          <span class="q" style="margin:0">⚡ Z-TEC 매장 의견 <span class="hint">(매장당 1회)</span></span>
+          <div class="hint" id="ztecStatus">매장명을 입력하면 작성할 수 있어요.</div>
+        </div>
+        <button type="button" class="btn" id="ztecToggle" disabled>작성하기</button>
+      </div>
+      <div id="ztecBody" hidden>
+        <span class="q sub-q">1. Z-TEC에 대한 고객 반응은 어땠나요? <span class="req">*</span></span>
+        <div class="chips" id="zReaction"></div>
+        <span class="q sub-q">2. 고객에게 Z-TEC을 설명하기 쉬웠나요? <span class="req">*</span></span>
+        <div class="chips" id="zEase"></div>
+        <label class="q sub-q" for="zGood">3. 👍 좋았던 점</label>
+        <textarea id="zGood" maxlength="500" placeholder="예: 기능을 설명하면 바로 이해하고 관심을 보였어요"></textarea>
+        <label class="q sub-q" for="zBad">4. 👎 아쉬웠던 점</label>
+        <textarea id="zBad" maxlength="500" placeholder="예: 일반 제품과 차이를 체감하기 어렵다는 반응이 있었어요"></textarea>
+        <label class="q sub-q" for="zSuggest">5. 💡 다음 시즌 제안</label>
+        <textarea id="zSuggest" maxlength="500" placeholder="예: 매장용 설명 POP나 체험 샘플이 있으면 좋겠어요"></textarea>
+        <button type="button" class="primary" id="zSave" style="margin-top:12px">Z-TEC 의견 저장</button>
+        <p class="error" id="zError"></p>
+      </div>
+    </div>
+
     <div class="card">
       <span class="q">상품 <span class="req">*</span></span>
       <input type="hidden" id="product">
@@ -205,14 +230,78 @@ async function init() {
   let sx = 0;
   $('lightbox').addEventListener('touchstart', (e) => (sx = e.touches[0].clientX), { passive: true });
   $('lightbox').addEventListener('touchend', (e) => { const dx = e.changedTouches[0].clientX - sx; if (Math.abs(dx) > 40) stepLb(dx < 0 ? 1 : -1); });
-  $('staff').onchange = loadMine;
+  $('staff').onchange = () => { loadMine(); loadZtec(); };
+  $('staff').addEventListener('input', () => { $('ztecToggle').disabled = !$('staff').value.trim(); });
+  setupZtec(); // 상태는 저장된 매장명을 불러온 뒤 loadZtec()에서 갱신
   try { $('staff').value = localStorage.getItem('staff') || ''; } catch {}
   try { const l = localStorage.getItem('line') || ''; if (l === '__none' ? OPTS.products.some((p) => !p.line) : OPTS.products.some((p) => p.line === l)) LINE = l; } catch {}
   renderLineFilter();
   renderCatFilter();
   await loadMine();
+  loadZtec();
   const pid = new URLSearchParams(location.search).get('product');
   if (pid) selectProduct(pid);
+}
+
+// ---- Z-TEC 매장 의견 ----
+const zstate = { reaction: 0, ease: '' };
+function zChips(id, items, key) {
+  const box = $(id);
+  box.replaceChildren();
+  items.forEach(([v, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.className = zstate[key] === v ? 'on' : '';
+    b.onclick = () => { zstate[key] = v; zChips(id, items, key); };
+    box.appendChild(b);
+  });
+}
+
+function drawZ() {
+  zChips('zReaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${OPTS.reactions[n]}`]), 'reaction');
+  zChips('zEase', Object.entries(OPTS.ztecEase), 'ease');
+}
+function setupZtec() {
+  drawZ();
+  $('ztecToggle').onclick = () => {
+    $('ztecBody').hidden = !$('ztecBody').hidden;
+    $('ztecToggle').textContent = $('ztecBody').hidden ? ($('ztecToggle').dataset.done ? '수정하기' : '작성하기') : '접기';
+  };
+  $('zSave').onclick = async () => {
+    $('zError').textContent = '';
+    $('zSave').disabled = true;
+    try {
+      const body = { store: $('staff').value, ...zstate, good: $('zGood').value, bad: $('zBad').value, suggestion: $('zSuggest').value };
+      const res = await fetch('/api/ztec', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '저장에 실패했어요.');
+      try { localStorage.setItem('staff', body.store.trim()); } catch {}
+      $('ztecBody').hidden = true;
+      await loadZtec();
+      toast(data.updated ? '✅ Z-TEC 의견을 수정했어요.' : '✅ Z-TEC 의견을 저장했어요. 감사합니다!');
+    } catch (ex) {
+      $('zError').textContent = ex.message;
+    } finally {
+      $('zSave').disabled = false;
+    }
+  };
+}
+async function loadZtec() {
+  const store = $('staff').value.trim();
+  $('ztecToggle').disabled = !store;
+  if (!store) { $('ztecStatus').textContent = '매장명을 입력하면 작성할 수 있어요.'; $('ztecBody').hidden = true; return; }
+  const e = await (await fetch('/api/ztec/mine?store=' + encodeURIComponent(store))).json();
+  zstate.reaction = e ? e.reaction : 0;
+  zstate.ease = e ? e.ease : '';
+  $('zGood').value = e ? e.good : '';
+  $('zBad').value = e ? e.bad : '';
+  $('zSuggest').value = e ? e.suggestion : '';
+  drawZ();
+  $('ztecToggle').dataset.done = e ? '1' : '';
+  $('ztecStatus').textContent = e ? `✓ ${new Date(e.updatedAt).toLocaleDateString('ko-KR')}에 작성했어요. 내용을 고칠 수 있어요.` : '아직 작성하지 않았어요.';
+  $('ztecStatus').className = e ? 'hint pdone' : 'hint';
+  if ($('ztecBody').hidden) $('ztecToggle').textContent = e ? '수정하기' : '작성하기';
 }
 
 async function loadMine() {

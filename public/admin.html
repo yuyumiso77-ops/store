@@ -24,6 +24,8 @@
     <div id="staffBox" style="margin-top:12px"></div>
   </div>
 
+  <div id="ztecBox"></div>
+
   <div class="card">
     <h2>상품 이미지로 등록</h2>
     <p class="hint" style="margin-top:-6px">이미지 파일명은 <b>품번</b>(예: <code>FNJMS3202.jpg</code>) 또는 <b>PLC 번호</b>(예: <code>FJ_42993_sw.jpg</code>)로 맞춥니다. PLC 사진은 엑셀 첫 번째 컬러의 <b>_sw</b> 사진이 대표 사진이 돼요.
@@ -113,6 +115,77 @@ function rank(title, list, total) {
     list.length
       ? el('ul', { class: 'rank' }, list.slice(0, 6).map((x) => el('li', {}, el('span', {}, x.name), el('span', {}, `${x.n}회 · ${Math.round((x.n / total) * 100)}%`))))
       : el('p', { class: 'hint' }, '아직 없어요'));
+}
+
+// ---- AI 의견 요약 블록 (key: 'ztec' 또는 'product:<id>') ----
+function aiBlock(key) {
+  const body = el('div');
+  const btn = el('button', { type: 'button', class: 'btn ai-btn' }, '🤖 요약 만들기');
+  const draw = (v) => {
+    body.replaceChildren();
+    if (!v.aiEnabled) {
+      btn.disabled = true;
+      body.append(el('p', { class: 'hint' }, 'AI 요약을 쓰려면 Railway Variables에 ANTHROPIC_API_KEY를 추가해 주세요.'));
+      return;
+    }
+    const sm = v.summary;
+    if (!sm) { btn.textContent = '🤖 요약 만들기'; body.append(el('p', { class: 'hint' }, '버튼을 누르면 매장 의견을 AI가 한눈에 정리해요. (10~30초)')); return; }
+    btn.textContent = v.stale ? '🔄 새 평가 반영해서 다시 요약' : '🔄 다시 요약';
+    const r = sm.result;
+    const sec = (t, list) => (list && list.length ? el('div', { class: 'ai-sec' }, el('b', {}, t), el('ul', {}, list.map((x) => el('li', {}, x)))) : '');
+    body.append(
+      el('p', { class: 'ai-head' }, r.headline),
+      el('div', { class: 'ai-grid' }, sec('👍 좋은 점', r.strengths), sec('👎 아쉬운 점', r.weaknesses), sec('💡 요청·아이디어', r.requests), sec('✅ 검토할 조치', r.actions)),
+      el('p', { class: 'hint' }, `평가 ${sm.count}건 기준 · ${new Date(sm.at).toLocaleString('ko-KR')} 요약` + (v.stale ? ' · ⚠️ 그 뒤 새 평가가 있어요' : '') + ' · AI 요약은 틀릴 수 있어요'));
+  };
+  btn.onclick = async () => {
+    const old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ 요약 중… (10~30초)';
+    try {
+      draw(await api(`/api/admin/ai-summary/${key}?force=1`, { method: 'POST' }));
+    } catch (ex) {
+      btn.textContent = old;
+      body.prepend(el('p', { class: 'error' }, ex.message));
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  api(`/api/admin/ai-summary/${key}`).then(draw).catch(() => {});
+  return el('div', { class: 'ai' }, el('div', { class: 'ai-top' }, el('div', { class: 'q', style: 'margin:0' }, '🤖 AI 의견 요약'), btn), body);
+}
+
+// ---- Z-TEC 매장 의견 ----
+const ZEASE = { easy: '쉬웠다', normal: '보통', hard: '어려웠다' };
+function renderZtec(z) {
+  const head = el('div', { class: 'product-head' }, el('h2', { style: 'margin:0' }, '⚡ Z-TEC 매장 의견'),
+    z.count ? el('a', { class: 'btn', href: '/api/admin/ztec.csv' }, 'Z-TEC CSV') : '');
+  if (!z.count) return el('div', { class: 'card ztec' }, head, el('p', { class: 'hint' }, '아직 응답한 매장이 없어요. 평가 화면 위쪽 ⚡ Z-TEC 카드에서 매장마다 한 번 작성해요.'));
+  const pct = (v) => Math.round((v / z.count) * 100);
+  const KINDS = [['all', '전체', () => true], ['good', '👍 좋았던 점', (e) => e.good], ['bad', '👎 아쉬웠던 점', (e) => e.bad], ['suggestion', '💡 제안', (e) => e.suggestion]];
+  let kind = 'all';
+  const list = el('div');
+  const draw = () => {
+    const [, , test] = KINDS.find((k) => k[0] === kind);
+    const show = (k) => kind === 'all' || kind === k;
+    list.replaceChildren(
+      el('div', { class: 'chips small' }, KINDS.map(([k, label, t]) =>
+        el('button', { type: 'button', class: kind === k ? 'on' : '', onclick: () => { kind = k; draw(); } }, `${label} ${z.entries.filter(t).length}`))),
+      collapsibleList(z.entries.filter(test), 3, (e) => el('li', {},
+        show('good') && e.good ? el('div', { class: 'note-line' }, '👍 ', e.good) : '',
+        show('bad') && e.bad ? el('div', { class: 'note-line' }, '👎 ', e.bad) : '',
+        show('suggestion') && e.suggestion ? el('div', { class: 'note-line' }, '💡 ', e.suggestion) : '',
+        el('div', { class: 'meta' }, `${e.store} · ${REACT[e.reaction]} · 설명 ${ZEASE[e.ease]} · ${new Date(e.updatedAt).toLocaleDateString('ko-KR')}`))));
+  };
+  draw();
+  return el('div', { class: 'card ztec' }, head,
+    el('div', { class: 'stats', style: 'margin-top:12px' },
+      stat(z.count, '응답 매장'),
+      stat(fmt(z.avgReaction), 'Z-TEC 고객 반응 (5점)'),
+      stat(pct(z.ease.easy) + '%', '설명하기 쉬웠다'),
+      stat(pct(z.ease.hard) + '%', '설명하기 어려웠다')),
+    el('div', { style: 'margin-top:12px' }, aiBlock('ztec')),
+    el('div', { style: 'margin-top:12px' }, el('div', { class: 'q' }, '매장 의견'), list));
 }
 
 // 긴 목록은 처음 n개만 보여주고 '모두 보기'로 펼치기
@@ -253,6 +326,7 @@ function renderProduct(p) {
       rank('👥 주 구매 고객층', [...p.ageGroups, ...p.genders], p.count)) : '',
     p.missing.length ? el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '🔍 자주 찾았는데 없던 사이즈·색상'),
       collapsibleList(p.missing.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), 5, (x) => el('li', {}, x.missing, el('div', { class: 'meta' }, `${x.staff} · ${new Date(x.updatedAt).toLocaleDateString('ko-KR')}`)), '항목')) : '',
+    p.count ? el('div', { style: 'margin-top:16px' }, aiBlock('product:' + p.id)) : '',
     el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '매장 의견 (장점 · 단점 · 개선 아이디어)'), notes));
 }
 
@@ -483,6 +557,7 @@ async function load() {
        el('button', { type: 'button', class: 'linkbtn', style: 'padding:0', onclick: (e) => { pills.hidden = !pills.hidden; e.target.textContent = pills.hidden ? '매장별 보기' : '접기'; } }, '매장별 보기'),
        pills]
     : []));
+  $('ztecBox').replaceChildren(renderZtec(data.ztec));
   LAST = ps;
   renderList();
 }
