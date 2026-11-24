@@ -411,6 +411,43 @@ async function handle(req, res) {
     if (m === 'GET' && p === '/admin') return serveStatic(res, 'admin.html');
     if (m === 'GET' && p === '/api/admin/summary') return send(res, 200, summary());
 
+    // ---- 평가 삭제 ----
+    // 상품의 매장별 평가 전체 목록
+    const pev = p.match(/^\/api\/admin\/products\/([\w-]+)\/evaluations$/);
+    if (pev && m === 'GET') {
+      const list = db.evaluations.filter((e) => e.productId === pev[1]).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return send(res, 200, list);
+    }
+    // 평가 한 건 삭제
+    const dev = p.match(/^\/api\/admin\/evaluations\/([\w-]+)$/);
+    if (dev && m === 'DELETE') {
+      const before = db.evaluations.length;
+      db.evaluations = db.evaluations.filter((e) => e.id !== dev[1]);
+      if (db.evaluations.length === before) return send(res, 404, { error: '평가가 없습니다.' });
+      saveDb();
+      return send(res, 200, { ok: true });
+    }
+    // Z-TEC 의견 한 건 삭제
+    const dz = p.match(/^\/api\/admin\/ztec\/([\w-]+)$/);
+    if (dz && m === 'DELETE') {
+      const before = db.ztec.length;
+      db.ztec = db.ztec.filter((e) => e.id !== dz[1]);
+      if (db.ztec.length === before) return send(res, 404, { error: '의견이 없습니다.' });
+      saveDb();
+      return send(res, 200, { ok: true });
+    }
+    // 매장 데이터 전체 삭제 (평가 + Z-TEC). 실수 방지: confirm 에 매장명을 그대로 보내야 함
+    const dst = p.match(/^\/api\/admin\/stores\/([^/]+)$/);
+    if (dst && m === 'DELETE') {
+      const store = decodeURIComponent(dst[1]);
+      if (url.searchParams.get('confirm') !== store) return send(res, 400, { error: '확인용 매장명이 일치하지 않아요.' });
+      const ev = db.evaluations.length, zt = db.ztec.length;
+      db.evaluations = db.evaluations.filter((e) => !sameName(e.staff, store));
+      db.ztec = db.ztec.filter((e) => !sameName(e.store, store));
+      saveDb();
+      return send(res, 200, { ok: true, deletedEvaluations: ev - db.evaluations.length, deletedZtec: zt - db.ztec.length });
+    }
+
     // AI 의견 요약: GET = 저장된 요약, POST = 새로 요약
     const sm = p.match(/^\/api\/admin\/ai-summary\/(ztec|product:[\w-]+)$/);
     if (sm) {

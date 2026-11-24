@@ -240,3 +240,6 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 .ai-sec ul { margin: 4px 0 0; padding-left: 18px; font-size: .9rem; }
 .ai-sec li { margin: 2px 0; }
 .ai-btn:disabled { opacity: .6; cursor: default; }
+.evrow { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.pill-x { border: none; background: none; cursor: pointer; padding: 0 0 0 2px; font-size: .75rem; opacity: .7; }
+.pill-x:hover { opacity: 1; }

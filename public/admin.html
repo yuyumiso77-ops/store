@@ -175,7 +175,14 @@ function renderZtec(z) {
         show('good') && e.good ? el('div', { class: 'note-line' }, '👍 ', e.good) : '',
         show('bad') && e.bad ? el('div', { class: 'note-line' }, '👎 ', e.bad) : '',
         show('suggestion') && e.suggestion ? el('div', { class: 'note-line' }, '💡 ', e.suggestion) : '',
-        el('div', { class: 'meta' }, `${e.store} · ${REACT[e.reaction]} · 설명 ${ZEASE[e.ease]} · ${new Date(e.updatedAt).toLocaleDateString('ko-KR')}`))));
+        el('div', { class: 'meta' }, `${e.store} · ${REACT[e.reaction]} · 설명 ${ZEASE[e.ease]} · ${new Date(e.updatedAt).toLocaleDateString('ko-KR')} `,
+          el('button', {
+            type: 'button', class: 'mini danger', title: '이 의견 삭제',
+            onclick: async () => {
+              if (!confirm(`"${e.store}"의 Z-TEC 의견을 삭제할까요?\n되돌릴 수 없어요.`)) return;
+              try { await api(`/api/admin/ztec/${e.id}`, { method: 'DELETE' }); load(); } catch (ex) { alert(ex.message); }
+            },
+          }, '🗑')))));
   };
   draw();
   return el('div', { class: 'card ztec' }, head,
@@ -186,6 +193,36 @@ function renderZtec(z) {
       stat(pct(z.ease.hard) + '%', '설명하기 어려웠다')),
     el('div', { style: 'margin-top:12px' }, aiBlock('ztec')),
     el('div', { style: 'margin-top:12px' }, el('div', { class: 'q' }, '매장 의견'), list));
+}
+
+// ---- 매장별 평가 목록 + 한 건 삭제 ----
+function storeEvalsBlock(p) {
+  const body = el('div');
+  const btn = el('button', { type: 'button', class: 'linkbtn', style: 'padding:0' }, `📋 매장별 평가 ${p.count}건 보기 · 삭제`);
+  let shown = false;
+  const loadList = async () => {
+    body.replaceChildren(el('p', { class: 'hint' }, '불러오는 중…'));
+    const list = await api(`/api/admin/products/${p.id}/evaluations`);
+    body.replaceChildren(collapsibleList(list, 10, (e) => el('li', { class: 'evrow' },
+      el('div', {},
+        el('b', {}, e.staff), ` · ${REACT[e.reaction]} · ${SALES[e.sales]}`,
+        el('div', { class: 'meta' }, [e.prosNote && '👍 ' + e.prosNote, e.consNote && '👎 ' + e.consNote, e.improvement && '💡 ' + e.improvement].filter(Boolean).join('  ') || '메모 없음'),
+        el('div', { class: 'meta' }, new Date(e.updatedAt).toLocaleString('ko-KR'))),
+      el('button', {
+        type: 'button', class: 'mini danger', title: '이 평가 삭제',
+        onclick: async () => {
+          if (!confirm(`"${e.staff}"의 이 상품 평가를 삭제할까요?\n되돌릴 수 없어요.`)) return;
+          try { await api(`/api/admin/evaluations/${e.id}`, { method: 'DELETE' }); load(); } catch (ex) { alert(ex.message); }
+        },
+      }, '🗑 삭제')), '평가'));
+  };
+  btn.onclick = () => {
+    shown = !shown;
+    btn.textContent = shown ? '접기' : `📋 매장별 평가 ${p.count}건 보기 · 삭제`;
+    if (shown) loadList().catch((ex) => body.replaceChildren(el('p', { class: 'error' }, ex.message)));
+    else body.replaceChildren();
+  };
+  return el('div', {}, btn, body);
 }
 
 // 긴 목록은 처음 n개만 보여주고 '모두 보기'로 펼치기
@@ -327,6 +364,7 @@ function renderProduct(p) {
     p.missing.length ? el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '🔍 자주 찾았는데 없던 사이즈·색상'),
       collapsibleList(p.missing.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), 5, (x) => el('li', {}, x.missing, el('div', { class: 'meta' }, `${x.staff} · ${new Date(x.updatedAt).toLocaleDateString('ko-KR')}`)), '항목')) : '',
     p.count ? el('div', { style: 'margin-top:16px' }, aiBlock('product:' + p.id)) : '',
+    p.count ? el('div', { style: 'margin-top:16px' }, storeEvalsBlock(p)) : '',
     el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '매장 의견 (장점 · 단점 · 개선 아이디어)'), notes));
 }
 
@@ -551,7 +589,20 @@ async function load() {
   const stores = data.staff.slice().sort((a, b) => a.done - b.done || a.name.localeCompare(b.name));
   const full = stores.filter((s) => s.done >= data.activeProducts).length;
   const pills = el('div', { class: 'pills', hidden: '' }, stores.map((s) =>
-    el('span', { class: 'pill' + (s.done >= data.activeProducts ? ' full' : '') }, `${s.name} ${s.done}/${data.activeProducts}`)));
+    el('span', { class: 'pill' + (s.done >= data.activeProducts ? ' full' : '') }, `${s.name} ${s.done}/${data.activeProducts} `,
+      el('button', {
+        type: 'button', class: 'pill-x', title: `${s.name} 데이터 전체 삭제`,
+        onclick: async () => {
+          const typed = prompt(`"${s.name}"의 상품 평가 ${s.n}건과 Z-TEC 의견을 모두 삭제합니다. 되돌릴 수 없어요.\n계속하려면 매장명 "${s.name}"을 그대로 입력하세요.`);
+          if (typed === null) return;
+          if (typed.trim() !== s.name) return alert('입력한 매장명이 달라서 취소했어요.');
+          try {
+            const r = await api(`/api/admin/stores/${encodeURIComponent(s.name)}?confirm=${encodeURIComponent(s.name)}`, { method: 'DELETE' });
+            alert(`삭제했어요: 상품 평가 ${r.deletedEvaluations}건, Z-TEC 의견 ${r.deletedZtec}건`);
+            load();
+          } catch (ex) { alert(ex.message); }
+        },
+      }, '🗑'))));
   $('staffBox').replaceChildren(...(stores.length
     ? [el('span', { class: 'hint' }, `참여 매장 ${stores.length}곳 · 전부 완료 ${full}곳 · 진행 중 ${stores.length - full}곳 `),
        el('button', { type: 'button', class: 'linkbtn', style: 'padding:0', onclick: (e) => { pills.hidden = !pills.hidden; e.target.textContent = pills.hidden ? '매장별 보기' : '접기'; } }, '매장별 보기'),

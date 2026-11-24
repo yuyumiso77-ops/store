@@ -235,6 +235,35 @@ test('AI 의견 요약: 키 없으면 안내, 있으면 요약하고 저장(기�
   _setAiClient(null);
 });
 
+test('평가 삭제: 한 건 / Z-TEC 한 건 / 매장 전체', async () => {
+  const pr = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '삭제 테스트', category: '장갑' }) })).json();
+  const ev = (store) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: pr.id, staff: store, reaction: 4, pros: ['그립감'], sales: 'good', sellReasons: ['선물 수요'] }) });
+  await ev('테스트점'); await ev('진짜점');
+  await fetch(base + '/api/ztec', { method: 'POST', headers: staff, body: JSON.stringify({ store: '테스트 점', reaction: 3, ease: 'normal' }) });
+  let list = await (await fetch(base + `/api/admin/products/${pr.id}/evaluations`, { headers: admin })).json();
+  assert.strictEqual(list.length, 2);
+  assert.strictEqual((await fetch(base + `/api/admin/evaluations/${list[0].id}`, { method: 'DELETE', headers: staff })).status, 401);
+  // 한 건 삭제
+  const real = list.find((x) => x.staff === '진짜점');
+  assert.strictEqual((await fetch(base + `/api/admin/evaluations/${real.id}`, { method: 'DELETE', headers: admin })).status, 200);
+  assert.strictEqual((await fetch(base + `/api/admin/evaluations/${real.id}`, { method: 'DELETE', headers: admin })).status, 404);
+  // 매장 전체 삭제: 확인 문구 틀리면 거부
+  const enc = encodeURIComponent('테스트점');
+  assert.strictEqual((await fetch(base + `/api/admin/stores/${enc}?confirm=x`, { method: 'DELETE', headers: admin })).status, 400);
+  const d = await (await fetch(base + `/api/admin/stores/${enc}?confirm=${enc}`, { method: 'DELETE', headers: admin })).json();
+  assert.deepStrictEqual([d.deletedEvaluations, d.deletedZtec], [1, 1]); // '테스트 점'(띄어쓰기)도 같은 매장
+  list = await (await fetch(base + `/api/admin/products/${pr.id}/evaluations`, { headers: admin })).json();
+  assert.strictEqual(list.length, 0);
+  // Z-TEC 한 건 삭제
+  await fetch(base + '/api/ztec', { method: 'POST', headers: staff, body: JSON.stringify({ store: '삭제점', reaction: 3, ease: 'normal' }) });
+  const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  const z = s.ztec.entries.find((e) => e.store === '삭제점');
+  assert.strictEqual((await fetch(base + `/api/admin/ztec/${z.id}`, { method: 'DELETE', headers: admin })).status, 200);
+  const s2 = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  assert.ok(!s2.ztec.entries.some((e) => e.store === '삭제점'));
+  await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);
