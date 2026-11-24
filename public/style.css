@@ -243,3 +243,6 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 .evrow { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .pill-x { border: none; background: none; cursor: pointer; padding: 0 0 0 2px; font-size: .75rem; opacity: .7; }
 .pill-x:hover { opacity: 1; }
+.brand { padding: 4px 0 18px; }
+.brand img { height: 28px; width: auto; display: block; }
+@media (prefers-color-scheme: dark) { .brand img { filter: invert(1); } }
