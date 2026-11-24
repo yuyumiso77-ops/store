@@ -154,3 +154,4 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 }
 .pdone { color: var(--accent); }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
+#filter button.warn:not(.on) { border-color: var(--star); }

@@ -79,11 +79,15 @@ test('상품 삭제: 이미지·평가도 함께 삭제', async () => {
   const p = (await r.json()).product;
   await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '민지', reaction: 3, sales: 'normal' }) });
   assert.strictEqual((await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: staff })).status, 401);
+  // 이미지만 삭제
+  assert.strictEqual((await fetch(base + `/api/admin/products/${p.id}/image`, { method: 'DELETE', headers: admin })).status, 200);
+  const opt = await (await fetch(base + '/api/options', { headers: staff })).json();
+  assert.strictEqual(opt.products.find((x) => x.id === p.id).imageUrl, null);
+  assert.strictEqual((await fetch(base + p.imageUrl, { headers: staff })).status, 404);
   const d = await (await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: admin })).json();
   assert.strictEqual(d.deletedEvaluations, 1);
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
   assert.ok(!s.products.some((x) => x.id === p.id));
-  assert.strictEqual((await fetch(base + p.imageUrl, { headers: staff })).status, 404);
 });
 
 test('품목 필수', async () => {

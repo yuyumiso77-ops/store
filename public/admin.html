@@ -114,6 +114,13 @@ function renderProduct(p) {
     try { await uploadImage(fileIn.files[0], p.code, p.category); load(); } catch (ex) { alert(ex.message); }
   };
   const imgBtn = el('button', { class: 'btn', onclick: () => fileIn.click() }, p.imageUrl ? '이미지 교체' : '이미지 추가');
+  const imgDel = p.imageUrl ? el('button', {
+    class: 'btn',
+    onclick: async () => {
+      if (!confirm(`"${p.name}" 상품의 이미지만 삭제할까요?\n상품과 평가는 그대로 남아요.`)) return;
+      try { await api(`/api/admin/products/${p.id}/image`, { method: 'DELETE' }); load(); } catch (ex) { alert(ex.message); }
+    },
+  }, '이미지 삭제') : '';
   const editBtn = el('button', { class: 'btn', onclick: () => { head.replaceWith(editForm(p)); } }, '수정');
   const head = el('div', { class: 'product-head' },
     el('div', { class: 'phead' },
@@ -121,7 +128,7 @@ function renderProduct(p) {
       el('div', {},
         el('h2', { style: 'margin:0 0 4px' }, p.name),
         el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
-    el('div', { class: 'actions' }, editBtn, imgBtn, toggle, del, fileIn));
+    el('div', { class: 'actions' }, editBtn, imgBtn, imgDel, toggle, del, fileIn));
 
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
     head,
@@ -271,12 +278,16 @@ async function load() {
 // 품목 필터
 let LAST = [], FILTER = '', CATS = [];
 function renderList() {
-  $('filter').replaceChildren(...['', ...CATS].map((c) => {
-    const n = LAST.filter((p) => !c || p.category === c).length;
-    return el('button', { type: 'button', class: FILTER === c ? 'on' : '', onclick: () => { FILTER = c; renderList(); } }, `${c || '전체'} ${n}`);
+  const NOIMG = '__noimg';
+  const match = (p, f) => !f || (f === NOIMG ? !p.imageUrl : p.category === f);
+  const noImg = LAST.filter((p) => !p.imageUrl).length;
+  $('filter').replaceChildren(...['', ...CATS, ...(noImg ? [NOIMG] : [])].map((c) => {
+    const n = LAST.filter((p) => match(p, c)).length;
+    return el('button', { type: 'button', class: (FILTER === c ? 'on' : '') + (c === NOIMG ? ' warn' : ''), onclick: () => { FILTER = c; renderList(); } }, `${c === NOIMG ? '⚠️ 이미지 없음' : c || '전체'} ${n}`);
   }));
+  if (FILTER === NOIMG && !noImg) FILTER = '';
   const q = $('search').value.trim().toLowerCase();
-  const ps = LAST.filter((p) => (!FILTER || p.category === FILTER) && (!q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)));
+  const ps = LAST.filter((p) => match(p, FILTER) && (!q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)));
   $('products').replaceChildren(...(ps.length
     ? ps.slice().sort((a, b) => b.active - a.active || b.count - a.count).map(renderProduct)
     : [el('div', { class: 'card hint' }, LAST.length ? '이 품목에 등록된 상품이 없어요.' : '위에서 조사할 상품을 먼저 등록해 주세요.')]));
