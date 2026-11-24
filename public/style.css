@@ -183,3 +183,21 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
   .pc-only { display: none !important; }
 }
 .uplog li.muted { color: var(--muted); } .plcs { margin-top: 4px; font-size: .78rem; }
+.photostrip { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+.photostrip .ph { margin: 0; width: 96px; font-size: .72rem; }
+.photostrip .ph img { width: 96px; height: 96px; object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: 8px; cursor: zoom-in; display: block; }
+.photostrip .ph.main img { border: 2px solid var(--accent); }
+.photostrip figcaption { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.phbtns { display: flex; justify-content: space-between; align-items: center; gap: 4px; margin-top: 2px; }
+.mini { font-size: .72rem; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+.mini.danger { color: var(--danger); }
+.gallery { display: flex; gap: 6px; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
+.gallery img { width: 64px; height: 64px; object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: 8px; flex: 0 0 auto; cursor: zoom-in; }
+.gallery img.on { border: 2px solid var(--accent); }
+.pcount { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,.55); color: #fff; font-size: .7rem; padding: 1px 6px; border-radius: 999px; }
+.lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.9); z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+.lightbox[hidden] { display: none !important; }
+.lightbox img { max-width: 100%; max-height: calc(100% - 110px); object-fit: contain; background: #fff; border-radius: 8px; }
+.lbcap { color: #ddd; margin: 10px 0; font-size: .9rem; }
+.lbnav { display: flex; gap: 12px; }
+.lbnav button { background: rgba(255,255,255,.15); color: #fff; border: none; border-radius: 10px; padding: 10px 18px; font-size: 1.1rem; cursor: pointer; }

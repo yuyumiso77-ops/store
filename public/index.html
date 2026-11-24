@@ -22,6 +22,7 @@
       <span class="q">상품 <span class="req">*</span></span>
       <input type="hidden" id="product">
       <div id="picked" class="picked" hidden></div>
+      <div id="gallery" class="gallery" hidden></div>
       <div id="picker">
         <input type="search" id="search" placeholder="품번 · 상품명 · 복종 검색">
         <div class="chips seg" id="lineFilter" style="margin-top:10px"></div>
@@ -88,6 +89,7 @@
     <p class="error" id="error"></p>
   </form>
   <div class="toast" id="toast" role="status"></div>
+  <div class="lightbox" id="lightbox" hidden><img id="lbImg" alt=""><div class="lbcap" id="lbCap"></div><div class="lbnav"><button type="button" id="lbPrev">‹</button><button type="button" id="lbClose">닫기</button><button type="button" id="lbNext">›</button></div></div>
 </main>
 
 <script>
@@ -190,6 +192,19 @@ async function init() {
   chips('ageGroups', OPTS.ageGroups.map((x) => [x, x]), { multi: true });
   chips('genders', OPTS.genders.map((x) => [x, x]), { multi: true });
   $('search').oninput = renderGrid;
+  $('lbClose').onclick = closeLightbox;
+  $('lbPrev').onclick = () => stepLb(-1);
+  $('lbNext').onclick = () => stepLb(1);
+  $('lightbox').onclick = (e) => { if (e.target.id === 'lightbox') closeLightbox(); };
+  document.addEventListener('keydown', (e) => {
+    if ($('lightbox').hidden) return;
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowLeft') stepLb(-1);
+    if (e.key === 'ArrowRight') stepLb(1);
+  });
+  let sx = 0;
+  $('lightbox').addEventListener('touchstart', (e) => (sx = e.touches[0].clientX), { passive: true });
+  $('lightbox').addEventListener('touchend', (e) => { const dx = e.changedTouches[0].clientX - sx; if (Math.abs(dx) > 40) stepLb(dx < 0 ? 1 : -1); });
   $('staff').onchange = loadMine;
   try { $('staff').value = localStorage.getItem('staff') || ''; } catch {}
   try { const l = localStorage.getItem('line') || ''; if (l === '__none' ? OPTS.products.some((p) => !p.line) : OPTS.products.some((p) => p.line === l)) LINE = l; } catch {}
@@ -309,6 +324,7 @@ function renderGrid() {
     cap.querySelector('b').textContent = p.code || p.category;
     cap.querySelector('small').textContent = p.name !== p.code ? p.name : p.type || p.category;
     b.append(thumb(p, 'timg'), cap);
+    if (p.photos && p.photos.length > 1) { const c = document.createElement('span'); c.className = 'pcount'; c.textContent = `📷 ${p.photos.length}`; b.append(c); }
     if (MINE[p.id]) { const t = document.createElement('span'); t.className = 'badge'; t.textContent = '✓ 평가 완료'; b.append(t); }
     grid.appendChild(b);
   });
@@ -319,11 +335,23 @@ function fillForm(e) {
   Object.keys(FIELDS).forEach((k) => (state[k] = structuredClone(src[k] ?? FIELDS[k])));
   TEXTS.forEach((id) => ($(id).value = (e && e[id]) || ''));
 }
+// ---- 사진 크게 보기 ----
+let LB = { p: null, i: 0 };
+function showLb() {
+  const ph = LB.p.photos[LB.i];
+  $('lbImg').src = ph.url;
+  $('lbCap').textContent = `${LB.i + 1} / ${LB.p.photos.length}` + (ph.color ? ` · ${ph.color}` : '') + (LB.i === 0 ? ' · 대표 사진' : '');
+}
+function openLightbox(p, i) { LB = { p, i }; showLb(); $('lightbox').hidden = false; }
+function closeLightbox() { $('lightbox').hidden = true; }
+function stepLb(d) { LB.i = (LB.i + d + LB.p.photos.length) % LB.p.photos.length; showLb(); }
+
 function selectProduct(id) {
   const p = OPTS.products.find((x) => x.id === id);
   $('product').value = p ? p.id : '';
   $('picker').hidden = !!p;
   $('picked').hidden = !p;
+  if (!p) $('gallery').hidden = true;
   $('survey').hidden = !p;
   if (!p) { renderGrid(); return; }
 
@@ -336,7 +364,20 @@ function selectProduct(id) {
   change.type = 'button'; change.className = 'btn'; change.textContent = '다른 상품';
   change.onclick = () => { selectProduct(''); $('search').focus(); };
   info.appendChild(change);
-  $('picked').replaceChildren(thumb(p, 'pimg'), info);
+  const main = thumb(p, 'pimg');
+  if (p.photos && p.photos.length) { main.style.cursor = 'zoom-in'; main.onclick = () => openLightbox(p, 0); }
+  $('picked').replaceChildren(main, info);
+  // 상세컷 (대표 포함 전체, 누르면 크게)
+  const g = $('gallery');
+  g.replaceChildren();
+  g.hidden = !(p.photos && p.photos.length > 1);
+  (p.photos || []).forEach((ph, i) => {
+    const im = document.createElement('img');
+    im.src = ph.url; im.alt = ph.label; im.loading = 'lazy';
+    if (i === 0) im.className = 'on';
+    im.onclick = () => openLightbox(p, i);
+    g.appendChild(im);
+  });
 
   // 품목에 맞는 장단점 항목
   const aspects = OPTS.aspectsByCategory[p.category] || OPTS.defaultAspects;

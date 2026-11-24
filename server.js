@@ -139,7 +139,41 @@ function imageType(buf) {
   if (buf.slice(0, 4).toString() === 'RIFF' && buf.slice(8, 12).toString() === 'WEBP') return 'webp';
   return null;
 }
+// ---------- 상품 사진 (대표 1장 + 상세컷) ----------
+// photo = { file, key(원본 파일명), plc, color, rank(엑셀 컬러 순서, 품번 사진은 -1), sw, manual, pinned, at }
+function photosOf(p) {
+  if (!p.photos) {
+    // 예전 데이터(사진 1장) 옮기기
+    p.photos = p.image
+      ? [{ file: p.image, key: '기존 사진', plc: '', color: '', rank: p.imageRank ?? -1, sw: !!p.imageIsSw, manual: (p.imageRank ?? -1) < 0, pinned: false, at: p.imageAt || 0 }]
+      : [];
+  }
+  return p.photos;
+}
+// 대표 사진 순서: 직접 지정(★) > 품번 이름 사진 > 엑셀 첫 컬러 > _sw > 파일명
+const photoOrder = (a, b) =>
+  (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.manual ? 1 : 0) - (a.manual ? 1 : 0) || a.rank - b.rank || (b.sw ? 1 : 0) - (a.sw ? 1 : 0) || a.key.localeCompare(b.key);
+function syncMain(p) {
+  const ph = photosOf(p).sort(photoOrder);
+  if (ph[0]) {
+    p.image = ph[0].file;
+    p.imageAt = ph[0].at;
+  } else {
+    delete p.image;
+    delete p.imageAt;
+  }
+  delete p.imageRank;
+  delete p.imageIsSw;
+}
+function removePhotos(p, pred = () => true) {
+  const ph = photosOf(p);
+  ph.filter(pred).forEach((x) => fs.rmSync(path.join(IMG_DIR, x.file), { force: true }));
+  p.photos = ph.filter((x) => !pred(x));
+  syncMain(p);
+}
 const imageUrl = (p) => (p.image ? `/images/${p.image}?v=${p.imageAt}` : null);
+const photoList = (p) =>
+  photosOf(p).slice().sort(photoOrder).map((x) => ({ id: x.file, url: `/images/${x.file}?v=${x.at}`, label: x.key, color: x.color, pinned: !!x.pinned }));
 // 복종이 비어 있으면 상품명 앞부분이 알려진 복종과 정확히 같을 때만 사용 (예: "여성 긴팔 티셔츠 (BLACK)" → 긴팔 티셔츠)
 function inferType(name, category) {
   const head = String(name || '').split(' (')[0].trim().replace(/^(남성|여성|남녀공용)\s+/, '');
@@ -148,7 +182,7 @@ function inferType(name, category) {
 const typeOf = (p) => p.type || inferType(p.name, p.category);
 // 구분(남성/여성)이 비어 있으면 상품명 앞의 "남성 "/"여성 "으로 판단
 const lineOf = (p) => p.line || (String(p.name || '').match(/^(남성|여성|남녀공용)\s/) || [])[1] || '';
-const publicProduct = (p) => ({ id: p.id, code: p.code || '', name: p.name, category: p.category, type: typeOf(p), line: lineOf(p), plcs: p.plcs || [], active: p.active });
+const publicProduct = (p) => ({ id: p.id, code: p.code || '', name: p.name, category: p.category, type: typeOf(p), line: lineOf(p), plcs: p.plcs || [], photos: photoList(p), active: p.active });
 
 function passwordOf(req) {
   const h = req.headers.authorization || '';
@@ -278,12 +312,8 @@ async function handle(req, res) {
       if (url.searchParams.get('confirm') !== '전부삭제') return send(res, 400, { error: '확인 문구가 필요합니다.' });
       let n = 0;
       db.products.forEach((x) => {
-        if (!x.image) return;
-        fs.rmSync(path.join(IMG_DIR, x.image), { force: true });
-        delete x.image;
-        delete x.imageAt;
-        delete x.imageRank;
-        delete x.imageIsSw;
+        if (!photosOf(x).length) return;
+        removePhotos(x);
         n++;
       });
       saveDb();
@@ -295,20 +325,35 @@ async function handle(req, res) {
     if (pim && m === 'DELETE') {
       const product = db.products.find((x) => x.id === pim[1]);
       if (!product) return send(res, 404, { error: '상품이 없습니다.' });
-      if (product.image) fs.rmSync(path.join(IMG_DIR, product.image), { force: true });
-      delete product.image;
-      delete product.imageAt;
-      delete product.imageRank;
-      delete product.imageIsSw;
+      removePhotos(product);
       saveDb();
       return send(res, 200, { ok: true });
+    }
+
+    // 사진 한 장 삭제 / 대표로 지정
+    const pph = p.match(/^\/api\/admin\/products\/([\w-]+)\/photos\/([\w.-]+)(\/pin)?$/);
+    if (pph) {
+      const product = db.products.find((x) => x.id === pph[1]);
+      const photo = product && photosOf(product).find((x) => x.file === pph[2]);
+      if (!photo) return send(res, 404, { error: '사진이 없습니다.' });
+      if (m === 'DELETE' && !pph[3]) {
+        removePhotos(product, (x) => x === photo);
+        saveDb();
+        return send(res, 200, { ok: true });
+      }
+      if (m === 'POST' && pph[3]) {
+        photosOf(product).forEach((x) => (x.pinned = x === photo));
+        syncMain(product);
+        saveDb();
+        return send(res, 200, { ok: true });
+      }
     }
 
     // 상품 삭제: 이미지 파일과 그 상품의 평가도 함께 삭제
     if (pm && m === 'DELETE') {
       const product = db.products.find((x) => x.id === pm[1]);
       if (!product) return send(res, 404, { error: '상품이 없습니다.' });
-      if (product.image) fs.rmSync(path.join(IMG_DIR, product.image), { force: true });
+      removePhotos(product);
       const before = db.evaluations.length;
       db.evaluations = db.evaluations.filter((e) => e.productId !== product.id);
       db.products = db.products.filter((x) => x.id !== product.id);
@@ -389,32 +434,36 @@ async function handle(req, res) {
           product = byPlc(plc);
           if (!product) return send(res, 400, { error: `PLC ${plc}에 해당하는 상품이 없어요. PLC 정보 CSV를 먼저 올려 주세요.` });
           const rank = product.plcs.findIndex((q) => q.plc === plc);
-          match = { by: 'plc', plc, color: product.plcs[rank].color, rank };
-          // 대표 사진 = 엑셀 첫 번째 컬러. 더 앞선 컬러(또는 품번 이름) 사진이 있으면 건너뜀
-          const cur = product.image ? (product.imageRank ?? -1) : Infinity;
-          match.sw = isSwName(code);
-          if (rank > cur || (rank === cur && product.imageIsSw && !match.sw)) {
-            return send(res, 200, { skipped: true, match, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
-          }
+          match = { by: 'plc', plc, color: product.plcs[rank].color, rank, sw: isSwName(code) };
         }
       }
       if (!product) {
         const category = url.searchParams.get('category');
         if (!CATEGORIES.includes(category)) return send(res, 400, { error: '새 품번이에요. 품목을 먼저 선택해 주세요.' });
-        product = { id: crypto.randomUUID().slice(0, 8), code, name: code, category, active: true, createdAt: new Date().toISOString() };
+        product = { id: crypto.randomUUID().slice(0, 8), code, name: code, category, active: true, createdAt: new Date().toISOString(), photos: [] };
         db.products.push(product);
         created = true;
       }
-      const hadImage = !!product.image;
+      // 같은 파일명(품번 이름 사진은 '품번 사진' 한 칸)은 교체, 새 파일명은 사진 추가
+      const ph = photosOf(product);
+      const key = match.by === 'code' ? '품번 사진' : code;
+      const old = ph.find((x) => x.key.toLowerCase() === key.toLowerCase());
+      if (!old && ph.length >= 40) return send(res, 400, { error: '사진은 상품당 40장까지 올릴 수 있어요.' });
       fs.mkdirSync(IMG_DIR, { recursive: true });
-      if (product.image && product.image !== `${product.id}.${ext}`) fs.rmSync(path.join(IMG_DIR, product.image), { force: true });
-      fs.writeFileSync(path.join(IMG_DIR, `${product.id}.${ext}`), buf);
-      product.image = `${product.id}.${ext}`;
-      product.imageAt = Date.now();
-      product.imageRank = match.by === 'plc' ? match.rank : -1; // 품번 이름 사진은 최우선
-      product.imageIsSw = match.by === 'plc' && match.sw;
+      const file = `${product.id}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+      fs.writeFileSync(path.join(IMG_DIR, file), buf);
+      const photo = {
+        file, key, plc: match.plc || '', color: match.color || '', rank: match.by === 'plc' ? match.rank : -1,
+        sw: !!match.sw, manual: match.by === 'code', pinned: old ? !!old.pinned : false, at: Date.now(),
+      };
+      if (old) {
+        fs.rmSync(path.join(IMG_DIR, old.file), { force: true });
+        Object.assign(old, photo);
+      } else ph.push(photo);
+      syncMain(product);
       saveDb();
-      return send(res, created ? 201 : 200, { created, hadImage, match, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
+      const role = product.image === file ? 'main' : 'detail';
+      return send(res, created ? 201 : 200, { created, replaced: !!old, role, photoCount: ph.length, match, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
     }
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
@@ -504,6 +553,9 @@ async function handle(req, res) {
 
   send(res, 404, 'Not found');
 }
+
+// 예전 데이터(사진 1장)를 사진 목록 구조로 옮기기 — 함수 정의 뒤에 실행
+db.products.forEach((p) => { photosOf(p); syncMain(p); });
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((err) => {

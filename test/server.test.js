@@ -132,25 +132,50 @@ test('PLC 번호 파일명으로 이미지 매칭 (첫 번째 컬러가 대표)'
   const clash = await imp([{ code: 'PLC-T2', category: '어패럴', plc: '90002' }]); // 다른 품번이 이미 쓰는 PLC
   assert.strictEqual(clash.errors.length, 1);
   const put = (name, cat = '어패럴') => fetch(base + `/api/admin/images/${encodeURIComponent(name)}?category=${encodeURIComponent(cat)}`, { method: 'PUT', headers: { ...admin, 'Content-Type': 'image/jpeg' }, body: Buffer.from([0xff, 0xd8, 0xff, 0xe0, name.length]) }).then(async (r) => ({ status: r.status, ...(await r.json()) }));
-  const w = await put('FJ_90002_sw'); // 두 번째 컬러 먼저
-  assert.deepStrictEqual([w.status, w.match.by, w.match.color, w.product.code, !!w.skipped], [200, 'plc', 'WHITE', 'PLC-T1', false]);
-  const b = await put('90001'); // 첫 번째 컬러 → 교체
-  assert.deepStrictEqual([b.match.color, b.hadImage, !!b.skipped], ['BLACK', true, false]);
-  const w2 = await put('FJ_90002_sw'); // 다시 두 번째 컬러 → 건너뜀
-  assert.strictEqual(w2.skipped, true);
-  const sw = await put('FJ_90001_sw'); // 같은 컬러 _sw 사진 → 대표로 교체
-  assert.deepStrictEqual([!!sw.skipped, sw.match.sw], [false, true]);
-  assert.strictEqual((await put('FJ_90001_f')).skipped, true); // 같은 컬러지만 _sw 아님 → 건너뜀
+  const w = await put('FJ_90002_sw'); // 두 번째 컬러 먼저 → 지금은 유일한 사진이라 대표
+  assert.deepStrictEqual([w.status, w.match.by, w.match.color, w.product.code, w.role], [200, 'plc', 'WHITE', 'PLC-T1', 'main']);
+  const b = await put('90001'); // 첫 번째 컬러 → 대표가 바뀜, WHITE는 상세컷으로
+  assert.deepStrictEqual([b.match.color, b.role, b.photoCount], ['BLACK', 'main', 2]);
+  const w2 = await put('FJ_90002_sw'); // 같은 파일명 다시 → 교체, 상세컷
+  assert.deepStrictEqual([w2.replaced, w2.role, w2.photoCount], [true, 'detail', 2]);
+  const sw = await put('FJ_90001_sw'); // 첫 컬러의 _sw → 대표
+  assert.deepStrictEqual([sw.role, sw.photoCount], ['main', 3]);
+  const f = await put('FJ_90001_f'); // 첫 컬러지만 _sw 아님 → 상세컷
+  assert.deepStrictEqual([f.role, f.photoCount], ['detail', 4]);
   const none = await put('FJ_99999_sw'); // 없는 PLC는 품목이 있어도 새 상품을 만들지 않음
   assert.strictEqual(none.status, 400);
-  const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  let s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
   assert.ok(!s.products.some((x) => x.code === 'FJ_99999_sw'));
-  const t = s.products.find((x) => x.code === 'PLC-T1');
+  let t = s.products.find((x) => x.code === 'PLC-T1');
   assert.deepStrictEqual(t.plcs, [{ plc: '90001', color: 'BLACK' }, { plc: '90002', color: 'WHITE' }]);
+  assert.deepStrictEqual(t.photos.map((x) => x.label), ['FJ_90001_sw', '90001', 'FJ_90001_f', 'FJ_90002_sw']); // 대표가 맨 앞
+  assert.strictEqual(t.imageUrl, t.photos[0].url);
   // 품번 이름 사진은 PLC 사진보다 우선
-  await put('PLC-T1');
-  assert.strictEqual((await put('90001')).skipped, true);
+  assert.strictEqual((await put('PLC-T1')).role, 'main');
+  // ★ 대표로 지정하면 그 사진이 최우선
+  s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  t = s.products.find((x) => x.code === 'PLC-T1');
+  const white = t.photos.find((x) => x.label === 'FJ_90002_sw');
+  assert.strictEqual((await fetch(base + `/api/admin/products/${t.id}/photos/${white.id}/pin`, { method: 'POST', headers: admin })).status, 200);
+  s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  t = s.products.find((x) => x.code === 'PLC-T1');
+  assert.strictEqual(t.photos[0].label, 'FJ_90002_sw');
+  // 사진 한 장 삭제
+  assert.strictEqual((await fetch(base + `/api/admin/products/${t.id}/photos/${white.id}`, { method: 'DELETE', headers: admin })).status, 200);
+  s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  t = s.products.find((x) => x.code === 'PLC-T1');
+  assert.strictEqual(t.photos.length, 4);
+  assert.strictEqual(t.photos[0].label, '품번 사진');
+  assert.strictEqual((await fetch(base + white.url, { headers: staff })).status, 404);
   await fetch(base + `/api/admin/products/${t.id}`, { method: 'DELETE', headers: admin });
+});
+
+test('예전 데이터(사진 1장)로 서버 시작 가능', () => {
+  const { execFileSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'store-legacy-'));
+  fs.writeFileSync(path.join(dir, 'db.json'), JSON.stringify({ products: [{ id: 'old1', code: 'OLD-1', name: 'x', category: '어패럴', active: true, image: 'old1.jpg', imageAt: 1, imageRank: 0, imageIsSw: true }], evaluations: [] }));
+  const out = execFileSync(process.execPath, ['-e', "const {server}=require('./server');const s=require('fs');console.log('ok')"], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR: dir } }).toString();
+  assert.match(out, /ok/);
 });
 
 test('품목 필수', async () => {

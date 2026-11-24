@@ -130,14 +130,32 @@ function renderProduct(p) {
     if (!p.code) return alert('이미지를 바꾸려면 먼저 [수정]에서 품번을 입력해 주세요.');
     try { await uploadImage(fileIn.files[0], p.code, p.category); load(); } catch (ex) { alert(ex.message); }
   };
-  const imgBtn = el('button', { class: 'btn', onclick: () => fileIn.click() }, p.imageUrl ? '이미지 교체' : '이미지 추가');
+  const imgBtn = el('button', { class: 'btn', onclick: () => fileIn.click() }, p.imageUrl ? '대표 사진 교체' : '사진 추가');
   const imgDel = p.imageUrl ? el('button', {
     class: 'btn',
     onclick: async () => {
-      if (!confirm(`"${p.name}" 상품의 이미지만 삭제할까요?\n상품과 평가는 그대로 남아요.`)) return;
+      if (!confirm(`"${p.name}" 상품의 사진 ${p.photos.length}장을 모두 삭제할까요?\n상품과 평가는 그대로 남아요.`)) return;
       try { await api(`/api/admin/products/${p.id}/image`, { method: 'DELETE' }); load(); } catch (ex) { alert(ex.message); }
     },
-  }, '이미지 삭제') : '';
+  }, '사진 전부 삭제') : '';
+  // 사진 목록: ★ 대표로 지정, ✕ 삭제
+  const photoStrip = p.photos && p.photos.length > 1 ? el('div', { class: 'photostrip' },
+    el('div', { class: 'hint', style: 'width:100%' }, `사진 ${p.photos.length}장 (첫 번째가 대표 사진)`),
+    p.photos.map((ph, i) => el('figure', { class: i === 0 ? 'ph main' : 'ph' },
+      el('img', { src: ph.url, alt: ph.label, loading: 'lazy', title: ph.label, onclick: () => window.open(ph.url, '_blank') }),
+      el('figcaption', {}, [ph.color, ph.label].filter(Boolean).join(' · ')),
+      el('div', { class: 'phbtns' },
+        i === 0 ? el('span', { class: 'hint' }, ph.pinned ? '★ 지정됨' : '대표') : el('button', {
+          type: 'button', class: 'mini', title: '대표 사진으로 지정',
+          onclick: async () => { try { await api(`/api/admin/products/${p.id}/photos/${ph.id}/pin`, { method: 'POST' }); load(); } catch (ex) { alert(ex.message); } },
+        }, '★ 대표로'),
+        el('button', {
+          type: 'button', class: 'mini danger', title: '이 사진 삭제',
+          onclick: async () => {
+            if (!confirm(`사진 "${ph.label}"을 삭제할까요?`)) return;
+            try { await api(`/api/admin/products/${p.id}/photos/${ph.id}`, { method: 'DELETE' }); load(); } catch (ex) { alert(ex.message); }
+          },
+        }, '✕'))))) : '';
   const editBtn = el('button', { class: 'btn', onclick: () => { head.replaceWith(editForm(p)); } }, '수정');
   const head = el('div', { class: 'product-head' },
     el('div', { class: 'phead' },
@@ -147,9 +165,10 @@ function renderProduct(p) {
         el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', p.line ? el('span', { class: 'tag' }, p.line) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.type ? el('span', { class: 'tag' }, p.type) : el('span', { class: 'tag warn' }, '복종 미지정'), ' ', p.gap ? el('span', { class: 'tag gap' }, GAP[p.gap]) : '', ' ',
           p.plcs && p.plcs.length ? el('div', { class: 'hint plcs' }, 'PLC ' + p.plcs.map((q) => `${q.plc}${q.color ? ' ' + q.color : ''}`).join(' · ')) : '', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
     el('div', { class: 'actions' }, editBtn, imgBtn, imgDel, toggle, del, fileIn));
+  const headWrap = el('div', {}, head, photoStrip);
 
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
-    head,
+    headWrap,
     el('div', { class: 'stats' },
       stat(p.count, '평가한 직원 수'),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
@@ -251,26 +270,16 @@ function prepareFiles(all) {
   const log = $('uplog');
   const keep = all.filter((f) => !isJunk(f) && (isCsv(f) || IMG_EXT.test(f.name)));
   const skipped = all.length - keep.length;
-  // 품번(또는 PLC)별로 묶은 뒤, _sw 사진이 있으면 그것을, 없으면 파일명 순 마지막 것을 사용
-  const isSw = (n) => /(^|[_\-\s])sw$/i.test(codeFromName(n));
-  const groups = new Map();
-  keep.filter((f) => !isCsv(f)).sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name)).forEach((f) => {
-    const name = codeFromName(f.name);
-    const plc = (name.match(/(?:^|[^0-9])(\d{5,6})(?:[^0-9]|$)/) || [])[1];
-    const k = (plc ? 'plc:' + plc : name).toLowerCase();
-    if (!groups.has(k)) groups.set(k, { label: plc ? `PLC ${plc}` : name, files: [] });
-    groups.get(k).files.push(f);
-  });
+  // 모든 사진을 올림 (대표/상세컷은 서버가 결정). 파일명이 완전히 같은 사진만 하나로
   const byCode = new Map();
   const dups = new Set();
-  groups.forEach((g, k) => {
-    const sw = g.files.filter((f) => isSw(f.name));
-    const pick = sw.length ? sw[sw.length - 1] : g.files[g.files.length - 1];
-    if (g.files.length > 1 && !sw.length) dups.add(g.label);
-    byCode.set(k, pick);
+  keep.filter((f) => !isCsv(f)).sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name)).forEach((f) => {
+    const k = codeFromName(f.name).toLowerCase();
+    if (byCode.has(k)) dups.add(codeFromName(f.name));
+    byCode.set(k, f);
   });
   if (all.length > 1 || skipped) log.prepend(el('li', { class: 'summary' }, `📂 파일 ${all.length}개 중 이미지 ${byCode.size}개 · CSV ${keep.filter(isCsv).length}개를 올립니다` + (skipped ? ` (그 외 ${skipped}개는 건너뜀)` : '')));
-  if (dups.size) log.prepend(el('li', { class: 'fail' }, `⚠️ 같은 품번/PLC의 사진이 여러 장인데 _sw 사진이 없어 파일명 순으로 마지막 것만 사용: ${[...dups].join(', ')}`));
+  if (dups.size) log.prepend(el('li', { class: 'fail' }, `⚠️ 파일명이 같은 사진이 여러 폴더에 있어 마지막 것만 사용: ${[...dups].join(', ')}`));
   return [...keep.filter(isCsv), ...[...byCode.values()].sort((a, b) => a.name.localeCompare(b.name))];
 }
 
@@ -324,7 +333,8 @@ async function uploadMany(files) {
     }
   }
   const images = files.filter((f) => !/\.csv$/i.test(f.name));
-  let ok = 0, skipped = 0;
+  let okCount = 0;
+  const touched = new Set();
   const failed = [];
   for (const f of images) {
     const code = codeFromName(f.name);
@@ -333,14 +343,12 @@ async function uploadMany(files) {
     try {
       const r = await uploadImage(f, code, category);
       const via = r.match && r.match.by === 'plc' ? ` → ${r.product.code} ${r.match.color || ''} (PLC ${r.match.plc})` : '';
-      if (r.skipped) {
-        li.textContent = `⏭️ ${code}${via} — 대표 컬러 사진이 이미 있어 건너뜀`;
-        li.className = 'muted';
-        skipped++;
-        continue;
-      }
-      li.textContent = r.created ? `✅ ${code} — 새 상품으로 등록 (${r.product.category})` : r.hadImage ? `🔄 ${code}${via} — 이미지 교체 (${r.product.name})` : `🖼️ ${code}${via} — 이미지 등록 (${r.product.name})`;
-      ok++;
+      const what = r.role === 'main' ? '대표 사진' : '상세컷';
+      li.textContent = r.created ? `✅ ${code} — 새 상품으로 등록 (${r.product.category})`
+        : `${r.role === 'main' ? '🖼️' : '📎'} ${code}${via} — ${what}${r.replaced ? ' 교체' : ''} (사진 ${r.photoCount}장)`;
+      okCount++;
+      touched.add(r.product.id);
+      if (r.role !== 'main') li.className = 'muted';
     } catch (ex) {
       li.textContent = `❌ ${code} — ${ex.message}`;
       li.className = 'fail';
@@ -349,8 +357,8 @@ async function uploadMany(files) {
   }
   if (images.length) {
     log.prepend(el('li', { class: failed.length ? 'fail summary' : 'summary' },
-      (failed.length ? `⚠️ 이미지 완료: 성공 ${ok}개, 실패 ${failed.length}개` : `🎉 이미지 완료: ${ok}개 성공`) +
-      (skipped ? ` · 다른 컬러라 건너뜀 ${skipped}개` : '') + (failed.length ? ` — 실패: ${failed.join(', ')}` : '')));
+      `${failed.length ? '⚠️' : '🎉'} 이미지 완료: 사진 ${okCount}장 → 상품 ${touched.size}개에 반영 (상품마다 대표 1장 + 나머지 상세컷)` +
+      (failed.length ? ` · 실패 ${failed.length}개 — 실패: ${failed.join(', ')}` : '')));
   }
   load();
 }
