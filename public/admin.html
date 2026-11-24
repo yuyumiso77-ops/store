@@ -191,12 +191,22 @@ async function shrink(file) {
 }
 async function uploadImage(file, code, category) {
   const blob = await shrink(file);
-  const res = await fetch(`/api/admin/images/${encodeURIComponent(code)}?category=${encodeURIComponent(category || '')}`, {
-    method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || '업로드 실패');
-  return data;
+  // 연결 오류·서버 오류(5xx)는 잠시 후 최대 2번 더 시도
+  for (let attempt = 0; ; attempt++) {
+    let res;
+    try {
+      res = await fetch(`/api/admin/images/${encodeURIComponent(code)}?category=${encodeURIComponent(category || '')}`, {
+        method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob,
+      });
+    } catch (ex) {
+      if (attempt < 2) { await new Promise((r) => setTimeout(r, 1500 * (attempt + 1))); continue; }
+      throw new Error('서버에 연결하지 못했어요. 잠시 후 이 파일만 다시 올려 주세요.');
+    }
+    if (res.status >= 500 && attempt < 2) { await new Promise((r) => setTimeout(r, 1500 * (attempt + 1))); continue; }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `업로드 실패 (${res.status})`);
+    return data;
+  }
 }
 const codeFromName = (n) => n.replace(/\.[^.]+$/, '').trim();
 
@@ -249,17 +259,26 @@ async function uploadMany(files) {
       li.className = 'fail';
     }
   }
-  for (const f of files.filter((f) => !/\.csv$/i.test(f.name))) {
+  const images = files.filter((f) => !/\.csv$/i.test(f.name));
+  let ok = 0;
+  const failed = [];
+  for (const f of images) {
     const code = codeFromName(f.name);
     const li = el('li', {}, `⏳ ${code}`);
     log.prepend(li);
     try {
       const r = await uploadImage(f, code, category);
       li.textContent = r.created ? `✅ ${code} — 새 상품으로 등록 (${r.product.category})` : r.hadImage ? `🔄 ${code} — 이미지 교체 (${r.product.name})` : `🖼️ ${code} — 이미지 등록 (${r.product.name})`;
+      ok++;
     } catch (ex) {
       li.textContent = `❌ ${code} — ${ex.message}`;
       li.className = 'fail';
+      failed.push(code);
     }
+  }
+  if (images.length) {
+    log.prepend(el('li', { class: failed.length ? 'fail summary' : 'summary' },
+      failed.length ? `⚠️ 이미지 완료: 성공 ${ok}개, 실패 ${failed.length}개 — 실패: ${failed.join(', ')}` : `🎉 이미지 완료: ${ok}개 모두 성공`));
   }
   load();
 }
