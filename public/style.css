@@ -174,3 +174,4 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 }
 .qdesc { margin: -4px 0 10px; }
 .tag.gap { border-color: var(--danger); color: var(--danger); }
+.chips.seg button { font-weight: 700; }

@@ -24,6 +24,7 @@
       <div id="picked" class="picked" hidden></div>
       <div id="picker">
         <input type="search" id="search" placeholder="품번 · 상품명 · 복종 검색">
+        <div class="chips seg" id="lineFilter" style="margin-top:10px"></div>
         <div class="chips" id="catFilter" style="margin:10px 0"></div>
         <div class="grid" id="grid"></div>
       </div>
@@ -191,6 +192,8 @@ async function init() {
   $('search').oninput = renderGrid;
   $('staff').onchange = loadMine;
   try { $('staff').value = localStorage.getItem('staff') || ''; } catch {}
+  try { const l = localStorage.getItem('line') || ''; if (l === '__none' ? OPTS.products.some((p) => !p.line) : OPTS.products.some((p) => p.line === l)) LINE = l; } catch {}
+  renderLineFilter();
   renderCatFilter();
   await loadMine();
   const pid = new URLSearchParams(location.search).get('product');
@@ -210,13 +213,18 @@ async function loadMine() {
 }
 
 // ---- 이미지로 상품 고르기 (복종별로 묶어 정렬) ----
-const groupKey = (p) => `${p.category}|${p.type}`;
-const groupLabel = (p) => p.type || (OPTS.categories.length > 1 ? `${p.category} (복종 미지정)` : '복종 미지정');
+let LINE = '';
+const multiLine = () => new Set(OPTS.products.map((p) => p.line)).size > 1;
+const groupKey = (p) => `${p.line}|${p.category}|${p.type}`;
+const groupLabel = (p) => (p.type || (OPTS.categories.length > 1 ? `${p.category} (복종 미지정)` : '복종 미지정'));
+const groupTitle = (p) => (multiLine() && !LINE ? `${p.line || '구분 없음'} · ` : '') + groupLabel(p);
+const lineMatch = (p) => !LINE || (LINE === '__none' ? !p.line : p.line === LINE);
 function sortKey(p) {
   const ci = OPTS.categories.indexOf(p.category);
   const order = OPTS.typeOrder[p.category] || [];
   const ti = p.type ? (order.includes(p.type) ? order.indexOf(p.type) : 500) : 999;
-  return [ci < 0 ? 99 : ci, ti, p.type, p.code || p.name];
+  const li = p.line ? OPTS.lines.indexOf(p.line) : 99;
+  return [li, ci < 0 ? 99 : ci, ti, p.type, p.code || p.name];
 }
 function cmp(a, b) {
   const x = sortKey(a), y = sortKey(b);
@@ -226,17 +234,33 @@ function cmp(a, b) {
   }
   return 0;
 }
+function renderLineFilter() {
+  const box = $('lineFilter');
+  box.replaceChildren();
+  if (!multiLine()) { box.hidden = true; LINE = ''; return; }
+  box.hidden = false;
+  const lines = [...new Set(OPTS.products.map((p) => p.line))].sort((a, b) => (a ? OPTS.lines.indexOf(a) : 99) - (b ? OPTS.lines.indexOf(b) : 99));
+  ['', ...lines.map((l) => l || '__none')].forEach((key) => {
+    const n = OPTS.products.filter((p) => !key || (key === '__none' ? !p.line : p.line === key)).length;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `${key === '' ? '전체' : key === '__none' ? '구분 없음' : key} ${n}`;
+    b.className = LINE === key ? 'on' : '';
+    b.onclick = () => { LINE = key; CAT = ''; try { localStorage.setItem('line', LINE); } catch {} renderLineFilter(); renderCatFilter(); renderGrid(); };
+    box.appendChild(b);
+  });
+}
 function renderCatFilter() {
   const box = $('catFilter');
   box.replaceChildren();
   const groups = [];
-  OPTS.products.slice().sort(cmp).forEach((p) => {
+  OPTS.products.filter(lineMatch).slice().sort(cmp).forEach((p) => {
     const k = groupKey(p);
     const g = groups.find((x) => x.k === k);
     g ? g.n++ : groups.push({ k, label: groupLabel(p), n: 1 });
   });
   if (CAT && !groups.some((g) => g.k === CAT)) CAT = '';
-  [{ k: '', label: '전체', n: OPTS.products.length }, ...groups].forEach((g) => {
+  [{ k: '', label: LINE && LINE !== '__none' ? `${LINE} 전체` : '전체', n: OPTS.products.filter(lineMatch).length }, ...groups].forEach((g) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.textContent = `${g.label} ${g.n}`;
@@ -258,7 +282,7 @@ function thumb(p, cls) {
 function renderGrid() {
   const q = $('search').value.trim().toLowerCase();
   const list = OPTS.products
-    .filter((p) => (!CAT || groupKey(p) === CAT) && (!q || [p.name, p.code, p.type].some((v) => v.toLowerCase().includes(q))))
+    .filter((p) => lineMatch(p) && (!CAT || groupKey(p) === CAT) && (!q || [p.name, p.code, p.type].some((v) => v.toLowerCase().includes(q))))
     .sort(cmp);
   const grid = $('grid');
   grid.replaceChildren();
@@ -271,7 +295,7 @@ function renderGrid() {
       const h = document.createElement('div');
       h.className = 'ghead';
       h.innerHTML = '<span></span><small></small>';
-      h.querySelector('span').textContent = groupLabel(p);
+      h.querySelector('span').textContent = groupTitle(p);
       h.querySelector('small').textContent = `${inGroup.filter((x) => MINE[x.id]).length}/${inGroup.length} 완료`;
       grid.appendChild(h);
     }
@@ -306,7 +330,7 @@ function selectProduct(id) {
   const info = document.createElement('div');
   info.innerHTML = '<div class="pname"></div><div class="hint pcode"></div><div class="hint pdone"></div>';
   info.querySelector('.pname').textContent = p.name;
-  info.querySelector('.pcode').textContent = [p.code, p.category, p.type].filter(Boolean).join(' · ');
+  info.querySelector('.pcode').textContent = [p.code, p.line, p.type || p.category].filter(Boolean).join(' · ');
   if (MINE[p.id]) info.querySelector('.pdone').textContent = '이미 평가한 상품이에요. 수정 후 저장하면 바뀝니다.';
   const change = document.createElement('button');
   change.type = 'button'; change.className = 'btn'; change.textContent = '다른 상품';

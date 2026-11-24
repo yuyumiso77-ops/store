@@ -30,11 +30,14 @@ const TYPE_ORDER = {
   장갑: ['양피', '합피', '방한 장갑'],
   용품: ['캐디백', '보스턴백', '파우치', '모자', '벨트', '양말', '우산', '기타 용품'],
 };
+const LINES = ['남성', '여성', '남녀공용'];
+const cleanLine = (v) => (LINES.includes(String(v || '').trim()) ? String(v).trim() : '');
 const cleanType = (v) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, 30) : '');
 const aspectsFor = (category) => [...COMMON_ASPECTS, ...(CATEGORY_ASPECTS[category] || []), '기타'];
 const OPTIONS = {
   categories: CATEGORIES,
   typeOrder: TYPE_ORDER,
+  lines: LINES,
   aspectsByCategory: Object.fromEntries(CATEGORIES.map((c) => [c, aspectsFor(c)])),
   defaultAspects: aspectsFor(''),
   sales: { good: '잘 팔림', normal: '보통', poor: '잘 안 팔림' },
@@ -128,13 +131,15 @@ function imageType(buf) {
   return null;
 }
 const imageUrl = (p) => (p.image ? `/images/${p.image}?v=${p.imageAt}` : null);
-// 복종이 비어 있으면 상품명 앞부분이 알려진 복종과 정확히 같을 때만 사용 (예: "긴팔 티셔츠 (BLACK)" → 긴팔 티셔츠)
+// 복종이 비어 있으면 상품명 앞부분이 알려진 복종과 정확히 같을 때만 사용 (예: "여성 긴팔 티셔츠 (BLACK)" → 긴팔 티셔츠)
 function inferType(name, category) {
-  const head = String(name || '').split(' (')[0].trim();
+  const head = String(name || '').split(' (')[0].trim().replace(/^(남성|여성|남녀공용)\s+/, '');
   return (TYPE_ORDER[category] || []).includes(head) ? head : '';
 }
 const typeOf = (p) => p.type || inferType(p.name, p.category);
-const publicProduct = (p) => ({ id: p.id, code: p.code || '', name: p.name, category: p.category, type: typeOf(p), active: p.active });
+// 구분(남성/여성)이 비어 있으면 상품명 앞의 "남성 "/"여성 "으로 판단
+const lineOf = (p) => p.line || (String(p.name || '').match(/^(남성|여성|남녀공용)\s/) || [])[1] || '';
+const publicProduct = (p) => ({ id: p.id, code: p.code || '', name: p.name, category: p.category, type: typeOf(p), line: lineOf(p), active: p.active });
 
 function passwordOf(req) {
   const h = req.headers.authorization || '';
@@ -252,7 +257,7 @@ async function handle(req, res) {
       const code = cleanCode(b.code);
       if (code && !validCode(code)) return send(res, 400, { error: '품번은 영문·숫자·하이픈(-)·밑줄(_)만 쓸 수 있어요.' });
       if (code && byCode(code)) return send(res, 400, { error: `이미 등록된 품번이에요: ${code}` });
-      const product = { id: crypto.randomUUID().slice(0, 8), code, name, category: b.category, type: cleanType(b.type), active: true, createdAt: new Date().toISOString() };
+      const product = { id: crypto.randomUUID().slice(0, 8), code, name, category: b.category, type: cleanType(b.type), line: cleanLine(b.line), active: true, createdAt: new Date().toISOString() };
       db.products.push(product);
       saveDb();
       return send(res, 201, product);
@@ -291,6 +296,7 @@ async function handle(req, res) {
       if (typeof b.name === 'string' && b.name.trim()) product.name = cleanText(b.name, 100);
       if (CATEGORIES.includes(b.category)) product.category = b.category;
       if (typeof b.type === 'string') product.type = cleanType(b.type);
+      if (typeof b.line === 'string') product.line = cleanLine(b.line);
       if (typeof b.code === 'string') {
         const code = cleanCode(b.code);
         if (code && !validCode(code)) return send(res, 400, { error: '품번은 영문·숫자·하이픈(-)·밑줄(_)만 쓸 수 있어요.' });
@@ -312,6 +318,7 @@ async function handle(req, res) {
         const name = cleanText(r.name, 100);
         const category = typeof r.category === 'string' ? r.category.trim() : '';
         const type = cleanType(r.type);
+        const lineVal = cleanLine(r.line);
         const line = `${i + 2}행`;
         if (!code || !validCode(code)) return result.errors.push(`${line}: 품번이 올바르지 않아요 (${code || '비어 있음'})`);
         if (category && !CATEGORIES.includes(category)) return result.errors.push(`${line} ${code}: 품목은 ${CATEGORIES.join('·')} 중 하나여야 해요`);
@@ -319,11 +326,12 @@ async function handle(req, res) {
         if (product) {
           if (name) product.name = name;
           if (type) product.type = type;
+          if (lineVal) product.line = lineVal;
           if (category) product.category = category;
           result.updated++;
         } else {
           if (!category) return result.errors.push(`${line} ${code}: 새 품번은 품목이 필요해요`);
-          db.products.push({ id: crypto.randomUUID().slice(0, 8), code, name: name || code, category, type, active: true, createdAt: new Date().toISOString() });
+          db.products.push({ id: crypto.randomUUID().slice(0, 8), code, name: name || code, category, type, line: lineVal, active: true, createdAt: new Date().toISOString() });
           result.created++;
         }
       });
@@ -360,11 +368,11 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
       const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
-      const rows = [['수정일시', '직원', '품번', '상품', '품목', '복종', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
+      const rows = [['수정일시', '직원', '품번', '상품', '구분', '품목', '복종', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
       db.evaluations.forEach((e) => {
         const pr = prodOf[e.productId] || {};
         rows.push([
-          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.category || '', pr.id ? typeOf(pr) : '', e.reaction, OPTIONS.sales[e.sales],
+          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.id ? lineOf(pr) : '', pr.category || '', pr.id ? typeOf(pr) : '', e.reaction, OPTIONS.sales[e.sales],
           (e.sellReasons || []).join(', '), e.noBuyReasons.join(', '), e.pros.join(', '), e.prosNote, e.cons.join(', '), e.consNote, e.missing, e.improvement,
           e.ageGroups.join(', '), e.genders.join(', '),
         ]);

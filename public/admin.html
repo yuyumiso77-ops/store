@@ -28,7 +28,7 @@
     <h2>상품 이미지로 등록</h2>
     <p class="hint" style="margin-top:-6px">이미지 파일명이 <b>품번</b>이 됩니다 (예: <code>GM24-PL101.jpg</code> → 품번 GM24-PL101).
       처음 보는 품번은 선택한 품목으로 새로 등록되고, 이미 있는 품번은 이미지만 바뀝니다.<br>
-      <b>상품 정보 CSV</b>(열: 품번, 상품명, 품목, 복종)를 이미지와 함께 넣으면 상품명·품목도 한 번에 등록됩니다.</p>
+      <b>상품 정보 CSV</b>(열: 품번, 상품명, 구분, 품목, 복종)를 이미지와 함께 넣으면 상품명·품목도 한 번에 등록됩니다.</p>
     <div class="row" style="align-items:center">
       <select id="upCategory" style="flex:0 1 160px"><option value="">품목 선택</option></select>
       <label class="drop" id="drop">
@@ -42,6 +42,7 @@
       <summary class="hint" style="cursor:pointer">이미지 없이 직접 등록</summary>
       <form id="addForm" class="row" style="margin-top:10px">
         <select id="category" required style="flex:0 1 140px"><option value="">품목 선택</option></select>
+        <select id="line" style="flex:0 1 110px"><option value="">구분</option><option>남성</option><option>여성</option><option>남녀공용</option></select>
         <input type="text" id="code" placeholder="품번 (선택)" maxlength="60" style="flex:0 1 160px">
         <input type="text" id="type" placeholder="복종 (예: 긴팔 티셔츠)" maxlength="30" list="typeList" style="flex:0 1 180px">
         <input type="text" id="name" placeholder="상품명" maxlength="100" required>
@@ -51,6 +52,7 @@
     <p class="error" id="addError"></p>
   </div>
 
+  <div class="chips seg" id="lineFilter" style="margin-bottom:8px"></div>
   <div class="row" style="align-items:center;margin-bottom:12px">
     <div class="chips" id="filter" style="flex:1 1 auto"></div>
     <input type="search" id="search" placeholder="품번·상품명·복종 검색" style="flex:0 1 240px">
@@ -131,7 +133,7 @@ function renderProduct(p) {
       p.imageUrl ? el('img', { class: 'aimg', src: p.imageUrl, alt: p.name, loading: 'lazy' }) : el('div', { class: 'aimg noimg' }, '이미지 없음'),
       el('div', {},
         el('h2', { style: 'margin:0 0 4px' }, p.name),
-        el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.type ? el('span', { class: 'tag' }, p.type) : el('span', { class: 'tag warn' }, '복종 미지정'), ' ', p.gap ? el('span', { class: 'tag gap' }, GAP[p.gap]) : '', ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
+        el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', p.line ? el('span', { class: 'tag' }, p.line) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.type ? el('span', { class: 'tag' }, p.type) : el('span', { class: 'tag warn' }, '복종 미지정'), ' ', p.gap ? el('span', { class: 'tag gap' }, GAP[p.gap]) : '', ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
     el('div', { class: 'actions' }, editBtn, imgBtn, imgDel, toggle, del, fileIn));
 
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
@@ -157,14 +159,16 @@ function editForm(p) {
   const code = el('input', { type: 'text', value: p.code, placeholder: '품번', maxlength: '60' });
   const name = el('input', { type: 'text', value: p.name, placeholder: '상품명', maxlength: '100' });
   const type = el('input', { type: 'text', value: p.type, placeholder: '복종', maxlength: '30', list: 'typeList' });
+  const line = el('select', {}, ['', '남성', '여성', '남녀공용'].map((v) => el('option', { value: v }, v || '구분 없음')));
+  line.value = p.line;
   const err = el('p', { class: 'error' });
-  const f = el('form', { class: 'row', style: 'align-items:center' }, cat, code, type, name,
+  const f = el('form', { class: 'row', style: 'align-items:center' }, line, cat, code, type, name,
     el('button', { class: 'btn accent', type: 'submit', style: 'flex:0 0 auto' }, '저장'),
     el('button', { class: 'btn', type: 'button', style: 'flex:0 0 auto', onclick: () => load() }, '취소'));
   f.onsubmit = async (e) => {
     e.preventDefault();
     try {
-      await api(`/api/admin/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ category: cat.value, code: code.value, type: type.value, name: name.value }) });
+      await api(`/api/admin/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ line: line.value, category: cat.value, code: code.value, type: type.value, name: name.value }) });
       load();
     } catch (ex) { err.textContent = ex.message; }
   };
@@ -223,9 +227,9 @@ async function readCsvFile(f) {
   if (text.includes('\uFFFD')) text = new TextDecoder('euc-kr').decode(buf); // 엑셀 기본 저장(CP949) 대응
   const [head, ...rows] = parseCsv(text);
   const idx = (names) => head.findIndex((h) => names.includes(h.trim()));
-  const ci = idx(['품번', 'code', 'CODE', 'STYLE']), ni = idx(['상품명', 'name', '이름']), ki = idx(['품목', 'category']), ti = idx(['복종', 'type', '종류']);
+  const ci = idx(['품번', 'code', 'CODE', 'STYLE']), ni = idx(['상품명', 'name', '이름']), ki = idx(['품목', 'category']), ti = idx(['복종', 'type', '종류']), li = idx(['구분', '성별', 'line']);
   if (ci < 0) throw new Error('첫 줄에 "품번" 열이 필요해요');
-  return rows.map((r) => ({ code: (r[ci] || '').trim(), name: ni >= 0 ? (r[ni] || '').trim() : '', category: ki >= 0 ? (r[ki] || '').trim() : '', type: ti >= 0 ? (r[ti] || '').trim() : '' }));
+  return rows.map((r) => ({ code: (r[ci] || '').trim(), name: ni >= 0 ? (r[ni] || '').trim() : '', category: ki >= 0 ? (r[ki] || '').trim() : '', type: ti >= 0 ? (r[ti] || '').trim() : '', line: li >= 0 ? (r[li] || '').trim() : '' }));
 }
 
 async function uploadMany(files) {
@@ -282,14 +286,17 @@ async function load() {
 }
 
 // 품목 필터
-let LAST = [], FILTER = '', TYPE = '', CATS = [], TYPE_ORDER = {};
-const groupKey = (p) => `${p.category}|${p.type}`;
-const groupLabel = (p) => p.type || `${p.category} · 복종 미지정`;
+let LAST = [], FILTER = '', TYPE = '', LINE = '', CATS = [], TYPE_ORDER = {}, LINES = [];
+const groupKey = (p) => `${p.line}|${p.category}|${p.type}`;
+const multiLine = () => new Set(LAST.map((p) => p.line)).size > 1;
+const lineMatch = (p) => !LINE || (LINE === '__none' ? !p.line : p.line === LINE);
+const groupLabel = (p) => (multiLine() && !LINE ? `${p.line || '구분 없음'} · ` : '') + (p.type || `${p.category} · 복종 미지정`);
 function sortKey(p) {
   const ci = CATS.indexOf(p.category);
   const order = TYPE_ORDER[p.category] || [];
   const ti = p.type ? (order.includes(p.type) ? order.indexOf(p.type) : 500) : 999;
-  return [ci < 0 ? 99 : ci, ti, p.type, p.active ? 0 : 1, p.code || p.name];
+  const li = p.line ? LINES.indexOf(p.line) : 99;
+  return [li, ci < 0 ? 99 : ci, ti, p.type, p.active ? 0 : 1, p.code || p.name];
 }
 function cmp(a, b) {
   const x = sortKey(a), y = sortKey(b);
@@ -299,13 +306,24 @@ function cmp(a, b) {
   }
   return 0;
 }
+function renderLineFilter() {
+  const box = $('lineFilter');
+  if (!multiLine()) { box.replaceChildren(); LINE = ''; return; }
+  const lines = [...new Set(LAST.map((p) => p.line))].sort((a, b) => (a ? LINES.indexOf(a) : 99) - (b ? LINES.indexOf(b) : 99));
+  box.replaceChildren(...['', ...lines.map((l) => l || '__none')].map((key) => {
+    const n = LAST.filter((p) => !key || (key === '__none' ? !p.line : p.line === key)).length;
+    return el('button', { type: 'button', class: LINE === key ? 'on' : '', onclick: () => { LINE = key; TYPE = ''; renderList(); } },
+      `${key === '' ? '전체' : key === '__none' ? '구분 없음' : key} ${n}`);
+  }));
+}
 function renderList() {
+  renderLineFilter();
   const NOIMG = '__noimg', GAPF = '__gap';
-  const match = (p, f) => !f || (f === NOIMG ? !p.imageUrl : f === GAPF ? !!p.gap : p.category === f);
-  const noImg = LAST.filter((p) => !p.imageUrl).length;
-  const gaps = LAST.filter((p) => p.gap).length;
+  const match = (p, f) => lineMatch(p) && (!f || (f === NOIMG ? !p.imageUrl : f === GAPF ? !!p.gap : p.category === f));
+  const noImg = LAST.filter((p) => lineMatch(p) && !p.imageUrl).length;
+  const gaps = LAST.filter((p) => lineMatch(p) && p.gap).length;
   if ((FILTER === NOIMG && !noImg) || (FILTER === GAPF && !gaps)) FILTER = '';
-  const chips = ['', ...CATS.filter((c) => LAST.some((p) => p.category === c)), ...(gaps ? [GAPF] : []), ...(noImg ? [NOIMG] : [])];
+  const chips = ['', ...CATS.filter((c) => LAST.some((p) => lineMatch(p) && p.category === c)), ...(gaps ? [GAPF] : []), ...(noImg ? [NOIMG] : [])];
   const chipLabel = (c) => (c === NOIMG ? '⚠️ 이미지 없음' : c === GAPF ? '⚠️ 반응·판매 엇갈림' : c || '전체');
   $('filter').replaceChildren(...chips.map((c) => {
     const n = LAST.filter((p) => match(p, c)).length;
@@ -323,7 +341,7 @@ function renderList() {
     : []));
 
   const q = $('search').value.trim().toLowerCase();
-  const ps = base.filter((p) => (!TYPE || groupKey(p) === TYPE) && (!q || [p.name, p.code, p.type].some((v) => v.toLowerCase().includes(q))));
+  const ps = base.filter((p) => (!TYPE || groupKey(p) === TYPE) && (!q || [p.name, p.code, p.type, p.line].some((v) => v.toLowerCase().includes(q))));
   if (!ps.length) {
     $('products').replaceChildren(el('div', { class: 'card hint' }, LAST.length ? '조건에 맞는 상품이 없어요.' : '위에서 조사할 상품을 먼저 등록해 주세요.'));
     return;
@@ -351,6 +369,7 @@ async function init() {
   const o = await api('/api/options');
   CATS = o.categories;
   TYPE_ORDER = o.typeOrder || {};
+  LINES = o.lines || [];
   $('typeList').replaceChildren(...Object.values(TYPE_ORDER).flat().map((t) => el('option', { value: t })));
   CATS.forEach((c) => { $('category').add(new Option(c, c)); $('upCategory').add(new Option(c, c)); });
   $('search').oninput = renderList;
@@ -367,7 +386,7 @@ $('addForm').onsubmit = async (e) => {
   e.preventDefault();
   $('addError').textContent = '';
   try {
-    await api('/api/admin/products', { method: 'POST', body: JSON.stringify({ name: $('name').value, code: $('code').value, type: $('type').value, category: $('category').value }) });
+    await api('/api/admin/products', { method: 'POST', body: JSON.stringify({ name: $('name').value, code: $('code').value, type: $('type').value, line: $('line').value, category: $('category').value }) });
     $('code').value = '';
     $('name').value = '';
     load();

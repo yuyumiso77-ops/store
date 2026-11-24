@@ -56,7 +56,7 @@ test('이미지 업로드: 파일명=품번으로 등록/교체', async () => {
 test('상품 정보 일괄 등록(CSV 행)', async () => {
   const imp = (rows) => fetch(base + '/api/admin/products/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows }) }).then((r) => r.json());
   const r1 = await imp([
-    { code: 'FNJMT3101', name: '긴팔 티셔츠 (BLACK)', category: '어패럴', type: ' 긴팔  티셔츠 ' },
+    { code: 'FNJMT3101', name: '긴팔 티셔츠 (BLACK)', category: '어패럴', type: ' 긴팔  티셔츠 ', line: '남성' },
     { code: 'FNJMP3601', name: '', category: '어패럴' },
     { code: 'BAD CODE', name: 'x', category: '어패럴' },
     { code: 'NEW-1', name: 'x', category: '' },
@@ -67,13 +67,17 @@ test('상품 정보 일괄 등록(CSV 행)', async () => {
   assert.deepStrictEqual([r2.created, r2.updated], [0, 1]);
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
   const t = s.products.find((x) => x.code === 'FNJMT3101');
-  assert.deepStrictEqual([t.name, t.category, t.type], ['긴팔 티 수정', '어패럴', '긴팔 티셔츠']); // 복종 공백 정리, 빈 값이면 유지
+  assert.deepStrictEqual([t.name, t.category, t.type], ['긴팔 티 수정', '어패럴', '긴팔 티셔츠']);
+  assert.strictEqual(t.line, '남성'); // 복종 공백 정리, 빈 값이면 유지
   assert.strictEqual(s.products.find((x) => x.code === 'FNJMP3601').name, 'FNJMP3601'); // 이름 없으면 품번
   // 복종이 비어 있으면 상품명 앞부분으로 추정 (알려진 복종만)
-  await imp([{ code: 'INF-1', name: '팬츠 (BLACK)', category: '어패럴' }, { code: 'INF-2', name: '쿨링 폴로 (BLACK)', category: '어패럴' }]);
+  await imp([{ code: 'INF-1', name: '팬츠 (BLACK)', category: '어패럴' }, { code: 'INF-2', name: '쿨링 폴로 (BLACK)', category: '어패럴' }, { code: 'INF-3', name: '여성 스커트 (WHITE)', category: '어패럴' }]);
   const s2 = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
   assert.strictEqual(s2.products.find((x) => x.code === 'INF-1').type, '팬츠');
   assert.strictEqual(s2.products.find((x) => x.code === 'INF-2').type, '');
+  assert.strictEqual(s2.products.find((x) => x.code === 'INF-3').type, '스커트'); // 성별 접두어 무시
+  assert.strictEqual(s2.products.find((x) => x.code === 'INF-3').line, '여성'); // 구분은 상품명 접두어로
+  assert.strictEqual(s2.products.find((x) => x.code === 'INF-1').line, '');
   for (const x of s2.products.filter((p) => p.code.startsWith('INF-')))
     await fetch(base + `/api/admin/products/${x.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
   for (const x of s.products.filter((p) => ['FNJMT3101', 'FNJMP3601'].includes(p.code)))
