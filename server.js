@@ -1,5 +1,6 @@
 'use strict';
-// 골프웨어 매장 직원용 상품 고객반응 조사 서버 (외부 의존성 없음)
+// 골프웨어 매장 — 직원이 상품별로 고객 반응을 종합 평가하는 서버
+// (예전 고객별 기록 db.records 는 파일에 그대로 두고 사용하지 않음) (외부 의존성 없음)
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -27,24 +28,23 @@ const OPTIONS = {
   categories: CATEGORIES,
   aspectsByCategory: Object.fromEntries(CATEGORIES.map((c) => [c, aspectsFor(c)])),
   defaultAspects: aspectsFor(''),
-  outcomes: { bought: '구매함', hold: '고민 후 보류', no: '구매 안 함' },
-  tried: { yes: '시착·시타함', no: '안 함' },
+  sales: { good: '잘 팔림', normal: '보통', poor: '잘 안 팔림' },
   noBuyReasons: [
     '가격이 비쌈', '맞는 사이즈 없음', '원하는 색상 없음', '디자인 취향 아님', '핏이 안 맞음', '착용감 불편',
-    '이미 비슷한 제품 있음', '온라인·타매장과 비교', '시즌이 안 맞음', '다음에 구매 예정', '기타',
+    '이미 비슷한 제품 있음', '온라인·타매장과 비교', '시즌이 안 맞음', '기타',
   ],
   ageGroups: ['20대', '30대', '40대', '50대', '60대 이상'],
   genders: ['남성', '여성'],
-  reactions: ['', '매우 부정적', '부정적', '보통', '긍정적', '매우 긍정적'],
+  reactions: ['', '매우 나쁨', '나쁨', '보통', '좋음', '매우 좋음'],
 };
 
 // ---------- 저장소 ----------
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { products: d.products || [], records: d.records || [] };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [] };
   } catch {
-    return { products: [], records: [] };
+    return { products: [], evaluations: [] };
   }
 }
 const db = loadDb();
@@ -140,6 +140,7 @@ function guard(req, res, role) {
 
 const intIn = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
 const cleanText = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const sameName = (a, b) => a.replace(/\s+/g, '').toLowerCase() === b.replace(/\s+/g, '').toLowerCase();
 const pick = (v, allowed) => (Array.isArray(v) ? [...new Set(v.filter((x) => allowed.includes(x)))] : []);
 
 function csvCell(v) {
@@ -157,38 +158,33 @@ function countBy(lists) {
 function summary() {
   const avg = (arr) => (arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null);
   const products = db.products.map((p) => {
-    const rs = db.records.filter((r) => r.productId === p.id);
-    const outcomes = { bought: 0, hold: 0, no: 0 };
-    rs.forEach((r) => outcomes[r.outcome]++);
+    const es = db.evaluations.filter((e) => e.productId === p.id);
+    const sales = { good: 0, normal: 0, poor: 0 };
+    es.forEach((e) => sales[e.sales]++);
     return {
       ...publicProduct(p),
       imageUrl: imageUrl(p),
       createdAt: p.createdAt,
-      count: rs.length,
-      avgReaction: avg(rs.map((r) => r.reaction)),
-      outcomes,
-      buyRate: rs.length ? Math.round((outcomes.bought / rs.length) * 100) : null,
-      triedCount: rs.filter((r) => r.tried === 'yes').length,
-      triedBuyRate: (() => {
-        const t = rs.filter((r) => r.tried === 'yes');
-        return t.length ? Math.round((t.filter((r) => r.outcome === 'bought').length / t.length) * 100) : null;
-      })(),
-      missing: rs.filter((r) => r.missing).slice(-15).reverse().map(({ missing, staff, createdAt }) => ({ missing, staff, createdAt })),
-      pros: countBy(rs.map((r) => r.pros)),
-      cons: countBy(rs.map((r) => r.cons)),
-      noBuyReasons: countBy(rs.map((r) => r.noBuyReasons)),
-      notes: rs
-        .filter((r) => r.prosNote || r.consNote || r.improvement)
-        .slice(-15)
-        .reverse()
-        .map(({ staff, reaction, outcome, prosNote, consNote, improvement, createdAt }) => ({ staff, reaction, outcome, prosNote, consNote, improvement, createdAt })),
+      count: es.length,
+      avgReaction: avg(es.map((e) => e.reaction)),
+      sales,
+      pros: countBy(es.map((e) => e.pros)),
+      cons: countBy(es.map((e) => e.cons)),
+      noBuyReasons: countBy(es.map((e) => e.noBuyReasons)),
+      ageGroups: countBy(es.map((e) => e.ageGroups)),
+      genders: countBy(es.map((e) => e.genders)),
+      missing: es.filter((e) => e.missing).map(({ missing, staff, updatedAt }) => ({ missing, staff, updatedAt })),
+      notes: es
+        .filter((e) => e.prosNote || e.consNote || e.improvement)
+        .map(({ staff, reaction, sales, prosNote, consNote, improvement, updatedAt }) => ({ staff, reaction, sales, prosNote, consNote, improvement, updatedAt })),
     };
   });
-  return {
-    totalRecords: db.records.length,
-    staff: countBy(db.records.map((r) => [r.staff])),
-    products,
-  };
+  const active = db.products.filter((p) => p.active).map((p) => p.id);
+  const staff = countBy(db.evaluations.map((e) => [e.staff])).map((x) => ({
+    ...x,
+    done: db.evaluations.filter((e) => e.staff === x.name && active.includes(e.productId)).length,
+  }));
+  return { totalEvaluations: db.evaluations.length, activeProducts: active.length, staff, products };
 }
 
 // ---------- 라우팅 ----------
@@ -277,17 +273,19 @@ async function handle(req, res) {
       return send(res, created ? 201 : 200, { created, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
     }
 
-    if (m === 'GET' && p === '/api/admin/records.csv') {
+    if (m === 'GET' && p === '/api/admin/evaluations.csv') {
       const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
-      const rows = [['일시', '직원', '품번', '상품', '품목', '고객반응(1~5)', '구매결과', '시착여부', '미구매이유', '장점', '장점 메모', '단점', '단점 메모', '개선 아이디어', '찾았지만 없던 사이즈·색상', '연령대', '성별']];
-      db.records.forEach((r) =>
+      const rows = [['수정일시', '직원', '품번', '상품', '품목', '고객반응(1~5)', '판매반응', '안 팔린 이유', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
+      db.evaluations.forEach((e) => {
+        const pr = prodOf[e.productId] || {};
         rows.push([
-          r.createdAt, r.staff, prodOf[r.productId]?.code || '', prodOf[r.productId]?.name || r.productId, prodOf[r.productId]?.category || '', r.reaction, OPTIONS.outcomes[r.outcome], OPTIONS.tried[r.tried] || '',
-          r.noBuyReasons.join(', '), r.pros.join(', '), r.prosNote, r.cons.join(', '), r.consNote, r.improvement, r.missing || '', r.ageGroup, r.gender,
-        ])
-      );
-      const csv = '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
-      return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="records.csv"' });
+          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.category || '', e.reaction, OPTIONS.sales[e.sales],
+          e.noBuyReasons.join(', '), e.pros.join(', '), e.prosNote, e.cons.join(', '), e.consNote, e.missing, e.improvement,
+          e.ageGroups.join(', '), e.genders.join(', '),
+        ]);
+      });
+      const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+      return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="evaluations.csv"' });
     }
     return send(res, 404, 'Not found');
   }
@@ -310,34 +308,43 @@ async function handle(req, res) {
     return send(res, 200, { ...OPTIONS, products: db.products.filter((x) => x.active).map((x) => ({ ...publicProduct(x), imageUrl: imageUrl(x) })) });
   }
 
-  if (m === 'POST' && p === '/api/records') {
+  // 내가 평가한 목록 (이어서 하기·수정용)
+  if (m === 'GET' && p === '/api/evaluations/mine') {
+    const staff = cleanText(url.searchParams.get('staff'), 30);
+    return send(res, 200, staff ? db.evaluations.filter((e) => sameName(e.staff, staff)) : []);
+  }
+
+  // 평가 저장: 같은 직원 + 같은 상품이면 덮어씀
+  if (m === 'POST' && p === '/api/evaluations') {
     const b = await readBody(req);
     const product = db.products.find((x) => x.id === b.productId && x.active);
     if (!product) return send(res, 400, { error: '상품을 선택해 주세요.' });
     const staff = cleanText(b.staff, 30);
     if (!staff) return send(res, 400, { error: '직원 이름을 입력해 주세요.' });
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: '고객 반응을 선택해 주세요.' });
-    if (!(b.outcome in OPTIONS.outcomes)) return send(res, 400, { error: '구매 결과를 선택해 주세요.' });
-    db.records.push({
-      id: crypto.randomUUID(),
+    if (!(b.sales in OPTIONS.sales)) return send(res, 400, { error: '판매 반응을 선택해 주세요.' });
+    const now = new Date().toISOString();
+    const data = {
       productId: product.id,
       staff,
       reaction: b.reaction,
-      outcome: b.outcome,
-      tried: b.tried in OPTIONS.tried ? b.tried : '',
-      noBuyReasons: b.outcome === 'bought' ? [] : pick(b.noBuyReasons, OPTIONS.noBuyReasons),
+      sales: b.sales,
+      noBuyReasons: b.sales === 'good' ? [] : pick(b.noBuyReasons, OPTIONS.noBuyReasons),
       pros: pick(b.pros, aspectsFor(product.category)),
       prosNote: cleanText(b.prosNote, 500),
       cons: pick(b.cons, aspectsFor(product.category)),
       consNote: cleanText(b.consNote, 500),
-      improvement: cleanText(b.improvement, 500),
       missing: cleanText(b.missing, 200),
-      ageGroup: OPTIONS.ageGroups.includes(b.ageGroup) ? b.ageGroup : '',
-      gender: OPTIONS.genders.includes(b.gender) ? b.gender : '',
-      createdAt: new Date().toISOString(),
-    });
+      improvement: cleanText(b.improvement, 500),
+      ageGroups: pick(b.ageGroups, OPTIONS.ageGroups),
+      genders: pick(b.genders, OPTIONS.genders),
+      updatedAt: now,
+    };
+    const existing = db.evaluations.find((e) => e.productId === product.id && sameName(e.staff, staff));
+    if (existing) Object.assign(existing, data);
+    else db.evaluations.push({ id: crypto.randomUUID(), createdAt: now, ...data });
     saveDb();
-    return send(res, 201, { ok: true });
+    return send(res, existing ? 200 : 201, { ok: true, updated: !!existing });
   }
 
   send(res, 404, 'Not found');

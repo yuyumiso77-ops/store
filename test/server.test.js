@@ -58,36 +58,45 @@ test('품목 필수', async () => {
   assert.strictEqual(r.status, 400);
 });
 
-test('상품 등록 → 직원 기록 → 집계 → CSV', async () => {
+test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async () => {
   const p = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '쿨링 폴로', category: '어패럴' }) })).json();
   const opts = await (await fetch(base + '/api/options', { headers: staff })).json();
   assert.deepStrictEqual(opts.products.map((x) => x.name), ['쿨링 폴로']);
 
-  const post = (b) => fetch(base + '/api/records', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '민지', ...b }) });
-  assert.strictEqual((await post({ reaction: 4 })).status, 400); // 구매 결과 누락
-  assert.strictEqual((await post({ reaction: 4, outcome: 'bought', staff: ' ' })).status, 400); // 이름 누락
+  const post = (b) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '민지', ...b }) });
+  assert.strictEqual((await post({ reaction: 4 })).status, 400); // 판매 반응 누락
+  assert.strictEqual((await post({ reaction: 4, sales: 'good', staff: ' ' })).status, 400); // 이름 누락
 
-  assert.strictEqual((await post({ reaction: 5, outcome: 'bought', tried: 'yes', pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['가격이 비쌈'], missing: '105 네이비' })).status, 201);
-  assert.strictEqual((await post({ reaction: 2, outcome: 'no', tried: 'yes', pros: ['신축성'], cons: ['가격'], noBuyReasons: ['맞는 사이즈 없음'], improvement: '반팔 출시' })).status, 201);
+  // 민지: 처음 저장 → 같은 이름(공백 차이)으로 다시 저장하면 수정
+  assert.strictEqual((await post({ reaction: 2, sales: 'poor', noBuyReasons: ['가격이 비쌈'] })).status, 201);
+  const upd = await post({ staff: '민 지', reaction: 5, sales: 'good', pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['가격이 비쌈'], missing: '105 네이비', ageGroups: ['40대', '50대', '90대'], genders: ['남성'] });
+  assert.strictEqual(upd.status, 200);
+  assert.strictEqual((await upd.json()).updated, true);
+  // 준호
+  assert.strictEqual((await post({ staff: '준호', reaction: 2, sales: 'poor', pros: ['신축성'], cons: ['가격'], noBuyReasons: ['맞는 사이즈 없음'], improvement: '반팔 출시', ageGroups: ['40대'] })).status, 201);
+
+  const mine = await (await fetch(base + '/api/evaluations/mine?staff=' + encodeURIComponent('민지'), { headers: staff })).json();
+  assert.strictEqual(mine.length, 1);
+  assert.strictEqual(mine[0].reaction, 5);
 
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
   const ps = s.products.find((x) => x.id === p.id);
-  assert.strictEqual(s.totalRecords, 2);
+  assert.strictEqual(ps.count, 2);
   assert.strictEqual(ps.avgReaction, 3.5);
-  assert.strictEqual(ps.buyRate, 50);
-  assert.deepStrictEqual(ps.pros, [{ name: '신축성', n: 2 }]); // 중복·다른 품목 항목(그립감) 제거
-  assert.deepStrictEqual(ps.cons, [{ name: '가격', n: 1 }]);
-  assert.deepStrictEqual(ps.noBuyReasons, [{ name: '맞는 사이즈 없음', n: 1 }]); // 구매한 건은 미구매 이유 무시
-  assert.strictEqual(ps.triedBuyRate, 50);
+  assert.deepStrictEqual(ps.sales, { good: 1, normal: 0, poor: 1 });
+  assert.deepStrictEqual(ps.pros, [{ name: '신축성', n: 2 }]); // 중복·다른 품목 항목 제거
+  assert.deepStrictEqual(ps.noBuyReasons, [{ name: '맞는 사이즈 없음', n: 1 }]); // 잘 팔림이면 이유 무시
+  assert.deepStrictEqual(ps.ageGroups, [{ name: '40대', n: 2 }, { name: '50대', n: 1 }]);
   assert.deepStrictEqual(ps.missing.map((x) => x.missing), ['105 네이비']);
-  assert.deepStrictEqual(s.staff, [{ name: '민지', n: 2 }]);
+  assert.ok(s.staff.some((x) => x.name === '민 지' && x.done === 1));
 
-  const csv = await (await fetch(base + '/api/admin/records.csv', { headers: admin })).text();
+  const csv = await (await fetch(base + '/api/admin/evaluations.csv', { headers: admin })).text();
   assert.match(csv, /쿨링 폴로/);
   assert.match(csv, /"'=스윙이 편해요"/);
   assert.match(csv, /반팔 출시/);
+  assert.match(csv, /잘 팔림/);
 
   await fetch(base + `/api/admin/products/${p.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
   assert.deepStrictEqual((await (await fetch(base + '/api/options', { headers: staff })).json()).products, []);
-  assert.strictEqual((await post({ reaction: 5, outcome: 'bought' })).status, 400);
+  assert.strictEqual((await post({ reaction: 5, sales: 'good' })).status, 400);
 });

@@ -146,3 +146,10 @@ input[type=search] {
 .uplog li.fail { color: var(--danger); }
 code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 .card > .product-head { margin-bottom: 12px; }
+.tile { position: relative; }
+.tile.done .timg, .tile.done .noimg { opacity: .45; }
+.badge {
+  position: absolute; top: 6px; left: 6px; background: var(--accent); color: #fff;
+  font-size: .7rem; padding: 2px 6px; border-radius: 999px;
+}
+.pdone { color: var(--accent); }

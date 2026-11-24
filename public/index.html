@@ -3,18 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>고객 반응 기록</title>
+<title>상품 반응 평가</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <main class="wrap">
-  <h1>고객 반응 기록</h1>
-  <p class="sub">고객 응대 후 반응과 의견을 바로 기록해 주세요.</p>
+  <h1>상품 반응 평가</h1>
+  <p class="sub">상품 사진을 보고, 그동안 판매하면서 느낀 고객 반응을 정리해 주세요. 상품마다 한 번씩 평가하면 됩니다.</p>
 
   <form id="form" novalidate>
     <div class="card">
       <label for="staff">직원 이름</label>
       <input type="text" id="staff" maxlength="30" placeholder="예: 김민지" autocomplete="name">
+      <div class="hint" id="progress"></div>
     </div>
 
     <div class="card">
@@ -28,63 +29,67 @@
       </div>
     </div>
 
-    <div class="card">
-      <span class="q">고객 반응은 어땠나요? <span class="req">*</span></span>
-      <div class="chips faces" id="reaction"></div>
-    </div>
-
-    <div class="card">
-      <span class="q">시착·시타 했나요? <span class="hint">(선택)</span></span>
-      <div class="chips" id="tried"></div>
-      <span class="q sub-q">구매 결과 <span class="req">*</span></span>
-      <div class="chips" id="outcome"></div>
-      <div id="reasonsBox" hidden>
-        <span class="q sub-q">구매하지 않은 이유 <span class="hint">(여러 개 선택)</span></span>
-        <div class="chips" id="noBuyReasons"></div>
+    <div id="survey" hidden>
+      <div class="card">
+        <span class="q">1. 고객 반응은 전반적으로 어땠나요? <span class="req">*</span></span>
+        <div class="chips faces" id="reaction"></div>
       </div>
-    </div>
 
-    <div class="card">
-      <label for="missing">🔍 찾았지만 없던 사이즈·색상 <span class="hint">(선택)</span></label>
-      <input type="text" id="missing" maxlength="200" placeholder="예: 남성 105 네이비 / 골프화 270mm 와이드">
-    </div>
+      <div class="card">
+        <span class="q">2. 판매 반응은 어땠나요? <span class="req">*</span></span>
+        <div class="chips" id="sales"></div>
+        <div id="reasonsBox" hidden>
+          <span class="q sub-q">3. 안 팔린 주된 이유 / 고객이 망설인 이유 <span class="hint">(여러 개 선택)</span></span>
+          <div class="chips" id="noBuyReasons"></div>
+        </div>
+      </div>
 
-    <div class="card">
-      <span class="q">👍 고객이 좋다고 한 점 <span class="hint">(여러 개 선택)</span></span>
-      <div class="chips" id="pros"></div>
-      <input type="text" id="prosNote" maxlength="500" placeholder="구체적으로 (예: 신축성이 좋아서 스윙할 때 편하대요)">
-    </div>
+      <div class="card">
+        <span class="q">👍 고객들이 좋다고 한 점 <span class="hint">(여러 개 선택)</span></span>
+        <div class="chips" id="pros"></div>
+        <input type="text" id="prosNote" maxlength="500" placeholder="구체적으로 (예: 신축성이 좋아서 스윙할 때 편하다는 말이 많았어요)">
+      </div>
 
-    <div class="card">
-      <span class="q">👎 아쉽다고 한 점 <span class="hint">(여러 개 선택)</span></span>
-      <div class="chips" id="cons"></div>
-      <input type="text" id="consNote" maxlength="500" placeholder="구체적으로 (예: 발볼이 좁아서 오래 신으면 아플 것 같대요)">
-    </div>
+      <div class="card">
+        <span class="q">👎 고객들이 아쉽다고 한 점 <span class="hint">(여러 개 선택)</span></span>
+        <div class="chips" id="cons"></div>
+        <input type="text" id="consNote" maxlength="500" placeholder="구체적으로 (예: 기장이 짧다는 의견이 자주 있었어요)">
+      </div>
 
-    <div class="card">
-      <label for="improvement">💡 개선 아이디어 / 고객 요청</label>
-      <textarea id="improvement" maxlength="500" placeholder="고객 요청이나 직원이 느낀 개선점 (예: 같은 디자인으로 반팔도 나왔으면 좋겠다)"></textarea>
-    </div>
+      <div class="card">
+        <label for="missing">🔍 자주 찾았는데 없던 사이즈·색상 <span class="hint">(선택)</span></label>
+        <input type="text" id="missing" maxlength="200" placeholder="예: 남성 105 네이비 / 270mm 와이드">
+      </div>
 
-    <div class="card">
-      <span class="q">고객층 <span class="hint">(선택)</span></span>
-      <div class="chips" id="ageGroup"></div>
-      <div class="chips" id="gender" style="margin-top:8px"></div>
-    </div>
+      <div class="card">
+        <label for="improvement">💡 개선 아이디어 / 고객 요청 <span class="hint">(선택)</span></label>
+        <textarea id="improvement" maxlength="500" placeholder="예: 같은 디자인으로 반팔도 나왔으면 좋겠다는 요청이 많았어요"></textarea>
+      </div>
 
-    <button class="primary" type="submit" id="submit">기록 저장</button>
+      <div class="card">
+        <span class="q">주 구매 고객층 <span class="hint">(선택 · 여러 개 가능)</span></span>
+        <div class="chips" id="ageGroups"></div>
+        <div class="chips" id="genders" style="margin-top:8px"></div>
+      </div>
+
+      <button class="primary" type="submit" id="submit">평가 저장</button>
+    </div>
     <p class="error" id="error"></p>
   </form>
   <div class="toast" id="toast" role="status"></div>
 </main>
 
 <script>
-const state = { reaction: 0, tried: '', outcome: '', noBuyReasons: [], pros: [], cons: [], ageGroup: '', gender: '' };
-let OPTS = null;
 const FACES = ['', '😠', '🙁', '😐', '🙂', '😍'];
+const FIELDS = { reaction: 0, sales: '', noBuyReasons: [], pros: [], cons: [], ageGroups: [], genders: [] };
+const TEXTS = ['prosNote', 'consNote', 'missing', 'improvement'];
+const state = structuredClone(FIELDS);
+let OPTS = null;
+let MINE = {}; // productId -> 내 평가
+let CAT = '';
 const $ = (id) => document.getElementById(id);
 
-function chips(id, items, { multi = false, toggle = false, onChange } = {}) {
+function chips(id, items, { multi = false, onChange } = {}) {
   const box = $(id);
   box.replaceChildren();
   items.forEach(([value, label]) => {
@@ -97,9 +102,7 @@ function chips(id, items, { multi = false, toggle = false, onChange } = {}) {
         const list = state[id];
         const i = list.indexOf(value);
         i >= 0 ? list.splice(i, 1) : list.push(value);
-      } else {
-        state[id] = toggle && state[id] === value ? '' : value;
-      }
+      } else state[id] = value;
       paint(id);
       onChange && onChange();
     };
@@ -113,40 +116,39 @@ function paint(id) {
     b.classList.toggle('on', Array.isArray(v) ? v.includes(val) : v === val);
   });
 }
+const syncReasons = () => { $('reasonsBox').hidden = !state.sales || state.sales === 'good'; };
 
 async function init() {
-  const res = await fetch('/api/options');
-  const o = await res.json();
-  OPTS = o;
+  OPTS = await (await fetch('/api/options')).json();
+  if (!OPTS.products.length) $('error').textContent = '등록된 상품이 없어요. 관리자 화면에서 상품을 먼저 등록해 주세요.';
+  chips('reaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${OPTS.reactions[n]}`]));
+  $('reaction').querySelectorAll('button').forEach((b) => (b.onclick = () => { state.reaction = Number(b.dataset.v); paint('reaction'); }));
+  chips('sales', Object.entries(OPTS.sales), { onChange: syncReasons });
+  chips('noBuyReasons', OPTS.noBuyReasons.map((x) => [x, x]), { multi: true });
+  chips('ageGroups', OPTS.ageGroups.map((x) => [x, x]), { multi: true });
+  chips('genders', OPTS.genders.map((x) => [x, x]), { multi: true });
   $('search').oninput = renderGrid;
+  $('staff').onchange = loadMine;
+  try { $('staff').value = localStorage.getItem('staff') || ''; } catch {}
   renderCatFilter();
-  if (!o.products.length) $('error').textContent = '등록된 상품이 없어요. 관리자 화면에서 상품을 먼저 등록해 주세요.';
-
-  chips('reaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${o.reactions[n]}`]));
-  // 숫자 값으로 저장
-  $('reaction').querySelectorAll('button').forEach((b) => {
-    b.onclick = () => { state.reaction = Number(b.dataset.v); paint('reaction'); };
-  });
-  chips('outcome', Object.entries(o.outcomes), {
-    onChange: () => { $('reasonsBox').hidden = !state.outcome || state.outcome === 'bought'; },
-  });
-  chips('noBuyReasons', o.noBuyReasons.map((x) => [x, x]), { multi: true });
-  chips('tried', Object.entries(o.tried), { toggle: true });
-  chips('ageGroup', o.ageGroups.map((x) => [x, x]), { toggle: true });
-  chips('gender', o.genders.map((x) => [x, x]), { toggle: true });
-
-  try {
-    $('staff').value = localStorage.getItem('staff') || '';
-    const last = localStorage.getItem('product');
-    if (o.products.some((p) => p.id === last)) $('product').value = last;
-  } catch {}
+  await loadMine();
   const pid = new URLSearchParams(location.search).get('product');
-  if (pid && o.products.some((p) => p.id === pid)) $('product').value = pid;
-  selectProduct($('product').value);
+  if (pid) selectProduct(pid);
+}
+
+async function loadMine() {
+  const name = $('staff').value.trim();
+  MINE = {};
+  if (name) {
+    const list = await (await fetch('/api/evaluations/mine?staff=' + encodeURIComponent(name))).json();
+    list.forEach((e) => (MINE[e.productId] = e));
+  }
+  const done = OPTS.products.filter((p) => MINE[p.id]).length;
+  $('progress').textContent = name ? `평가 완료 ${done} / ${OPTS.products.length}개` : '';
+  renderGrid();
 }
 
 // ---- 이미지로 상품 고르기 ----
-let CAT = '';
 function renderCatFilter() {
   const box = $('catFilter');
   box.replaceChildren();
@@ -173,17 +175,16 @@ function thumb(p, cls) {
 }
 function renderGrid() {
   const q = $('search').value.trim().toLowerCase();
-  const list = OPTS.products.filter((p) => (!CAT || p.category === CAT) && (!q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)));
+  const list = OPTS.products
+    .filter((p) => (!CAT || p.category === CAT) && (!q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)))
+    .sort((a, b) => !!MINE[a.id] - !!MINE[b.id]); // 아직 안 한 상품 먼저
   const grid = $('grid');
   grid.replaceChildren();
-  if (!list.length) {
-    grid.innerHTML = '<p class="hint">찾는 상품이 없어요.</p>';
-    return;
-  }
+  if (!list.length) { grid.innerHTML = '<p class="hint">찾는 상품이 없어요.</p>'; return; }
   list.forEach((p) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'tile';
+    b.className = 'tile' + (MINE[p.id] ? ' done' : '');
     b.onclick = () => selectProduct(p.id);
     const cap = document.createElement('span');
     cap.className = 'cap';
@@ -191,49 +192,43 @@ function renderGrid() {
     cap.querySelector('b').textContent = p.code || p.category;
     cap.querySelector('small').textContent = p.name !== p.code ? p.name : p.category;
     b.append(thumb(p, 'timg'), cap);
+    if (MINE[p.id]) { const t = document.createElement('span'); t.className = 'badge'; t.textContent = '✓ 평가 완료'; b.append(t); }
     grid.appendChild(b);
   });
+}
+
+function fillForm(e) {
+  const src = e || FIELDS;
+  Object.keys(FIELDS).forEach((k) => (state[k] = structuredClone(src[k] ?? FIELDS[k])));
+  TEXTS.forEach((id) => ($(id).value = (e && e[id]) || ''));
 }
 function selectProduct(id) {
   const p = OPTS.products.find((x) => x.id === id);
   $('product').value = p ? p.id : '';
   $('picker').hidden = !!p;
   $('picked').hidden = !p;
-  if (p) {
-    const info = document.createElement('div');
-    info.innerHTML = '<div class="pname"></div><div class="hint pcode"></div>';
-    info.querySelector('.pname').textContent = p.name;
-    info.querySelector('.pcode').textContent = [p.code, p.category].filter(Boolean).join(' · ');
-    const change = document.createElement('button');
-    change.type = 'button'; change.className = 'btn'; change.textContent = '다른 상품';
-    change.onclick = () => { selectProduct(''); $('search').focus(); };
-    info.appendChild(change);
-    $('picked').replaceChildren(thumb(p, 'pimg'), info);
-  } else {
-    renderGrid();
-  }
-  renderAspects();
-}
+  $('survey').hidden = !p;
+  if (!p) { renderGrid(); return; }
 
-// 선택한 상품의 품목에 맞는 장단점 항목 표시
-function renderAspects() {
-  const p = OPTS.products.find((x) => x.id === $('product').value);
-  const list = (p && OPTS.aspectsByCategory[p.category]) || OPTS.defaultAspects;
-  state.pros = state.pros.filter((x) => list.includes(x));
-  state.cons = state.cons.filter((x) => list.includes(x));
-  chips('pros', list.map((x) => [x, x]), { multi: true });
-  chips('cons', list.map((x) => [x, x]), { multi: true });
-  paint('pros');
-  paint('cons');
-}
-init();
+  const info = document.createElement('div');
+  info.innerHTML = '<div class="pname"></div><div class="hint pcode"></div><div class="hint pdone"></div>';
+  info.querySelector('.pname').textContent = p.name;
+  info.querySelector('.pcode').textContent = [p.code, p.category].filter(Boolean).join(' · ');
+  if (MINE[p.id]) info.querySelector('.pdone').textContent = '이미 평가한 상품이에요. 수정 후 저장하면 바뀝니다.';
+  const change = document.createElement('button');
+  change.type = 'button'; change.className = 'btn'; change.textContent = '다른 상품';
+  change.onclick = () => { selectProduct(''); $('search').focus(); };
+  info.appendChild(change);
+  $('picked').replaceChildren(thumb(p, 'pimg'), info);
 
-function resetForm() {
-  // 직원 이름과 상품은 연속 기록을 위해 유지
-  Object.assign(state, { reaction: 0, tried: '', outcome: '', noBuyReasons: [], pros: [], cons: [], ageGroup: '', gender: '' });
-  ['reaction', 'tried', 'outcome', 'noBuyReasons', 'pros', 'cons', 'ageGroup', 'gender'].forEach(paint);
-  ['prosNote', 'consNote', 'improvement', 'missing'].forEach((id) => ($(id).value = ''));
-  $('reasonsBox').hidden = true;
+  // 품목에 맞는 장단점 항목
+  const aspects = OPTS.aspectsByCategory[p.category] || OPTS.defaultAspects;
+  chips('pros', aspects.map((x) => [x, x]), { multi: true });
+  chips('cons', aspects.map((x) => [x, x]), { multi: true });
+  fillForm(MINE[p.id]);
+  Object.keys(FIELDS).forEach(paint);
+  syncReasons();
+  $('submit').textContent = MINE[p.id] ? '평가 수정' : '평가 저장';
 }
 
 function toast(msg) {
@@ -248,28 +243,23 @@ $('form').onsubmit = async (e) => {
   $('error').textContent = '';
   $('submit').disabled = true;
   try {
-    const body = {
-      ...state,
-      staff: $('staff').value,
-      productId: $('product').value,
-      prosNote: $('prosNote').value,
-      consNote: $('consNote').value,
-      improvement: $('improvement').value,
-      missing: $('missing').value,
-    };
-    const res = await fetch('/api/records', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const body = { ...state, staff: $('staff').value, productId: $('product').value };
+    TEXTS.forEach((id) => (body[id] = $(id).value));
+    const res = await fetch('/api/evaluations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || '저장에 실패했어요.');
-    try { localStorage.setItem('staff', body.staff.trim()); localStorage.setItem('product', body.productId); } catch {}
-    resetForm();
+    try { localStorage.setItem('staff', body.staff.trim()); } catch {}
+    await loadMine();
+    selectProduct('');
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    toast('✅ 기록했어요. 다음 고객도 기록해 주세요!');
+    toast(data.updated ? '✅ 평가를 수정했어요.' : '✅ 저장했어요. 다음 상품을 골라 주세요!');
   } catch (ex) {
     $('error').textContent = ex.message;
   } finally {
     $('submit').disabled = false;
   }
 };
+init();
 </script>
 </body>
 </html>

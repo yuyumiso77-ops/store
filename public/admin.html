@@ -11,11 +11,11 @@
   <div class="product-head">
     <div>
       <h1>고객 반응 분석</h1>
-      <p class="sub">직원들이 기록한 고객 반응, 장단점, 개선 의견을 품목·상품별로 모아 봅니다.</p>
+      <p class="sub">직원들이 상품별로 평가한 고객 반응, 판매 반응, 장단점, 개선 의견을 모아 봅니다.</p>
     </div>
     <div class="actions">
-      <a class="btn" href="/" target="_blank">기록 화면 열기</a>
-      <a class="btn accent" href="/api/admin/records.csv">CSV 내려받기</a>
+      <a class="btn" href="/" target="_blank">평가 화면 열기</a>
+      <a class="btn accent" href="/api/admin/evaluations.csv">CSV 내려받기</a>
     </div>
   </div>
 
@@ -57,8 +57,8 @@
 </main>
 
 <script>
-const OUT = { bought: '구매함', hold: '보류', no: '미구매' };
-const REACT = ['', '😠 매우 부정', '🙁 부정', '😐 보통', '🙂 긍정', '😍 매우 긍정'];
+const SALES = { good: '잘 팔림', normal: '판매 보통', poor: '잘 안 팔림' };
+const REACT = ['', '😠 매우 나쁨', '🙁 나쁨', '😐 보통', '🙂 좋음', '😍 매우 좋음'];
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
   Object.entries(attrs).forEach(([k, v]) => (k === 'class' ? (n.className = v) : k.startsWith('on') ? (n[k] = v) : n.setAttribute(k, v)));
@@ -94,8 +94,8 @@ function renderProduct(p) {
         n.prosNote ? el('div', { class: 'note-line' }, '👍 ', n.prosNote) : '',
         n.consNote ? el('div', { class: 'note-line' }, '👎 ', n.consNote) : '',
         n.improvement ? el('div', { class: 'note-line' }, '💡 ', n.improvement) : '',
-        el('div', { class: 'meta' }, `${n.staff} · ${REACT[n.reaction]} · ${OUT[n.outcome]} · ${new Date(n.createdAt).toLocaleString('ko-KR')}`))))
-    : el('p', { class: 'hint' }, '아직 메모가 없어요.');
+        el('div', { class: 'meta' }, `${n.staff} · ${REACT[n.reaction]} · ${SALES[n.sales]} · ${new Date(n.updatedAt).toLocaleString('ko-KR')}`))))
+    : el('p', { class: 'hint' }, '아직 의견이 없어요.');
 
   const fileIn = el('input', { type: 'file', accept: 'image/*', hidden: '' });
   fileIn.onchange = async () => {
@@ -116,18 +116,17 @@ function renderProduct(p) {
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
     head,
     el('div', { class: 'stats' },
-      stat(p.count, '기록 수'),
+      stat(p.count, '평가한 직원 수'),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
-      stat(p.buyRate == null ? '-' : p.buyRate + '%', '구매율'),
-      stat(`${p.outcomes.hold} / ${p.outcomes.no}`, '보류 / 미구매'),
-      stat(p.triedBuyRate == null ? '-' : p.triedBuyRate + '%', `시착·시타 후 구매율 (${p.triedCount}건)`)),
+      stat(`${p.sales.good} · ${p.sales.normal} · ${p.sales.poor}`, '판매 반응: 잘 팔림 · 보통 · 안 팔림')),
     p.count ? el('div', { class: 'cols' },
       rank('👍 장점으로 꼽힌 것', p.pros, p.count),
       rank('👎 단점으로 꼽힌 것', p.cons, p.count),
-      rank('🚫 구매하지 않은 이유', p.noBuyReasons, Math.max(1, p.outcomes.hold + p.outcomes.no))) : '',
-    p.missing.length ? el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '🔍 찾았지만 없던 사이즈·색상'),
-      el('ul', { class: 'comments' }, p.missing.map((x) => el('li', {}, x.missing, el('div', { class: 'meta' }, `${x.staff} · ${new Date(x.createdAt).toLocaleString('ko-KR')}`))))) : '',
-    el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '직원 메모 (장점 · 단점 · 개선 아이디어)'), notes));
+      rank('🚫 안 팔린 이유', p.noBuyReasons, p.count),
+      rank('👥 주 구매 고객층', [...p.ageGroups, ...p.genders], p.count)) : '',
+    p.missing.length ? el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '🔍 자주 찾았는데 없던 사이즈·색상'),
+      el('ul', { class: 'comments' }, p.missing.map((x) => el('li', {}, x.missing, el('div', { class: 'meta' }, `${x.staff} · ${new Date(x.updatedAt).toLocaleString('ko-KR')}`))))) : '',
+    el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '직원 의견 (장점 · 단점 · 개선 아이디어)'), notes));
 }
 
 function editForm(p) {
@@ -198,15 +197,16 @@ async function load() {
   const recorded = ps.filter((p) => p.count);
   const total = recorded.reduce((a, p) => a + p.count, 0);
   const avgReact = total ? recorded.reduce((a, p) => a + p.avgReaction * p.count, 0) / total : null;
-  const bought = recorded.reduce((a, p) => a + p.outcomes.bought, 0);
   const worst = recorded.slice().sort((a, b) => a.avgReaction - b.avgReaction)[0];
+  const best = recorded.slice().sort((a, b) => b.avgReaction - a.avgReaction)[0];
   $('stats').replaceChildren(
-    stat(data.totalRecords, '총 기록 수'),
+    stat(data.totalEvaluations, '총 평가 수'),
+    stat(`${ps.filter((p) => p.active && p.count).length} / ${data.activeProducts}`, '평가된 상품'),
     stat(fmt(avgReact), '평균 고객 반응'),
-    stat(total ? Math.round((bought / total) * 100) + '%' : '-', '전체 구매율'),
+    stat(best ? best.name : '-', '반응이 가장 좋은 상품'),
     stat(worst ? worst.name : '-', '반응이 가장 낮은 상품'));
   $('staffBox').replaceChildren(...(data.staff.length
-    ? [el('span', { class: 'hint' }, '직원별 기록: '), ...data.staff.map((s) => el('span', { class: 'pill' }, `${s.name} ${s.n}`))]
+    ? [el('span', { class: 'hint' }, '직원별 진행: '), ...data.staff.map((s) => el('span', { class: 'pill' }, `${s.name} ${s.done}/${data.activeProducts}`))]
     : []));
   LAST = ps;
   renderList();
