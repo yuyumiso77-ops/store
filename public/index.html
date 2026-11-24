@@ -31,7 +31,8 @@
 
     <div id="survey" hidden>
       <div class="card">
-        <span class="q">1. 고객 반응은 전반적으로 어땠나요? <span class="req">*</span></span>
+        <span class="q">1. 상품 자체에 대한 고객 반응은 어땠나요? <span class="req">*</span></span>
+        <p class="hint qdesc">디자인·핏·소재처럼 <b>상품만 놓고</b> 고객들이 보인 반응이에요. 실제로 팔렸는지는 2번에서 따로 물어요.</p>
         <div class="chips faces" id="reaction"></div>
 
         <!-- 고객 반응에 따라 이어지는 질문 -->
@@ -52,14 +53,15 @@
       </div>
 
       <div class="card">
-        <span class="q">2. 판매 반응은 어땠나요? <span class="req">*</span></span>
+        <span class="q">2. 실제 판매 반응은 어땠나요? <span class="req">*</span></span>
+        <p class="hint qdesc">상품이 좋아도 결품·가격·시즌 때문에 안 팔릴 수 있어요. 여기서는 <b>상품 외 요인</b>을 물어요.</p>
         <div class="chips" id="sales"></div>
         <div id="sellBox" hidden>
-          <span class="q sub-q">2-1. 🔥 잘 팔린 이유는 뭐였나요? <span class="req">*</span> <span class="hint">(여러 개 선택)</span></span>
+          <span class="q sub-q">2-1. 🔥 상품 외에 판매를 도운 요인은 뭐였나요? <span class="req">*</span> <span class="hint">(여러 개 선택)</span></span>
           <div class="chips" id="sellReasons"></div>
         </div>
         <div id="reasonsBox" hidden>
-          <span class="q sub-q">2-1. 안 팔린 주된 이유 / 고객이 망설인 이유는 뭐였나요? <span class="req">*</span> <span class="hint">(여러 개 선택)</span></span>
+          <span class="q sub-q">2-1. 🚧 상품 외에 판매를 막은 요인은 뭐였나요? <span class="req">*</span> <span class="hint">(여러 개 선택)</span></span>
           <div class="chips" id="noBuyReasons"></div>
         </div>
       </div>
@@ -338,8 +340,8 @@ $('form').onsubmit = async (e) => {
   try {
     const werr = whyError();
     if (werr) { $('why').scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error(werr); }
-    const serr = state.sales === 'good' && !state.sellReasons.length ? '2-1. 잘 팔린 이유를 하나 이상 골라 주세요.'
-      : state.sales && state.sales !== 'good' && !state.noBuyReasons.length ? '2-1. 안 팔린 이유를 하나 이상 골라 주세요.' : '';
+    const serr = state.sales === 'good' && !state.sellReasons.length ? '2-1. 판매를 도운 요인을 하나 이상 골라 주세요.'
+      : state.sales && state.sales !== 'good' && !state.noBuyReasons.length ? '2-1. 판매를 막은 요인을 하나 이상 골라 주세요.' : '';
     if (serr) { $('sales').scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error(serr); }
     const body = { ...state, staff: $('staff').value, productId: $('product').value };
     TEXTS.forEach((id) => (body[id] = $(id).value));

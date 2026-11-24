@@ -15,7 +15,7 @@ const IMG_DIR = path.join(DATA_DIR, 'images');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // 선택지 (화면과 공유) — 골프웨어 매장용
-const COMMON_ASPECTS = ['디자인', '색상', '가격', '품질·마감', '브랜드'];
+const COMMON_ASPECTS = ['디자인', '색상', '가격(가치 대비)', '품질·마감', '브랜드'];
 const CATEGORY_ASPECTS = {
   어패럴: ['핏·사이즈', '소재·촉감', '신축성', '통기성·쿨링', '보온성', '세탁·관리'],
   골프화: ['사이즈·발볼', '착화감·쿠션', '접지력·스파이크', '무게', '방수'],
@@ -38,13 +38,14 @@ const OPTIONS = {
   aspectsByCategory: Object.fromEntries(CATEGORIES.map((c) => [c, aspectsFor(c)])),
   defaultAspects: aspectsFor(''),
   sales: { good: '잘 팔림', normal: '보통', poor: '잘 안 팔림' },
+  // 2-1은 상품 자체가 아닌 '판매 요인'만 묻는다 (상품 장단점은 1-1에서)
   sellReasons: [
-    '디자인이 좋음', '컬러가 좋음', '착용감·핏이 좋음', '품질·소재 만족', '기능성 (쿨링·보온 등)', '가격 대비 만족',
-    '시즌·날씨에 맞음', '브랜드 선호', '직원 추천·코디 제안', '프로모션·할인', '선물용', '기타',
+    '직원 추천·코디 제안', '할인·프로모션', '시즌·날씨와 잘 맞음', '눈에 잘 띄는 진열', '사이즈·컬러 재고 충분',
+    '다른 상품과 함께 구매', '선물 수요', '특별한 요인 없음 (상품 자체가 좋음)', '기타',
   ],
   noBuyReasons: [
-    '가격이 비쌈', '맞는 사이즈 없음', '원하는 색상 없음', '디자인 취향 아님', '핏이 안 맞음', '착용감 불편',
-    '이미 비슷한 제품 있음', '온라인·타매장과 비교', '시즌이 안 맞음', '기타',
+    '맞는 사이즈 결품', '원하는 컬러 결품', '정가 부담·할인 없음', '온라인·타매장과 가격 비교', '시즌·날씨와 안 맞음',
+    '진열 위치가 눈에 안 띔', '입고 시기가 늦거나 이름', '매장 내 비슷한 상품과 겹침', '특별한 요인 없음 (상품 자체 문제)', '기타',
   ],
   ageGroups: ['20대', '30대', '40대', '50대', '60대 이상'],
   genders: ['남성', '여성'],
@@ -174,6 +175,14 @@ function countBy(lists) {
   lists.flat().forEach((x) => (c[x] = (c[x] || 0) + 1));
   return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([name, n]) => ({ name, n }));
 }
+// 고객 반응(상품 자체)과 실제 판매가 엇갈린 상품 찾기
+function gapOf(avgReaction, sales, n) {
+  if (!n || avgReaction == null) return '';
+  const salesScore = (sales.good - sales.poor) / n; // -1 ~ 1
+  if (avgReaction >= 3.5 && salesScore <= -0.34) return 'goodReactionPoorSales';
+  if (avgReaction <= 2.5 && salesScore >= 0.34) return 'poorReactionGoodSales';
+  return '';
+}
 function summary() {
   const avg = (arr) => (arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null);
   const products = db.products.map((p) => {
@@ -191,6 +200,7 @@ function summary() {
       cons: countBy(es.map((e) => e.cons)),
       noBuyReasons: countBy(es.map((e) => e.noBuyReasons)),
       sellReasons: countBy(es.map((e) => e.sellReasons || [])),
+      gap: gapOf(avg(es.map((e) => e.reaction)), sales, es.length),
       ageGroups: countBy(es.map((e) => e.ageGroups)),
       genders: countBy(es.map((e) => e.genders)),
       missing: es.filter((e) => e.missing).map(({ missing, staff, updatedAt }) => ({ missing, staff, updatedAt })),
@@ -350,7 +360,7 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
       const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
-      const rows = [['수정일시', '직원', '품번', '상품', '품목', '복종', '고객반응(1~5)', '판매반응', '잘 팔린 이유', '안 팔린 이유', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
+      const rows = [['수정일시', '직원', '품번', '상품', '품목', '복종', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
       db.evaluations.forEach((e) => {
         const pr = prodOf[e.productId] || {};
         rows.push([
@@ -399,8 +409,8 @@ async function handle(req, res) {
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: '고객 반응을 선택해 주세요.' });
     if (!(b.sales in OPTIONS.sales)) return send(res, 400, { error: '판매 반응을 선택해 주세요.' });
     // 판매 반응에 따라 이어지는 질문(2-1) 필수 확인
-    if (b.sales === 'good' && !pick(b.sellReasons, OPTIONS.sellReasons).length) return send(res, 400, { error: '잘 팔린 이유를 하나 이상 골라 주세요.' });
-    if (b.sales !== 'good' && !pick(b.noBuyReasons, OPTIONS.noBuyReasons).length) return send(res, 400, { error: '안 팔린 이유를 하나 이상 골라 주세요.' });
+    if (b.sales === 'good' && !pick(b.sellReasons, OPTIONS.sellReasons).length) return send(res, 400, { error: '판매를 도운 요인을 하나 이상 골라 주세요.' });
+    if (b.sales !== 'good' && !pick(b.noBuyReasons, OPTIONS.noBuyReasons).length) return send(res, 400, { error: '판매를 막은 요인을 하나 이상 골라 주세요.' });
     // 고객 반응에 따라 이어지는 질문(1-1) 필수 확인
     const aspects = aspectsFor(product.category);
     const hasPros = pick(b.pros, aspects).length > 0 || cleanText(b.prosNote, 500) !== '';

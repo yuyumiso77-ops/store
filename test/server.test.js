@@ -97,6 +97,15 @@ test('상품 삭제: 이미지·평가도 함께 삭제', async () => {
   assert.ok(!s.products.some((x) => x.id === p.id));
 });
 
+test('반응·판매 엇갈림 표시', async () => {
+  const p = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '갭 테스트', category: '어패럴' }) })).json();
+  for (const staffName of ['가', '나'])
+    await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: staffName, reaction: 5, pros: ['디자인'], sales: 'poor', noBuyReasons: ['맞는 사이즈 결품'] }) });
+  const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  assert.strictEqual(s.products.find((x) => x.id === p.id).gap, 'goodReactionPoorSales');
+  await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);
@@ -112,17 +121,17 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
   assert.strictEqual((await post({ reaction: 4, sales: 'good', staff: ' ' })).status, 400); // 이름 누락
 
   // 민지: 처음 저장 → 같은 이름(공백 차이)으로 다시 저장하면 수정
-  assert.strictEqual((await post({ reaction: 2, sales: 'poor', noBuyReasons: ['가격이 비쌈'] })).status, 400); // 나쁨인데 아쉬운 점 없음
-  assert.strictEqual((await post({ reaction: 5, sales: 'good', cons: ['가격'], sellReasons: ['선물용'] })).status, 400); // 좋음인데 좋은 점 없음
+  assert.strictEqual((await post({ reaction: 2, sales: 'poor', noBuyReasons: ['정가 부담·할인 없음'] })).status, 400); // 나쁨인데 아쉬운 점 없음
+  assert.strictEqual((await post({ reaction: 5, sales: 'good', cons: ['가격(가치 대비)'], sellReasons: ['선물 수요'] })).status, 400); // 좋음인데 좋은 점 없음
   assert.strictEqual((await post({ reaction: 5, sales: 'good', pros: ['디자인'] })).status, 400); // 잘 팔린 이유 없음
-  assert.strictEqual((await post({ reaction: 2, sales: 'poor', cons: ['가격'] })).status, 400); // 안 팔린 이유 없음
+  assert.strictEqual((await post({ reaction: 2, sales: 'poor', cons: ['가격(가치 대비)'] })).status, 400); // 안 팔린 이유 없음
   assert.strictEqual((await post({ reaction: 3, sales: 'normal', noBuyReasons: ['기타'] })).status, 400); // 보통인데 둘 다 없음
-  assert.strictEqual((await post({ reaction: 2, sales: 'poor', consNote: '기장이 짧음', noBuyReasons: ['가격이 비쌈'] })).status, 201);
-  const upd = await post({ staff: '민 지', reaction: 5, sales: 'good', sellReasons: ['컬러가 좋음', '없는이유'], pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['가격이 비쌈'], missing: '105 네이비', ageGroups: ['40대', '50대', '90대'], genders: ['남성'] });
+  assert.strictEqual((await post({ reaction: 2, sales: 'poor', consNote: '기장이 짧음', noBuyReasons: ['정가 부담·할인 없음'] })).status, 201);
+  const upd = await post({ staff: '민 지', reaction: 5, sales: 'good', sellReasons: ['직원 추천·코디 제안', '없는이유'], pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['정가 부담·할인 없음'], missing: '105 네이비', ageGroups: ['40대', '50대', '90대'], genders: ['남성'] });
   assert.strictEqual(upd.status, 200);
   assert.strictEqual((await upd.json()).updated, true);
   // 준호
-  assert.strictEqual((await post({ staff: '준호', reaction: 2, sales: 'poor', pros: ['신축성'], cons: ['가격'], noBuyReasons: ['맞는 사이즈 없음'], improvement: '반팔 출시', ageGroups: ['40대'] })).status, 201);
+  assert.strictEqual((await post({ staff: '준호', reaction: 2, sales: 'poor', pros: ['신축성'], cons: ['가격(가치 대비)'], noBuyReasons: ['맞는 사이즈 결품'], improvement: '반팔 출시', ageGroups: ['40대'] })).status, 201);
 
   const mine = await (await fetch(base + '/api/evaluations/mine?staff=' + encodeURIComponent('민지'), { headers: staff })).json();
   assert.strictEqual(mine.length, 1);
@@ -134,8 +143,9 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
   assert.strictEqual(ps.avgReaction, 3.5);
   assert.deepStrictEqual(ps.sales, { good: 1, normal: 0, poor: 1 });
   assert.deepStrictEqual(ps.pros, [{ name: '신축성', n: 2 }]); // 중복·다른 품목 항목 제거
-  assert.deepStrictEqual(ps.noBuyReasons, [{ name: '맞는 사이즈 없음', n: 1 }]); // 잘 팔림이면 이유 무시
-  assert.deepStrictEqual(ps.sellReasons, [{ name: '컬러가 좋음', n: 1 }]); // 잘 팔림일 때만, 목록 밖 값 제거
+  assert.deepStrictEqual(ps.noBuyReasons, [{ name: '맞는 사이즈 결품', n: 1 }]); // 잘 팔림이면 이유 무시
+  assert.deepStrictEqual(ps.sellReasons, [{ name: '직원 추천·코디 제안', n: 1 }]); // 잘 팔림일 때만, 목록 밖 값 제거
+  assert.strictEqual(ps.gap, ''); // 평균 반응 3.5, 판매 반반 → 엇갈림 아님
   assert.deepStrictEqual(ps.ageGroups, [{ name: '40대', n: 2 }, { name: '50대', n: 1 }]);
   assert.deepStrictEqual(ps.missing.map((x) => x.missing), ['105 네이비']);
   assert.ok(s.staff.some((x) => x.name === '민 지' && x.done === 1));
@@ -145,9 +155,9 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
   assert.match(csv, /"'=스윙이 편해요"/);
   assert.match(csv, /반팔 출시/);
   assert.match(csv, /잘 팔림/);
-  assert.match(csv, /컬러가 좋음/);
+  assert.match(csv, /직원 추천·코디 제안/);
 
   await fetch(base + `/api/admin/products/${p.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
   assert.deepStrictEqual((await (await fetch(base + '/api/options', { headers: staff })).json()).products, []);
-  assert.strictEqual((await post({ reaction: 5, sales: 'good', pros: ['디자인'], sellReasons: ['선물용'] })).status, 400); // 조사 중지된 상품
+  assert.strictEqual((await post({ reaction: 5, sales: 'good', pros: ['디자인'], sellReasons: ['선물 수요'] })).status, 400); // 조사 중지된 상품
 });
