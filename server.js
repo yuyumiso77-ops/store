@@ -10,6 +10,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin1234';
 const STAFF_PASSWORD = process.env.STAFF_PASSWORD || ''; // 비워두면 기록 화면은 비밀번호 없이 열림
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+const IMG_DIR = path.join(DATA_DIR, 'images');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // 선택지 (화면과 공유) — 골프웨어 매장용
@@ -86,6 +87,35 @@ function readBody(req) {
   });
 }
 
+function readRaw(req, max) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > max) {
+        reject(new Error('too large'));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+// 품번: 영문·숫자·하이픈·밑줄·점 (파일명에서 확장자를 뺀 값)
+const cleanCode = (v) => (typeof v === 'string' ? v.trim().slice(0, 60) : '');
+const validCode = (c) => /^[\w.-]+$/.test(c);
+const byCode = (c) => db.products.find((x) => x.code && x.code.toLowerCase() === c.toLowerCase());
+function imageType(buf) {
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
+  if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+  if (buf.slice(0, 4).toString() === 'RIFF' && buf.slice(8, 12).toString() === 'WEBP') return 'webp';
+  return null;
+}
+const imageUrl = (p) => (p.image ? `/images/${p.image}?v=${p.imageAt}` : null);
+const publicProduct = ({ id, code, name, category, active }) => ({ id, code: code || '', name, category, active });
+
 function passwordOf(req) {
   const h = req.headers.authorization || '';
   if (!h.startsWith('Basic ')) return null;
@@ -131,7 +161,9 @@ function summary() {
     const outcomes = { bought: 0, hold: 0, no: 0 };
     rs.forEach((r) => outcomes[r.outcome]++);
     return {
-      ...p,
+      ...publicProduct(p),
+      imageUrl: imageUrl(p),
+      createdAt: p.createdAt,
       count: rs.length,
       avgReaction: avg(rs.map((r) => r.reaction)),
       outcomes,
@@ -160,7 +192,7 @@ function summary() {
 }
 
 // ---------- 라우팅 ----------
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
+const MIME = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
 function serveStatic(res, file) {
   const full = path.join(PUBLIC_DIR, file);
   if (!full.startsWith(PUBLIC_DIR + path.sep)) return send(res, 404, 'Not found');
@@ -191,7 +223,10 @@ async function handle(req, res) {
       const name = cleanText(b.name, 100);
       if (!name) return send(res, 400, { error: '상품명을 입력해 주세요.' });
       if (!CATEGORIES.includes(b.category)) return send(res, 400, { error: '품목(어패럴·용품·골프화·장갑)을 선택해 주세요.' });
-      const product = { id: crypto.randomUUID().slice(0, 8), name, category: b.category, active: true, createdAt: new Date().toISOString() };
+      const code = cleanCode(b.code);
+      if (code && !validCode(code)) return send(res, 400, { error: '품번은 영문·숫자·하이픈(-)·밑줄(_)만 쓸 수 있어요.' });
+      if (code && byCode(code)) return send(res, 400, { error: `이미 등록된 품번이에요: ${code}` });
+      const product = { id: crypto.randomUUID().slice(0, 8), code, name, category: b.category, active: true, createdAt: new Date().toISOString() };
       db.products.push(product);
       saveDb();
       return send(res, 201, product);
@@ -205,16 +240,49 @@ async function handle(req, res) {
       if (typeof b.active === 'boolean') product.active = b.active;
       if (typeof b.name === 'string' && b.name.trim()) product.name = cleanText(b.name, 100);
       if (CATEGORIES.includes(b.category)) product.category = b.category;
+      if (typeof b.code === 'string') {
+        const code = cleanCode(b.code);
+        if (code && !validCode(code)) return send(res, 400, { error: '품번은 영문·숫자·하이픈(-)·밑줄(_)만 쓸 수 있어요.' });
+        const dup = code && byCode(code);
+        if (dup && dup.id !== product.id) return send(res, 400, { error: `이미 등록된 품번이에요: ${code}` });
+        product.code = code;
+      }
       saveDb();
       return send(res, 200, product);
     }
 
+    // 이미지 업로드: 파일명(품번)으로 상품을 찾고, 없으면 새로 등록
+    const im = p.match(/^\/api\/admin\/images\/([^/]+)$/);
+    if (im && m === 'PUT') {
+      const code = cleanCode(decodeURIComponent(im[1]));
+      if (!code || !validCode(code)) return send(res, 400, { error: `품번 형식이 올바르지 않아요: ${code}` });
+      const buf = await readRaw(req, 5 * 1024 * 1024);
+      const ext = imageType(buf);
+      if (!ext) return send(res, 400, { error: 'JPG·PNG·WEBP 이미지만 올릴 수 있어요.' });
+      let product = byCode(code);
+      let created = false;
+      if (!product) {
+        const category = url.searchParams.get('category');
+        if (!CATEGORIES.includes(category)) return send(res, 400, { error: '새 품번이에요. 품목을 먼저 선택해 주세요.' });
+        product = { id: crypto.randomUUID().slice(0, 8), code, name: code, category, active: true, createdAt: new Date().toISOString() };
+        db.products.push(product);
+        created = true;
+      }
+      fs.mkdirSync(IMG_DIR, { recursive: true });
+      if (product.image && product.image !== `${product.id}.${ext}`) fs.rmSync(path.join(IMG_DIR, product.image), { force: true });
+      fs.writeFileSync(path.join(IMG_DIR, `${product.id}.${ext}`), buf);
+      product.image = `${product.id}.${ext}`;
+      product.imageAt = Date.now();
+      saveDb();
+      return send(res, created ? 201 : 200, { created, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
+    }
+
     if (m === 'GET' && p === '/api/admin/records.csv') {
-      const names = Object.fromEntries(db.products.map((x) => [x.id, x.name]));
-      const rows = [['일시', '직원', '상품', '고객반응(1~5)', '구매결과', '시착여부', '미구매이유', '장점', '장점 메모', '단점', '단점 메모', '개선 아이디어', '찾았지만 없던 사이즈·색상', '연령대', '성별']];
+      const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
+      const rows = [['일시', '직원', '품번', '상품', '품목', '고객반응(1~5)', '구매결과', '시착여부', '미구매이유', '장점', '장점 메모', '단점', '단점 메모', '개선 아이디어', '찾았지만 없던 사이즈·색상', '연령대', '성별']];
       db.records.forEach((r) =>
         rows.push([
-          r.createdAt, r.staff, names[r.productId] || r.productId, r.reaction, OPTIONS.outcomes[r.outcome], OPTIONS.tried[r.tried] || '',
+          r.createdAt, r.staff, prodOf[r.productId]?.code || '', prodOf[r.productId]?.name || r.productId, prodOf[r.productId]?.category || '', r.reaction, OPTIONS.outcomes[r.outcome], OPTIONS.tried[r.tried] || '',
           r.noBuyReasons.join(', '), r.pros.join(', '), r.prosNote, r.cons.join(', '), r.consNote, r.improvement, r.missing || '', r.ageGroup, r.gender,
         ])
       );
@@ -229,8 +297,17 @@ async function handle(req, res) {
 
   if (m === 'GET' && p === '/') return serveStatic(res, 'index.html');
 
+  const img = p.match(/^\/images\/([\w-]+\.(jpg|png|webp))$/);
+  if (m === 'GET' && img) {
+    return fs.readFile(path.join(IMG_DIR, img[1]), (err, data) => {
+      if (err) return send(res, 404, 'Not found');
+      res.writeHead(200, { 'Content-Type': MIME['.' + img[2]], 'Cache-Control': 'private, max-age=604800' });
+      res.end(data);
+    });
+  }
+
   if (m === 'GET' && p === '/api/options') {
-    return send(res, 200, { ...OPTIONS, products: db.products.filter((x) => x.active).map(({ id, name, category }) => ({ id, name, category })) });
+    return send(res, 200, { ...OPTIONS, products: db.products.filter((x) => x.active).map((x) => ({ ...publicProduct(x), imageUrl: imageUrl(x) })) });
   }
 
   if (m === 'POST' && p === '/api/records') {

@@ -25,16 +25,34 @@
   </div>
 
   <div class="card">
-    <h2>상품 등록</h2>
-    <form id="addForm" class="row">
-      <select id="category" required style="flex:0 1 160px"><option value="">품목 선택</option></select>
-      <input type="text" id="name" placeholder="상품명 (예: 남성 쿨링 기능성 폴로 셔츠)" maxlength="100" required>
-      <button class="btn accent" type="submit" style="flex:0 0 auto">추가</button>
-    </form>
+    <h2>상품 이미지로 등록</h2>
+    <p class="hint" style="margin-top:-6px">이미지 파일명이 <b>품번</b>이 됩니다 (예: <code>GM24-PL101.jpg</code> → 품번 GM24-PL101).
+      처음 보는 품번은 선택한 품목으로 새로 등록되고, 이미 있는 품번은 이미지만 바뀝니다.</p>
+    <div class="row" style="align-items:center">
+      <select id="upCategory" style="flex:0 1 160px"><option value="">품목 선택</option></select>
+      <label class="drop" id="drop">
+        <input type="file" id="files" accept="image/*" multiple hidden>
+        📷 이미지 선택 또는 여기로 끌어다 놓기 (여러 장 가능)
+      </label>
+    </div>
+    <ul class="uplog" id="uplog"></ul>
+
+    <details style="margin-top:12px">
+      <summary class="hint" style="cursor:pointer">이미지 없이 직접 등록</summary>
+      <form id="addForm" class="row" style="margin-top:10px">
+        <select id="category" required style="flex:0 1 140px"><option value="">품목 선택</option></select>
+        <input type="text" id="code" placeholder="품번 (선택)" maxlength="60" style="flex:0 1 180px">
+        <input type="text" id="name" placeholder="상품명" maxlength="100" required>
+        <button class="btn accent" type="submit" style="flex:0 0 auto">추가</button>
+      </form>
+    </details>
     <p class="error" id="addError"></p>
   </div>
 
-  <div class="chips" id="filter" style="margin-bottom:16px"></div>
+  <div class="row" style="align-items:center;margin-bottom:12px">
+    <div class="chips" id="filter" style="flex:1 1 auto"></div>
+    <input type="search" id="search" placeholder="품번·상품명 검색" style="flex:0 1 240px">
+  </div>
   <div id="products"></div>
 </main>
 
@@ -79,10 +97,24 @@ function renderProduct(p) {
         el('div', { class: 'meta' }, `${n.staff} · ${REACT[n.reaction]} · ${OUT[n.outcome]} · ${new Date(n.createdAt).toLocaleString('ko-KR')}`))))
     : el('p', { class: 'hint' }, '아직 메모가 없어요.');
 
+  const fileIn = el('input', { type: 'file', accept: 'image/*', hidden: '' });
+  fileIn.onchange = async () => {
+    if (!fileIn.files[0]) return;
+    if (!p.code) return alert('이미지를 바꾸려면 먼저 [수정]에서 품번을 입력해 주세요.');
+    try { await uploadImage(fileIn.files[0], p.code, p.category); load(); } catch (ex) { alert(ex.message); }
+  };
+  const imgBtn = el('button', { class: 'btn', onclick: () => fileIn.click() }, p.imageUrl ? '이미지 교체' : '이미지 추가');
+  const editBtn = el('button', { class: 'btn', onclick: () => { head.replaceWith(editForm(p)); } }, '수정');
+  const head = el('div', { class: 'product-head' },
+    el('div', { class: 'phead' },
+      p.imageUrl ? el('img', { class: 'aimg', src: p.imageUrl, alt: p.name, loading: 'lazy' }) : el('div', { class: 'aimg noimg' }, '이미지 없음'),
+      el('div', {},
+        el('h2', { style: 'margin:0 0 4px' }, p.name),
+        el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
+    el('div', { class: 'actions' }, editBtn, imgBtn, toggle, fileIn));
+
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
-    el('div', { class: 'product-head' },
-      el('h2', {}, p.name, ' ', p.category ? el('span', { class: 'tag' }, p.category) : '', ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')),
-      el('div', { class: 'actions' }, toggle)),
+    head,
     el('div', { class: 'stats' },
       stat(p.count, '기록 수'),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
@@ -96,6 +128,68 @@ function renderProduct(p) {
     p.missing.length ? el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '🔍 찾았지만 없던 사이즈·색상'),
       el('ul', { class: 'comments' }, p.missing.map((x) => el('li', {}, x.missing, el('div', { class: 'meta' }, `${x.staff} · ${new Date(x.createdAt).toLocaleString('ko-KR')}`))))) : '',
     el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '직원 메모 (장점 · 단점 · 개선 아이디어)'), notes));
+}
+
+function editForm(p) {
+  const cat = el('select', {}, CATS.map((c) => el('option', { value: c }, c)));
+  cat.value = p.category;
+  const code = el('input', { type: 'text', value: p.code, placeholder: '품번', maxlength: '60' });
+  const name = el('input', { type: 'text', value: p.name, placeholder: '상품명', maxlength: '100' });
+  const err = el('p', { class: 'error' });
+  const f = el('form', { class: 'row', style: 'align-items:center' }, cat, code, name,
+    el('button', { class: 'btn accent', type: 'submit', style: 'flex:0 0 auto' }, '저장'),
+    el('button', { class: 'btn', type: 'button', style: 'flex:0 0 auto', onclick: () => load() }, '취소'));
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/api/admin/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ category: cat.value, code: code.value, name: name.value }) });
+      load();
+    } catch (ex) { err.textContent = ex.message; }
+  };
+  return el('div', {}, f, err);
+}
+
+// 업로드 전에 브라우저에서 최대 1000px JPEG로 줄임
+async function shrink(file) {
+  let bmp;
+  try { bmp = await createImageBitmap(file); } catch { throw new Error('이미지를 읽을 수 없어요 (JPG·PNG·WEBP를 사용해 주세요)'); }
+  const scale = Math.min(1, 1000 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * scale);
+  c.height = Math.round(bmp.height * scale);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+}
+async function uploadImage(file, code, category) {
+  const blob = await shrink(file);
+  const res = await fetch(`/api/admin/images/${encodeURIComponent(code)}?category=${encodeURIComponent(category || '')}`, {
+    method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || '업로드 실패');
+  return data;
+}
+const codeFromName = (n) => n.replace(/\.[^.]+$/, '').trim();
+
+async function uploadMany(files) {
+  const log = $('uplog');
+  const category = $('upCategory').value;
+  for (const f of files) {
+    const code = codeFromName(f.name);
+    const li = el('li', {}, `⏳ ${code}`);
+    log.prepend(li);
+    try {
+      const r = await uploadImage(f, code, category);
+      li.textContent = r.created ? `✅ ${code} — 새 상품으로 등록 (${r.product.category})` : `🔄 ${code} — 이미지 교체 (${r.product.name})`;
+    } catch (ex) {
+      li.textContent = `❌ ${code} — ${ex.message}`;
+      li.className = 'fail';
+    }
+  }
+  load();
 }
 
 async function load() {
@@ -125,7 +219,8 @@ function renderList() {
     const n = LAST.filter((p) => !c || p.category === c).length;
     return el('button', { type: 'button', class: FILTER === c ? 'on' : '', onclick: () => { FILTER = c; renderList(); } }, `${c || '전체'} ${n}`);
   }));
-  const ps = LAST.filter((p) => !FILTER || p.category === FILTER);
+  const q = $('search').value.trim().toLowerCase();
+  const ps = LAST.filter((p) => (!FILTER || p.category === FILTER) && (!q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)));
   $('products').replaceChildren(...(ps.length
     ? ps.slice().sort((a, b) => b.active - a.active || b.count - a.count).map(renderProduct)
     : [el('div', { class: 'card hint' }, LAST.length ? '이 품목에 등록된 상품이 없어요.' : '위에서 조사할 상품을 먼저 등록해 주세요.')]));
@@ -134,7 +229,13 @@ function renderList() {
 async function init() {
   const o = await api('/api/options');
   CATS = o.categories;
-  CATS.forEach((c) => $('category').add(new Option(c, c)));
+  CATS.forEach((c) => { $('category').add(new Option(c, c)); $('upCategory').add(new Option(c, c)); });
+  $('search').oninput = renderList;
+  $('files').onchange = () => { uploadMany([...$('files').files]); $('files').value = ''; };
+  const drop = $('drop');
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); uploadMany([...e.dataTransfer.files].filter((f) => f.type.startsWith('image/'))); };
   load();
 }
 function $(id) { return document.getElementById(id); }
@@ -143,7 +244,8 @@ $('addForm').onsubmit = async (e) => {
   e.preventDefault();
   $('addError').textContent = '';
   try {
-    await api('/api/admin/products', { method: 'POST', body: JSON.stringify({ name: $('name').value, category: $('category').value }) });
+    await api('/api/admin/products', { method: 'POST', body: JSON.stringify({ name: $('name').value, code: $('code').value, category: $('category').value }) });
+    $('code').value = '';
     $('name').value = '';
     load();
   } catch (ex) { $('addError').textContent = ex.message; }

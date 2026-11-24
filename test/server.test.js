@@ -27,6 +27,32 @@ test('인증: 관리자/직원 분리', async () => {
   assert.strictEqual((await fetch(base + '/healthz')).status, 200);
 });
 
+test('이미지 업로드: 파일명=품번으로 등록/교체', async () => {
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  const put = (code, body, cat = '') => fetch(base + `/api/admin/images/${encodeURIComponent(code)}?category=${encodeURIComponent(cat)}`, { method: 'PUT', headers: { ...admin, 'Content-Type': 'image/jpeg' }, body });
+  assert.strictEqual((await put('GM-001', jpg)).status, 400); // 새 품번인데 품목 없음
+  assert.strictEqual((await put('GM-001', Buffer.from('not image'), '골프화')).status, 400);
+  assert.strictEqual((await put('bad code!', jpg, '골프화')).status, 400);
+  const r1 = await put('GM-001', jpg, '골프화');
+  assert.strictEqual(r1.status, 201);
+  const p1 = (await r1.json()).product;
+  assert.deepStrictEqual([p1.code, p1.name, p1.category], ['GM-001', 'GM-001', '골프화']);
+  const r2 = await put('gm-001', jpg); // 대소문자 무시, 기존 상품 이미지 교체
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual((await r2.json()).product.id, p1.id);
+  const opt = await (await fetch(base + '/api/options', { headers: staff })).json();
+  const url = opt.products.find((x) => x.id === p1.id).imageUrl;
+  assert.ok(url);
+  assert.strictEqual((await fetch(base + url)).status, 401); // 인증 필요
+  const img = await fetch(base + url, { headers: staff });
+  assert.strictEqual(img.headers.get('content-type'), 'image/jpeg');
+  assert.deepStrictEqual(Buffer.from(await img.arrayBuffer()), jpg);
+  // 품번 중복 방지
+  const dup = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', code: 'GM-001', category: '장갑' }) });
+  assert.strictEqual(dup.status, 400);
+  await fetch(base + `/api/admin/products/${p1.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);
@@ -45,7 +71,7 @@ test('상품 등록 → 직원 기록 → 집계 → CSV', async () => {
   assert.strictEqual((await post({ reaction: 2, outcome: 'no', tried: 'yes', pros: ['신축성'], cons: ['가격'], noBuyReasons: ['맞는 사이즈 없음'], improvement: '반팔 출시' })).status, 201);
 
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
-  const ps = s.products[0];
+  const ps = s.products.find((x) => x.id === p.id);
   assert.strictEqual(s.totalRecords, 2);
   assert.strictEqual(ps.avgReaction, 3.5);
   assert.strictEqual(ps.buyRate, 50);

@@ -13,15 +13,18 @@
 
   <form id="form" novalidate>
     <div class="card">
-      <div class="row">
-        <div>
-          <label for="staff">직원 이름</label>
-          <input type="text" id="staff" maxlength="30" placeholder="예: 김민지" autocomplete="name">
-        </div>
-        <div>
-          <label for="product">상품</label>
-          <select id="product"><option value="">상품 선택</option></select>
-        </div>
+      <label for="staff">직원 이름</label>
+      <input type="text" id="staff" maxlength="30" placeholder="예: 김민지" autocomplete="name">
+    </div>
+
+    <div class="card">
+      <span class="q">상품 <span class="req">*</span></span>
+      <input type="hidden" id="product">
+      <div id="picked" class="picked" hidden></div>
+      <div id="picker">
+        <input type="search" id="search" placeholder="품번 또는 상품명 검색">
+        <div class="chips" id="catFilter" style="margin:10px 0"></div>
+        <div class="grid" id="grid"></div>
       </div>
     </div>
 
@@ -115,16 +118,8 @@ async function init() {
   const res = await fetch('/api/options');
   const o = await res.json();
   OPTS = o;
-  // 품목별로 묶어서 표시
-  [...o.categories, ''].forEach((cat) => {
-    const list = o.products.filter((p) => (cat ? p.category === cat : !o.categories.includes(p.category)));
-    if (!list.length) return;
-    const g = document.createElement('optgroup');
-    g.label = cat || '기타';
-    list.forEach((p) => g.appendChild(new Option(p.name, p.id)));
-    $('product').appendChild(g);
-  });
-  $('product').onchange = renderAspects;
+  $('search').oninput = renderGrid;
+  renderCatFilter();
   if (!o.products.length) $('error').textContent = '등록된 상품이 없어요. 관리자 화면에서 상품을 먼저 등록해 주세요.';
 
   chips('reaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${o.reactions[n]}`]));
@@ -147,6 +142,76 @@ async function init() {
   } catch {}
   const pid = new URLSearchParams(location.search).get('product');
   if (pid && o.products.some((p) => p.id === pid)) $('product').value = pid;
+  selectProduct($('product').value);
+}
+
+// ---- 이미지로 상품 고르기 ----
+let CAT = '';
+function renderCatFilter() {
+  const box = $('catFilter');
+  box.replaceChildren();
+  ['', ...OPTS.categories].forEach((c) => {
+    const n = OPTS.products.filter((p) => !c || p.category === c).length;
+    if (c && !n) return;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `${c || '전체'} ${n}`;
+    b.className = CAT === c ? 'on' : '';
+    b.onclick = () => { CAT = c; renderCatFilter(); renderGrid(); };
+    box.appendChild(b);
+  });
+}
+function thumb(p, cls) {
+  if (p.imageUrl) {
+    const img = document.createElement('img');
+    img.src = p.imageUrl; img.alt = p.name; img.loading = 'lazy'; img.className = cls;
+    return img;
+  }
+  const d = document.createElement('div');
+  d.className = cls + ' noimg'; d.textContent = '이미지 없음';
+  return d;
+}
+function renderGrid() {
+  const q = $('search').value.trim().toLowerCase();
+  const list = OPTS.products.filter((p) => (!CAT || p.category === CAT) && (!q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)));
+  const grid = $('grid');
+  grid.replaceChildren();
+  if (!list.length) {
+    grid.innerHTML = '<p class="hint">찾는 상품이 없어요.</p>';
+    return;
+  }
+  list.forEach((p) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tile';
+    b.onclick = () => selectProduct(p.id);
+    const cap = document.createElement('span');
+    cap.className = 'cap';
+    cap.innerHTML = '<b></b><small></small>';
+    cap.querySelector('b').textContent = p.code || p.category;
+    cap.querySelector('small').textContent = p.name !== p.code ? p.name : p.category;
+    b.append(thumb(p, 'timg'), cap);
+    grid.appendChild(b);
+  });
+}
+function selectProduct(id) {
+  const p = OPTS.products.find((x) => x.id === id);
+  $('product').value = p ? p.id : '';
+  $('picker').hidden = !!p;
+  $('picked').hidden = !p;
+  if (p) {
+    const info = document.createElement('div');
+    info.innerHTML = '<div class="pname"></div><div class="hint pcode"></div>';
+    info.querySelector('.pname').textContent = p.name;
+    info.querySelector('.pcode').textContent = [p.code, p.category].filter(Boolean).join(' · ');
+    const change = document.createElement('button');
+    change.type = 'button'; change.className = 'btn'; change.textContent = '다른 상품';
+    change.onclick = () => { selectProduct(''); $('search').focus(); };
+    info.appendChild(change);
+    $('picked').replaceChildren(thumb(p, 'pimg'), info);
+  } else {
+    renderGrid();
+  }
   renderAspects();
 }
 
