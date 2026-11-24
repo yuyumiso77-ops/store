@@ -264,6 +264,21 @@ async function handle(req, res) {
     }
 
     const pm = p.match(/^\/api\/admin\/products\/([\w-]+)$/);
+    // 모든 상품의 이미지 일괄 삭제 (상품·평가는 유지). 실수 방지를 위해 confirm=전부삭제 필요
+    if (m === 'DELETE' && p === '/api/admin/images') {
+      if (url.searchParams.get('confirm') !== '전부삭제') return send(res, 400, { error: '확인 문구가 필요합니다.' });
+      let n = 0;
+      db.products.forEach((x) => {
+        if (!x.image) return;
+        fs.rmSync(path.join(IMG_DIR, x.image), { force: true });
+        delete x.image;
+        delete x.imageAt;
+        n++;
+      });
+      saveDb();
+      return send(res, 200, { ok: true, deleted: n });
+    }
+
     // 이미지만 삭제 (상품·평가는 유지)
     const pim = p.match(/^\/api\/admin\/products\/([\w-]+)\/image$/);
     if (pim && m === 'DELETE') {

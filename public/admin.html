@@ -45,6 +45,11 @@
     <ul class="uplog" id="uplog"></ul>
 
     <details style="margin-top:12px">
+      <summary class="hint" style="cursor:pointer">등록된 이미지 전부 삭제</summary>
+      <p class="hint" style="margin:8px 0">모든 상품의 이미지만 지웁니다. 상품·상품명·평가는 그대로 남아요. 새 사진으로 한꺼번에 바꾸기 전에 쓰세요.</p>
+      <button type="button" class="btn danger" id="wipeImages">🗑️ 이미지 전부 삭제</button>
+    </details>
+    <details style="margin-top:12px">
       <summary class="hint" style="cursor:pointer">이미지 없이 직접 등록</summary>
       <form id="addForm" class="row" style="margin-top:10px">
         <select id="category" required style="flex:0 1 140px"><option value="">품목 선택</option></select>
@@ -439,6 +444,18 @@ async function init() {
   $('typeList').replaceChildren(...Object.values(TYPE_ORDER).flat().map((t) => el('option', { value: t })));
   CATS.forEach((c) => { $('category').add(new Option(c, c)); $('upCategory').add(new Option(c, c)); });
   $('search').oninput = renderList;
+  $('wipeImages').onclick = async () => {
+    const n = LAST.filter((p) => p.imageUrl).length;
+    if (!n) return alert('삭제할 이미지가 없어요.');
+    const typed = prompt(`상품 ${n}개의 이미지를 모두 삭제합니다. 되돌릴 수 없어요.\n계속하려면 "전부삭제"라고 입력하세요.`);
+    if (typed === null) return;
+    if (typed.trim() !== '전부삭제') return alert('입력한 문구가 달라서 취소했어요.');
+    try {
+      const r = await api('/api/admin/images?confirm=' + encodeURIComponent('전부삭제'), { method: 'DELETE' });
+      $('uplog').prepend(el('li', { class: 'summary' }, `🗑️ 이미지 ${r.deleted}개를 삭제했어요.`));
+      load();
+    } catch (ex) { alert(ex.message); }
+  };
   $('files').onchange = () => { uploadMany(prepareFiles([...$('files').files])); $('files').value = ''; };
   $('folder').onchange = () => { uploadMany(prepareFiles([...$('folder').files])); $('folder').value = ''; };
   const drop = $('drop');

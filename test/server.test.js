@@ -110,6 +110,21 @@ test('반응·판매 엇갈림 표시', async () => {
   await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: admin });
 });
 
+test('이미지 전부 삭제', async () => {
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 7]);
+  const r = await fetch(base + '/api/admin/images/WIPE-1?category=' + encodeURIComponent('용품'), { method: 'PUT', headers: { ...admin, 'Content-Type': 'image/jpeg' }, body: jpg });
+  const p = (await r.json()).product;
+  assert.strictEqual((await fetch(base + '/api/admin/images', { method: 'DELETE', headers: admin })).status, 400); // 확인 문구 없음
+  assert.strictEqual((await fetch(base + '/api/admin/images?confirm=' + encodeURIComponent('전부삭제'), { method: 'DELETE', headers: staff })).status, 401);
+  const d = await (await fetch(base + '/api/admin/images?confirm=' + encodeURIComponent('전부삭제'), { method: 'DELETE', headers: admin })).json();
+  assert.ok(d.deleted >= 1);
+  const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  assert.ok(s.products.every((x) => !x.imageUrl));
+  assert.ok(s.products.some((x) => x.id === p.id)); // 상품은 남음
+  assert.strictEqual((await fetch(base + p.imageUrl, { headers: staff })).status, 404);
+  await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);
