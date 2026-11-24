@@ -70,6 +70,20 @@
   </div>
   <div class="chips" id="typeFilter" style="margin-bottom:8px"></div>
   <datalist id="typeList"></datalist>
+  <div class="listctl">
+    <div class="chips" id="viewMode"></div>
+    <label class="hint">정렬
+      <select id="sortBy">
+        <option value="type">복종순 (기본)</option>
+        <option value="reactionAsc">고객 반응 낮은 순</option>
+        <option value="reactionDesc">고객 반응 높은 순</option>
+        <option value="poorDesc">'잘 안 팔림' 비율 높은 순</option>
+        <option value="goodDesc">'잘 팔림' 비율 높은 순</option>
+        <option value="countAsc">평가 매장 적은 순</option>
+        <option value="countDesc">평가 매장 많은 순</option>
+      </select>
+    </label>
+  </div>
   <div id="products"></div>
 </main>
 
@@ -101,6 +115,70 @@ function rank(title, list, total) {
       : el('p', { class: 'hint' }, '아직 없어요'));
 }
 
+// 긴 목록은 처음 n개만 보여주고 '모두 보기'로 펼치기
+function collapsibleList(items, n, renderItem, unit = '의견') {
+  const box = el('div');
+  let all = false;
+  const draw = () => box.replaceChildren(
+    el('ul', { class: 'comments' }, (all ? items : items.slice(0, n)).map(renderItem)),
+    items.length > n ? el('button', { type: 'button', class: 'linkbtn', onclick: () => { all = !all; draw(); } }, all ? '접기' : `${unit} ${items.length}개 모두 보기`) : '');
+  draw();
+  return box;
+}
+// 매장 의견: 최신순 3개 + 종류별(👍/👎/💡) 보기
+function notesBlock(p) {
+  if (!p.notes.length) return el('p', { class: 'hint' }, '아직 의견이 없어요.');
+  const notes = p.notes.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const KINDS = [['all', '전체', () => true], ['pros', '👍 장점', (n) => n.prosNote], ['cons', '👎 단점', (n) => n.consNote], ['idea', '💡 개선', (n) => n.improvement]];
+  let kind = 'all';
+  const box = el('div');
+  const draw = () => {
+    const [, , test] = KINDS.find((k) => k[0] === kind);
+    const list = notes.filter(test);
+    box.replaceChildren(
+      el('div', { class: 'chips small' }, KINDS.map(([k, label, t]) =>
+        el('button', { type: 'button', class: kind === k ? 'on' : '', onclick: () => { kind = k; draw(); } }, `${label} ${notes.filter(t).length}`))),
+      collapsibleList(list, 3, (n) => el('li', {},
+        (kind === 'all' || kind === 'pros') && n.prosNote ? el('div', { class: 'note-line' }, '👍 ', n.prosNote) : '',
+        (kind === 'all' || kind === 'cons') && n.consNote ? el('div', { class: 'note-line' }, '👎 ', n.consNote) : '',
+        (kind === 'all' || kind === 'idea') && n.improvement ? el('div', { class: 'note-line' }, '💡 ', n.improvement) : '',
+        el('div', { class: 'meta' }, `${n.staff} · ${REACT[n.reaction]} · ${SALES[n.sales]} · ${new Date(n.updatedAt).toLocaleDateString('ko-KR')}`))));
+  };
+  draw();
+  return box;
+}
+// 표 보기: 상품 한 줄 요약, 누르면 상세 카드 펼침
+const OPEN = new Set();
+function renderRow(p) {
+  const top = (list, k = 2) => list.slice(0, k).map((x) => x.name).join(', ') || '-';
+  const n = p.count || 0;
+  const pct = (v) => (n ? Math.round((v / n) * 100) : 0);
+  const det = el('div', { class: 'rowdetail' });
+  const row = el('div', { class: 'prow' + (p.active ? '' : ' inactive'), role: 'button', tabindex: '0' },
+    p.imageUrl ? el('img', { class: 'rimg', src: p.imageUrl, alt: '', loading: 'lazy' }) : el('div', { class: 'rimg noimg' }, '없음'),
+    el('div', { class: 'pc name' }, el('b', {}, p.code || p.name), el('small', {}, p.name)),
+    el('div', { class: 'pc num' }, el('b', {}, n), el('small', {}, '매장')),
+    el('div', { class: 'pc num' }, el('b', {}, fmt(p.avgReaction)), el('small', {}, '반응')),
+    el('div', { class: 'pc sales' },
+      n ? el('div', { class: 'sbar', title: `잘 팔림 ${p.sales.good} · 보통 ${p.sales.normal} · 잘 안 팔림 ${p.sales.poor}` },
+        el('span', { class: 'g', style: `width:${pct(p.sales.good)}%` }), el('span', { class: 'n', style: `width:${pct(p.sales.normal)}%` }), el('span', { class: 'p', style: `width:${pct(p.sales.poor)}%` }))
+        : el('div', { class: 'sbar empty' }),
+      el('small', {}, n ? `잘 팔림 ${pct(p.sales.good)}% · 안 팔림 ${pct(p.sales.poor)}%` : '평가 없음')),
+    el('div', { class: 'pc txt' }, el('small', {}, '👍 ' + top(p.pros)), el('small', {}, '👎 ' + top(p.cons))),
+    el('div', { class: 'pc txt' }, el('small', {}, '🚧 ' + top(p.noBuyReasons, 1)), p.gap ? el('small', { class: 'gaptxt' }, GAP[p.gap]) : el('small', {}, '🔥 ' + top(p.sellReasons, 1))),
+    el('span', { class: 'chev' }, '▾'));
+  const open = (on) => {
+    row.classList.toggle('open', on);
+    det.hidden = !on;
+    if (on && !det.firstChild) det.append(renderProduct(p));
+    on ? OPEN.add(p.id) : OPEN.delete(p.id);
+  };
+  row.onclick = () => open(det.hidden);
+  row.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(det.hidden); } };
+  open(OPEN.has(p.id));
+  return el('div', { class: 'prow-wrap' }, row, det);
+}
+
 function renderProduct(p) {
   const del = el('button', {
     class: 'btn danger',
@@ -116,13 +194,7 @@ function renderProduct(p) {
     onclick: async () => { await api(`/api/admin/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ active: !p.active }) }); load(); },
   }, p.active ? '조사 중지' : '조사 재개');
 
-  const notes = p.notes.length
-    ? el('ul', { class: 'comments' }, p.notes.map((n) => el('li', {},
-        n.prosNote ? el('div', { class: 'note-line' }, '👍 ', n.prosNote) : '',
-        n.consNote ? el('div', { class: 'note-line' }, '👎 ', n.consNote) : '',
-        n.improvement ? el('div', { class: 'note-line' }, '💡 ', n.improvement) : '',
-        el('div', { class: 'meta' }, `${n.staff} · ${REACT[n.reaction]} · ${SALES[n.sales]} · ${new Date(n.updatedAt).toLocaleString('ko-KR')}`))))
-    : el('p', { class: 'hint' }, '아직 의견이 없어요.');
+  const notes = notesBlock(p);
 
   const fileIn = el('input', { type: 'file', accept: 'image/*', hidden: '' });
   fileIn.onchange = async () => {
@@ -180,7 +252,7 @@ function renderProduct(p) {
       rank('🚧 판매를 막은 요인 (상품 외)', p.noBuyReasons, p.count),
       rank('👥 주 구매 고객층', [...p.ageGroups, ...p.genders], p.count)) : '',
     p.missing.length ? el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '🔍 자주 찾았는데 없던 사이즈·색상'),
-      el('ul', { class: 'comments' }, p.missing.map((x) => el('li', {}, x.missing, el('div', { class: 'meta' }, `${x.staff} · ${new Date(x.updatedAt).toLocaleString('ko-KR')}`))))) : '',
+      collapsibleList(p.missing.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), 5, (x) => el('li', {}, x.missing, el('div', { class: 'meta' }, `${x.staff} · ${new Date(x.updatedAt).toLocaleDateString('ko-KR')}`)), '항목')) : '',
     el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '매장 의견 (장점 · 단점 · 개선 아이디어)'), notes));
 }
 
@@ -401,8 +473,15 @@ async function load() {
     stat(fmt(avgReact), '평균 고객 반응'),
     stat(best ? best.code || best.name : '-', best ? `반응이 가장 좋은 상품 · ${best.type || best.name}` : '반응이 가장 좋은 상품'),
     stat(worst ? worst.code || worst.name : '-', worst ? `반응이 가장 낮은 상품 · ${worst.type || worst.name}` : '반응이 가장 낮은 상품'));
-  $('staffBox').replaceChildren(...(data.staff.length
-    ? [el('span', { class: 'hint' }, '매장별 진행: '), ...data.staff.map((s) => el('span', { class: 'pill' }, `${s.name} ${s.done}/${data.activeProducts}`))]
+  // 매장 진행: 요약 한 줄 + 펼치면 매장별 (덜 한 매장 먼저)
+  const stores = data.staff.slice().sort((a, b) => a.done - b.done || a.name.localeCompare(b.name));
+  const full = stores.filter((s) => s.done >= data.activeProducts).length;
+  const pills = el('div', { class: 'pills', hidden: '' }, stores.map((s) =>
+    el('span', { class: 'pill' + (s.done >= data.activeProducts ? ' full' : '') }, `${s.name} ${s.done}/${data.activeProducts}`)));
+  $('staffBox').replaceChildren(...(stores.length
+    ? [el('span', { class: 'hint' }, `참여 매장 ${stores.length}곳 · 전부 완료 ${full}곳 · 진행 중 ${stores.length - full}곳 `),
+       el('button', { type: 'button', class: 'linkbtn', style: 'padding:0', onclick: (e) => { pills.hidden = !pills.hidden; e.target.textContent = pills.hidden ? '매장별 보기' : '접기'; } }, '매장별 보기'),
+       pills]
     : []));
   LAST = ps;
   renderList();
@@ -410,6 +489,8 @@ async function load() {
 
 // 품목 필터
 let UPLOADING = false;
+let VIEW = (() => { try { return localStorage.getItem('view') || 'table'; } catch { return 'table'; } })();
+let SORT = 'type';
 window.addEventListener('beforeunload', (e) => { if (UPLOADING) { e.preventDefault(); e.returnValue = ''; } });
 let LAST = [], FILTER = '', TYPE = '', LINE = '', CATS = [], TYPE_ORDER = {}, LINES = [];
 const groupKey = (p) => `${p.line}|${p.category}|${p.type}`;
@@ -471,6 +552,25 @@ function renderList() {
     $('products').replaceChildren(el('div', { class: 'card hint' }, LAST.length ? '조건에 맞는 상품이 없어요.' : '위에서 조사할 상품을 먼저 등록해 주세요.'));
     return;
   }
+  // 보기 방식 버튼
+  $('viewMode').replaceChildren(...[['table', '📋 표로 보기'], ['card', '🗂️ 카드로 보기']].map(([v, l]) =>
+    el('button', { type: 'button', class: VIEW === v ? 'on' : '', onclick: () => { VIEW = v; try { localStorage.setItem('view', v); } catch {} renderList(); } }, l)));
+  const item = VIEW === 'table' ? renderRow : renderProduct;
+  // 정렬을 바꾸면 복종 묶음 없이 전체를 한 줄로
+  if (SORT !== 'type') {
+    const ratio = (p, k) => (p.count ? p.sales[k] / p.count : -1);
+    const val = {
+      reactionAsc: (p) => (p.count ? p.avgReaction : 99),
+      reactionDesc: (p) => (p.count ? -p.avgReaction : 99),
+      poorDesc: (p) => -ratio(p, 'poor'),
+      goodDesc: (p) => -ratio(p, 'good'),
+      countAsc: (p) => p.count,
+      countDesc: (p) => -p.count,
+    }[SORT];
+    const sorted = ps.slice().sort((a, b) => val(a) - val(b) || cmp(a, b));
+    $('products').replaceChildren(el('h2', { class: 'group-title' }, $('sortBy').selectedOptions[0].textContent, el('small', {}, `상품 ${sorted.length}개`)), ...sorted.map(item));
+    return;
+  }
   // 복종별 묶음 + 묶음 요약
   const out = [];
   let last = null;
@@ -485,7 +585,7 @@ function renderList() {
       out.push(el('h2', { class: 'group-title' }, groupLabel(p),
         el('small', {}, `상품 ${g.length}개 · 평가된 상품 ${rated.length}개 · 평균 반응 ${fmt(avg)} · 판매 반응 잘 팔림 ${sales.good} / 보통 ${sales.normal} / 안 팔림 ${sales.poor}`)));
     }
-    out.push(renderProduct(p));
+    out.push(item(p));
   });
   $('products').replaceChildren(...out);
 }
@@ -498,6 +598,7 @@ async function init() {
   $('typeList').replaceChildren(...Object.values(TYPE_ORDER).flat().map((t) => el('option', { value: t })));
   CATS.forEach((c) => { $('category').add(new Option(c, c)); $('upCategory').add(new Option(c, c)); });
   $('search').oninput = renderList;
+  $('sortBy').onchange = () => { SORT = $('sortBy').value; renderList(); };
   $('wipeImages').onclick = async () => {
     const n = LAST.filter((p) => p.imageUrl).length;
     if (!n) return alert('삭제할 이미지가 없어요.');
