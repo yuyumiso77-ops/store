@@ -125,6 +125,8 @@ const cleanCode = (v) => (typeof v === 'string' ? v.trim().slice(0, 60) : '');
 const validCode = (c) => /^[\w.-]+$/.test(c);
 // PLC(컬러별 번호): 파일명 속 5~6자리 숫자 (예: FJ_42993_sw.jpg → 42993)
 const plcFromName = (n) => (String(n).match(/(?:^|[^0-9])(\d{5,6})(?:[^0-9]|$)/) || [])[1] || '';
+// 같은 PLC 사진이 여러 장이면 파일명이 _sw 로 끝나는 사진이 대표
+const isSwName = (n) => /(^|[_\-\s])sw$/i.test(String(n).trim());
 const byPlc = (plc) => db.products.find((x) => (x.plcs || []).some((q) => q.plc === plc));
 function parsePlcs(plcText, colorText) {
   const colors = Object.fromEntries(String(colorText || '').split(/[\s,;]+/).filter(Boolean).map((t) => t.split(':')).filter((a) => a.length === 2));
@@ -281,6 +283,7 @@ async function handle(req, res) {
         delete x.image;
         delete x.imageAt;
         delete x.imageRank;
+        delete x.imageIsSw;
         n++;
       });
       saveDb();
@@ -296,6 +299,7 @@ async function handle(req, res) {
       delete product.image;
       delete product.imageAt;
       delete product.imageRank;
+      delete product.imageIsSw;
       saveDb();
       return send(res, 200, { ok: true });
     }
@@ -388,7 +392,8 @@ async function handle(req, res) {
           match = { by: 'plc', plc, color: product.plcs[rank].color, rank };
           // 대표 사진 = 엑셀 첫 번째 컬러. 더 앞선 컬러(또는 품번 이름) 사진이 있으면 건너뜀
           const cur = product.image ? (product.imageRank ?? -1) : Infinity;
-          if (rank > cur) {
+          match.sw = isSwName(code);
+          if (rank > cur || (rank === cur && product.imageIsSw && !match.sw)) {
             return send(res, 200, { skipped: true, match, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
           }
         }
@@ -407,6 +412,7 @@ async function handle(req, res) {
       product.image = `${product.id}.${ext}`;
       product.imageAt = Date.now();
       product.imageRank = match.by === 'plc' ? match.rank : -1; // 품번 이름 사진은 최우선
+      product.imageIsSw = match.by === 'plc' && match.sw;
       saveDb();
       return send(res, created ? 201 : 200, { created, hadImage, match, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
     }

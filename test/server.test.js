@@ -138,6 +138,9 @@ test('PLC 번호 파일명으로 이미지 매칭 (첫 번째 컬러가 대표)'
   assert.deepStrictEqual([b.match.color, b.hadImage, !!b.skipped], ['BLACK', true, false]);
   const w2 = await put('FJ_90002_sw'); // 다시 두 번째 컬러 → 건너뜀
   assert.strictEqual(w2.skipped, true);
+  const sw = await put('FJ_90001_sw'); // 같은 컬러 _sw 사진 → 대표로 교체
+  assert.deepStrictEqual([!!sw.skipped, sw.match.sw], [false, true]);
+  assert.strictEqual((await put('FJ_90001_f')).skipped, true); // 같은 컬러지만 _sw 아님 → 건너뜀
   const none = await put('FJ_99999_sw'); // 없는 PLC는 품목이 있어도 새 상품을 만들지 않음
   assert.strictEqual(none.status, 400);
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();

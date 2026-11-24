@@ -26,7 +26,7 @@
 
   <div class="card">
     <h2>상품 이미지로 등록</h2>
-    <p class="hint" style="margin-top:-6px">이미지 파일명은 <b>품번</b>(예: <code>FNJMS3202.jpg</code>) 또는 <b>PLC 번호</b>(예: <code>FJ_42993_sw.jpg</code>)로 맞춥니다. PLC 사진은 엑셀 첫 번째 컬러가 대표 사진이 돼요.
+    <p class="hint" style="margin-top:-6px">이미지 파일명은 <b>품번</b>(예: <code>FNJMS3202.jpg</code>) 또는 <b>PLC 번호</b>(예: <code>FJ_42993_sw.jpg</code>)로 맞춥니다. PLC 사진은 엑셀 첫 번째 컬러의 <b>_sw</b> 사진이 대표 사진이 돼요.
       처음 보는 품번은 선택한 품목으로 새로 등록되고, 이미 있는 품번은 이미지만 바뀝니다.<br>
       <b>상품 정보 CSV</b>(열: 품번, 상품명, 구분, 품목, 복종, PLC)를 이미지와 함께 넣으면 상품명·품목도 한 번에 등록됩니다.</p>
     <div class="row" style="align-items:center">
@@ -251,17 +251,26 @@ function prepareFiles(all) {
   const log = $('uplog');
   const keep = all.filter((f) => !isJunk(f) && (isCsv(f) || IMG_EXT.test(f.name)));
   const skipped = all.length - keep.length;
-  const byCode = new Map();
-  const dups = new Set();
+  // 품번(또는 PLC)별로 묶은 뒤, _sw 사진이 있으면 그것을, 없으면 파일명 순 마지막 것을 사용
+  const isSw = (n) => /(^|[_\-\s])sw$/i.test(codeFromName(n));
+  const groups = new Map();
   keep.filter((f) => !isCsv(f)).sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name)).forEach((f) => {
     const name = codeFromName(f.name);
     const plc = (name.match(/(?:^|[^0-9])(\d{5,6})(?:[^0-9]|$)/) || [])[1];
-    const c = (plc ? 'plc:' + plc : name).toLowerCase(); // 같은 PLC 사진이 여러 장이면 하나만
-    if (byCode.has(c)) dups.add(plc ? `PLC ${plc}` : name);
-    byCode.set(c, f);
+    const k = (plc ? 'plc:' + plc : name).toLowerCase();
+    if (!groups.has(k)) groups.set(k, { label: plc ? `PLC ${plc}` : name, files: [] });
+    groups.get(k).files.push(f);
+  });
+  const byCode = new Map();
+  const dups = new Set();
+  groups.forEach((g, k) => {
+    const sw = g.files.filter((f) => isSw(f.name));
+    const pick = sw.length ? sw[sw.length - 1] : g.files[g.files.length - 1];
+    if (g.files.length > 1 && !sw.length) dups.add(g.label);
+    byCode.set(k, pick);
   });
   if (all.length > 1 || skipped) log.prepend(el('li', { class: 'summary' }, `📂 파일 ${all.length}개 중 이미지 ${byCode.size}개 · CSV ${keep.filter(isCsv).length}개를 올립니다` + (skipped ? ` (그 외 ${skipped}개는 건너뜀)` : '')));
-  if (dups.size) log.prepend(el('li', { class: 'fail' }, `⚠️ 같은 품번/PLC의 사진이 여러 장이라 파일명 순으로 마지막 것만 사용: ${[...dups].join(', ')}`));
+  if (dups.size) log.prepend(el('li', { class: 'fail' }, `⚠️ 같은 품번/PLC의 사진이 여러 장인데 _sw 사진이 없어 파일명 순으로 마지막 것만 사용: ${[...dups].join(', ')}`));
   return [...keep.filter(isCsv), ...[...byCode.values()].sort((a, b) => a.name.localeCompare(b.name))];
 }
 
