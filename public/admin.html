@@ -26,9 +26,9 @@
 
   <div class="card">
     <h2>상품 이미지로 등록</h2>
-    <p class="hint" style="margin-top:-6px">이미지 파일명이 <b>품번</b>이 됩니다 (예: <code>GM24-PL101.jpg</code> → 품번 GM24-PL101).
+    <p class="hint" style="margin-top:-6px">이미지 파일명은 <b>품번</b>(예: <code>FNJMS3202.jpg</code>) 또는 <b>PLC 번호</b>(예: <code>FJ_42993_sw.jpg</code>)로 맞춥니다. PLC 사진은 엑셀 첫 번째 컬러가 대표 사진이 돼요.
       처음 보는 품번은 선택한 품목으로 새로 등록되고, 이미 있는 품번은 이미지만 바뀝니다.<br>
-      <b>상품 정보 CSV</b>(열: 품번, 상품명, 구분, 품목, 복종)를 이미지와 함께 넣으면 상품명·품목도 한 번에 등록됩니다.</p>
+      <b>상품 정보 CSV</b>(열: 품번, 상품명, 구분, 품목, 복종, PLC)를 이미지와 함께 넣으면 상품명·품목도 한 번에 등록됩니다.</p>
     <div class="row" style="align-items:center">
       <select id="upCategory" style="flex:0 1 160px"><option value="">품목 선택</option></select>
       <label class="drop" id="drop">
@@ -144,7 +144,8 @@ function renderProduct(p) {
       p.imageUrl ? el('img', { class: 'aimg', src: p.imageUrl, alt: p.name, loading: 'lazy' }) : el('div', { class: 'aimg noimg' }, '이미지 없음'),
       el('div', {},
         el('h2', { style: 'margin:0 0 4px' }, p.name),
-        el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', p.line ? el('span', { class: 'tag' }, p.line) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.type ? el('span', { class: 'tag' }, p.type) : el('span', { class: 'tag warn' }, '복종 미지정'), ' ', p.gap ? el('span', { class: 'tag gap' }, GAP[p.gap]) : '', ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
+        el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', p.line ? el('span', { class: 'tag' }, p.line) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.type ? el('span', { class: 'tag' }, p.type) : el('span', { class: 'tag warn' }, '복종 미지정'), ' ', p.gap ? el('span', { class: 'tag gap' }, GAP[p.gap]) : '', ' ',
+          p.plcs && p.plcs.length ? el('div', { class: 'hint plcs' }, 'PLC ' + p.plcs.map((q) => `${q.plc}${q.color ? ' ' + q.color : ''}`).join(' · ')) : '', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
     el('div', { class: 'actions' }, editBtn, imgBtn, imgDel, toggle, del, fileIn));
 
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
@@ -253,12 +254,14 @@ function prepareFiles(all) {
   const byCode = new Map();
   const dups = new Set();
   keep.filter((f) => !isCsv(f)).sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name)).forEach((f) => {
-    const c = codeFromName(f.name).toLowerCase();
-    if (byCode.has(c)) dups.add(codeFromName(f.name));
+    const name = codeFromName(f.name);
+    const plc = (name.match(/(?:^|[^0-9])(\d{5,6})(?:[^0-9]|$)/) || [])[1];
+    const c = (plc ? 'plc:' + plc : name).toLowerCase(); // 같은 PLC 사진이 여러 장이면 하나만
+    if (byCode.has(c)) dups.add(plc ? `PLC ${plc}` : name);
     byCode.set(c, f);
   });
   if (all.length > 1 || skipped) log.prepend(el('li', { class: 'summary' }, `📂 파일 ${all.length}개 중 이미지 ${byCode.size}개 · CSV ${keep.filter(isCsv).length}개를 올립니다` + (skipped ? ` (그 외 ${skipped}개는 건너뜀)` : '')));
-  if (dups.size) log.prepend(el('li', { class: 'fail' }, `⚠️ 같은 품번의 이미지가 여러 개 있어 마지막 파일만 사용: ${[...dups].join(', ')}`));
+  if (dups.size) log.prepend(el('li', { class: 'fail' }, `⚠️ 같은 품번/PLC의 사진이 여러 장이라 파일명 순으로 마지막 것만 사용: ${[...dups].join(', ')}`));
   return [...keep.filter(isCsv), ...[...byCode.values()].sort((a, b) => a.name.localeCompare(b.name))];
 }
 
@@ -289,9 +292,9 @@ async function readCsvFile(f) {
   if (text.includes('\uFFFD')) text = new TextDecoder('euc-kr').decode(buf); // 엑셀 기본 저장(CP949) 대응
   const [head, ...rows] = parseCsv(text);
   const idx = (names) => head.findIndex((h) => names.includes(h.trim()));
-  const ci = idx(['품번', 'code', 'CODE', 'STYLE']), ni = idx(['상품명', 'name', '이름']), ki = idx(['품목', 'category']), ti = idx(['복종', 'type', '종류']), li = idx(['구분', '성별', 'line']);
+  const ci = idx(['품번', 'code', 'CODE', 'STYLE']), ni = idx(['상품명', 'name', '이름']), ki = idx(['품목', 'category']), ti = idx(['복종', 'type', '종류']), li = idx(['구분', '성별', 'line']), pi = idx(['PLC', 'plc']), pci = idx(['PLC컬러', 'plcColors']);
   if (ci < 0) throw new Error('첫 줄에 "품번" 열이 필요해요');
-  return rows.map((r) => ({ code: (r[ci] || '').trim(), name: ni >= 0 ? (r[ni] || '').trim() : '', category: ki >= 0 ? (r[ki] || '').trim() : '', type: ti >= 0 ? (r[ti] || '').trim() : '', line: li >= 0 ? (r[li] || '').trim() : '' }));
+  return rows.map((r) => ({ code: (r[ci] || '').trim(), name: ni >= 0 ? (r[ni] || '').trim() : '', category: ki >= 0 ? (r[ki] || '').trim() : '', type: ti >= 0 ? (r[ti] || '').trim() : '', line: li >= 0 ? (r[li] || '').trim() : '', plc: pi >= 0 ? (r[pi] || '').trim() : '', plcColors: pci >= 0 ? (r[pci] || '').trim() : '' }));
 }
 
 async function uploadMany(files) {
@@ -312,7 +315,7 @@ async function uploadMany(files) {
     }
   }
   const images = files.filter((f) => !/\.csv$/i.test(f.name));
-  let ok = 0;
+  let ok = 0, skipped = 0;
   const failed = [];
   for (const f of images) {
     const code = codeFromName(f.name);
@@ -320,7 +323,14 @@ async function uploadMany(files) {
     log.prepend(li);
     try {
       const r = await uploadImage(f, code, category);
-      li.textContent = r.created ? `✅ ${code} — 새 상품으로 등록 (${r.product.category})` : r.hadImage ? `🔄 ${code} — 이미지 교체 (${r.product.name})` : `🖼️ ${code} — 이미지 등록 (${r.product.name})`;
+      const via = r.match && r.match.by === 'plc' ? ` → ${r.product.code} ${r.match.color || ''} (PLC ${r.match.plc})` : '';
+      if (r.skipped) {
+        li.textContent = `⏭️ ${code}${via} — 대표 컬러 사진이 이미 있어 건너뜀`;
+        li.className = 'muted';
+        skipped++;
+        continue;
+      }
+      li.textContent = r.created ? `✅ ${code} — 새 상품으로 등록 (${r.product.category})` : r.hadImage ? `🔄 ${code}${via} — 이미지 교체 (${r.product.name})` : `🖼️ ${code}${via} — 이미지 등록 (${r.product.name})`;
       ok++;
     } catch (ex) {
       li.textContent = `❌ ${code} — ${ex.message}`;
@@ -330,7 +340,8 @@ async function uploadMany(files) {
   }
   if (images.length) {
     log.prepend(el('li', { class: failed.length ? 'fail summary' : 'summary' },
-      failed.length ? `⚠️ 이미지 완료: 성공 ${ok}개, 실패 ${failed.length}개 — 실패: ${failed.join(', ')}` : `🎉 이미지 완료: ${ok}개 모두 성공`));
+      (failed.length ? `⚠️ 이미지 완료: 성공 ${ok}개, 실패 ${failed.length}개` : `🎉 이미지 완료: ${ok}개 성공`) +
+      (skipped ? ` · 다른 컬러라 건너뜀 ${skipped}개` : '') + (failed.length ? ` — 실패: ${failed.join(', ')}` : '')));
   }
   load();
 }

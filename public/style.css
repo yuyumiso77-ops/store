@@ -182,3 +182,4 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
   .touch-only { display: inline; }
   .pc-only { display: none !important; }
 }
+.uplog li.muted { color: var(--muted); } .plcs { margin-top: 4px; font-size: .78rem; }

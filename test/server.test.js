@@ -125,6 +125,31 @@ test('이미지 전부 삭제', async () => {
   await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: admin });
 });
 
+test('PLC 번호 파일명으로 이미지 매칭 (첫 번째 컬러가 대표)', async () => {
+  const imp = (rows) => fetch(base + '/api/admin/products/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows }) }).then((r) => r.json());
+  const r1 = await imp([{ code: 'PLC-T1', name: '테스트', category: '어패럴', plc: '90001 90002', plcColors: '90001:BLACK 90002:WHITE' }]);
+  assert.strictEqual(r1.created, 1);
+  const clash = await imp([{ code: 'PLC-T2', category: '어패럴', plc: '90002' }]); // 다른 품번이 이미 쓰는 PLC
+  assert.strictEqual(clash.errors.length, 1);
+  const put = (name, cat = '어패럴') => fetch(base + `/api/admin/images/${encodeURIComponent(name)}?category=${encodeURIComponent(cat)}`, { method: 'PUT', headers: { ...admin, 'Content-Type': 'image/jpeg' }, body: Buffer.from([0xff, 0xd8, 0xff, 0xe0, name.length]) }).then(async (r) => ({ status: r.status, ...(await r.json()) }));
+  const w = await put('FJ_90002_sw'); // 두 번째 컬러 먼저
+  assert.deepStrictEqual([w.status, w.match.by, w.match.color, w.product.code, !!w.skipped], [200, 'plc', 'WHITE', 'PLC-T1', false]);
+  const b = await put('90001'); // 첫 번째 컬러 → 교체
+  assert.deepStrictEqual([b.match.color, b.hadImage, !!b.skipped], ['BLACK', true, false]);
+  const w2 = await put('FJ_90002_sw'); // 다시 두 번째 컬러 → 건너뜀
+  assert.strictEqual(w2.skipped, true);
+  const none = await put('FJ_99999_sw'); // 없는 PLC는 품목이 있어도 새 상품을 만들지 않음
+  assert.strictEqual(none.status, 400);
+  const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  assert.ok(!s.products.some((x) => x.code === 'FJ_99999_sw'));
+  const t = s.products.find((x) => x.code === 'PLC-T1');
+  assert.deepStrictEqual(t.plcs, [{ plc: '90001', color: 'BLACK' }, { plc: '90002', color: 'WHITE' }]);
+  // 품번 이름 사진은 PLC 사진보다 우선
+  await put('PLC-T1');
+  assert.strictEqual((await put('90001')).skipped, true);
+  await fetch(base + `/api/admin/products/${t.id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);

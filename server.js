@@ -123,6 +123,13 @@ function readRaw(req, max) {
 // 품번: 영문·숫자·하이픈·밑줄·점 (파일명에서 확장자를 뺀 값)
 const cleanCode = (v) => (typeof v === 'string' ? v.trim().slice(0, 60) : '');
 const validCode = (c) => /^[\w.-]+$/.test(c);
+// PLC(컬러별 번호): 파일명 속 5~6자리 숫자 (예: FJ_42993_sw.jpg → 42993)
+const plcFromName = (n) => (String(n).match(/(?:^|[^0-9])(\d{5,6})(?:[^0-9]|$)/) || [])[1] || '';
+const byPlc = (plc) => db.products.find((x) => (x.plcs || []).some((q) => q.plc === plc));
+function parsePlcs(plcText, colorText) {
+  const colors = Object.fromEntries(String(colorText || '').split(/[\s,;]+/).filter(Boolean).map((t) => t.split(':')).filter((a) => a.length === 2));
+  return [...new Set(String(plcText || '').split(/[\s,;/]+/).filter((x) => /^\d{4,8}$/.test(x)))].map((plc) => ({ plc, color: (colors[plc] || '').slice(0, 30) }));
+}
 const byCode = (c) => db.products.find((x) => x.code && x.code.toLowerCase() === c.toLowerCase());
 function imageType(buf) {
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
@@ -139,7 +146,7 @@ function inferType(name, category) {
 const typeOf = (p) => p.type || inferType(p.name, p.category);
 // 구분(남성/여성)이 비어 있으면 상품명 앞의 "남성 "/"여성 "으로 판단
 const lineOf = (p) => p.line || (String(p.name || '').match(/^(남성|여성|남녀공용)\s/) || [])[1] || '';
-const publicProduct = (p) => ({ id: p.id, code: p.code || '', name: p.name, category: p.category, type: typeOf(p), line: lineOf(p), active: p.active });
+const publicProduct = (p) => ({ id: p.id, code: p.code || '', name: p.name, category: p.category, type: typeOf(p), line: lineOf(p), plcs: p.plcs || [], active: p.active });
 
 function passwordOf(req) {
   const h = req.headers.authorization || '';
@@ -273,6 +280,7 @@ async function handle(req, res) {
         fs.rmSync(path.join(IMG_DIR, x.image), { force: true });
         delete x.image;
         delete x.imageAt;
+        delete x.imageRank;
         n++;
       });
       saveDb();
@@ -287,6 +295,7 @@ async function handle(req, res) {
       if (product.image) fs.rmSync(path.join(IMG_DIR, product.image), { force: true });
       delete product.image;
       delete product.imageAt;
+      delete product.imageRank;
       saveDb();
       return send(res, 200, { ok: true });
     }
@@ -334,19 +343,23 @@ async function handle(req, res) {
         const category = typeof r.category === 'string' ? r.category.trim() : '';
         const type = cleanType(r.type);
         const lineVal = cleanLine(r.line);
+        const plcs = parsePlcs(r.plc, r.plcColors);
         const line = `${i + 2}행`;
         if (!code || !validCode(code)) return result.errors.push(`${line}: 품번이 올바르지 않아요 (${code || '비어 있음'})`);
+        const plcClash = plcs.find((q) => { const o = byPlc(q.plc); return o && (o.code || '').toLowerCase() !== code.toLowerCase(); });
+        if (plcClash) return result.errors.push(`${line} ${code}: PLC ${plcClash.plc}는 이미 다른 품번(${byPlc(plcClash.plc).code})에 있어요`);
         if (category && !CATEGORIES.includes(category)) return result.errors.push(`${line} ${code}: 품목은 ${CATEGORIES.join('·')} 중 하나여야 해요`);
         const product = byCode(code);
         if (product) {
           if (name) product.name = name;
           if (type) product.type = type;
           if (lineVal) product.line = lineVal;
+          if (plcs.length) product.plcs = plcs;
           if (category) product.category = category;
           result.updated++;
         } else {
           if (!category) return result.errors.push(`${line} ${code}: 새 품번은 품목이 필요해요`);
-          db.products.push({ id: crypto.randomUUID().slice(0, 8), code, name: name || code, category, type, line: lineVal, active: true, createdAt: new Date().toISOString() });
+          db.products.push({ id: crypto.randomUUID().slice(0, 8), code, name: name || code, category, type, line: lineVal, plcs, active: true, createdAt: new Date().toISOString() });
           result.created++;
         }
       });
@@ -364,6 +377,22 @@ async function handle(req, res) {
       if (!ext) return send(res, 400, { error: 'JPG·PNG·WEBP 이미지만 올릴 수 있어요.' });
       let product = byCode(code);
       let created = false;
+      let match = { by: 'code' };
+      if (!product) {
+        // 파일명이 PLC 번호인 경우: 해당 컬러의 상품을 찾음
+        const plc = plcFromName(code);
+        if (plc) {
+          product = byPlc(plc);
+          if (!product) return send(res, 400, { error: `PLC ${plc}에 해당하는 상품이 없어요. PLC 정보 CSV를 먼저 올려 주세요.` });
+          const rank = product.plcs.findIndex((q) => q.plc === plc);
+          match = { by: 'plc', plc, color: product.plcs[rank].color, rank };
+          // 대표 사진 = 엑셀 첫 번째 컬러. 더 앞선 컬러(또는 품번 이름) 사진이 있으면 건너뜀
+          const cur = product.image ? (product.imageRank ?? -1) : Infinity;
+          if (rank > cur) {
+            return send(res, 200, { skipped: true, match, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
+          }
+        }
+      }
       if (!product) {
         const category = url.searchParams.get('category');
         if (!CATEGORIES.includes(category)) return send(res, 400, { error: '새 품번이에요. 품목을 먼저 선택해 주세요.' });
@@ -377,8 +406,9 @@ async function handle(req, res) {
       fs.writeFileSync(path.join(IMG_DIR, `${product.id}.${ext}`), buf);
       product.image = `${product.id}.${ext}`;
       product.imageAt = Date.now();
+      product.imageRank = match.by === 'plc' ? match.rank : -1; // 품번 이름 사진은 최우선
       saveDb();
-      return send(res, created ? 201 : 200, { created, hadImage, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
+      return send(res, created ? 201 : 200, { created, hadImage, match, product: { ...publicProduct(product), imageUrl: imageUrl(product) } });
     }
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
