@@ -56,7 +56,7 @@ test('이미지 업로드: 파일명=품번으로 등록/교체', async () => {
 test('상품 정보 일괄 등록(CSV 행)', async () => {
   const imp = (rows) => fetch(base + '/api/admin/products/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows }) }).then((r) => r.json());
   const r1 = await imp([
-    { code: 'FNJMT3101', name: '긴팔 티셔츠 (BLACK)', category: '어패럴' },
+    { code: 'FNJMT3101', name: '긴팔 티셔츠 (BLACK)', category: '어패럴', type: ' 긴팔  티셔츠 ' },
     { code: 'FNJMP3601', name: '', category: '어패럴' },
     { code: 'BAD CODE', name: 'x', category: '어패럴' },
     { code: 'NEW-1', name: 'x', category: '' },
@@ -67,7 +67,7 @@ test('상품 정보 일괄 등록(CSV 행)', async () => {
   assert.deepStrictEqual([r2.created, r2.updated], [0, 1]);
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
   const t = s.products.find((x) => x.code === 'FNJMT3101');
-  assert.deepStrictEqual([t.name, t.category], ['긴팔 티 수정', '어패럴']);
+  assert.deepStrictEqual([t.name, t.category, t.type], ['긴팔 티 수정', '어패럴', '긴팔 티셔츠']); // 복종 공백 정리, 빈 값이면 유지
   assert.strictEqual(s.products.find((x) => x.code === 'FNJMP3601').name, 'FNJMP3601'); // 이름 없으면 품번
   for (const x of s.products.filter((p) => ['FNJMT3101', 'FNJMP3601'].includes(p.code)))
     await fetch(base + `/api/admin/products/${x.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });

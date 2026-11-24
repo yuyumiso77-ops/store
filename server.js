@@ -23,9 +23,18 @@ const CATEGORY_ASPECTS = {
   용품: ['기능·성능', '무게·휴대성', '수납·구성', '내구성'],
 };
 const CATEGORIES = Object.keys(CATEGORY_ASPECTS);
+// 복종(상품 종류) 정렬 순서 — 목록에 없는 복종은 뒤쪽에 가나다순
+const TYPE_ORDER = {
+  어패럴: ['반팔 티셔츠', '긴팔 티셔츠', '맨투맨·후디', '스웨터', '니트 아우터', '베스트', '아우터', '다운', '팬츠', '반바지', '스커트'],
+  골프화: ['스파이크', '스파이크리스', '샌들'],
+  장갑: ['양피', '합피', '방한 장갑'],
+  용품: ['캐디백', '보스턴백', '파우치', '모자', '벨트', '양말', '우산', '기타 용품'],
+};
+const cleanType = (v) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, 30) : '');
 const aspectsFor = (category) => [...COMMON_ASPECTS, ...(CATEGORY_ASPECTS[category] || []), '기타'];
 const OPTIONS = {
   categories: CATEGORIES,
+  typeOrder: TYPE_ORDER,
   aspectsByCategory: Object.fromEntries(CATEGORIES.map((c) => [c, aspectsFor(c)])),
   defaultAspects: aspectsFor(''),
   sales: { good: '잘 팔림', normal: '보통', poor: '잘 안 팔림' },
@@ -114,7 +123,7 @@ function imageType(buf) {
   return null;
 }
 const imageUrl = (p) => (p.image ? `/images/${p.image}?v=${p.imageAt}` : null);
-const publicProduct = ({ id, code, name, category, active }) => ({ id, code: code || '', name, category, active });
+const publicProduct = ({ id, code, name, category, type, active }) => ({ id, code: code || '', name, category, type: type || '', active });
 
 function passwordOf(req) {
   const h = req.headers.authorization || '';
@@ -222,7 +231,7 @@ async function handle(req, res) {
       const code = cleanCode(b.code);
       if (code && !validCode(code)) return send(res, 400, { error: '품번은 영문·숫자·하이픈(-)·밑줄(_)만 쓸 수 있어요.' });
       if (code && byCode(code)) return send(res, 400, { error: `이미 등록된 품번이에요: ${code}` });
-      const product = { id: crypto.randomUUID().slice(0, 8), code, name, category: b.category, active: true, createdAt: new Date().toISOString() };
+      const product = { id: crypto.randomUUID().slice(0, 8), code, name, category: b.category, type: cleanType(b.type), active: true, createdAt: new Date().toISOString() };
       db.products.push(product);
       saveDb();
       return send(res, 201, product);
@@ -260,6 +269,7 @@ async function handle(req, res) {
       if (typeof b.active === 'boolean') product.active = b.active;
       if (typeof b.name === 'string' && b.name.trim()) product.name = cleanText(b.name, 100);
       if (CATEGORIES.includes(b.category)) product.category = b.category;
+      if (typeof b.type === 'string') product.type = cleanType(b.type);
       if (typeof b.code === 'string') {
         const code = cleanCode(b.code);
         if (code && !validCode(code)) return send(res, 400, { error: '품번은 영문·숫자·하이픈(-)·밑줄(_)만 쓸 수 있어요.' });
@@ -280,17 +290,19 @@ async function handle(req, res) {
         const code = cleanCode(r.code);
         const name = cleanText(r.name, 100);
         const category = typeof r.category === 'string' ? r.category.trim() : '';
+        const type = cleanType(r.type);
         const line = `${i + 2}행`;
         if (!code || !validCode(code)) return result.errors.push(`${line}: 품번이 올바르지 않아요 (${code || '비어 있음'})`);
         if (category && !CATEGORIES.includes(category)) return result.errors.push(`${line} ${code}: 품목은 ${CATEGORIES.join('·')} 중 하나여야 해요`);
         const product = byCode(code);
         if (product) {
           if (name) product.name = name;
+          if (type) product.type = type;
           if (category) product.category = category;
           result.updated++;
         } else {
           if (!category) return result.errors.push(`${line} ${code}: 새 품번은 품목이 필요해요`);
-          db.products.push({ id: crypto.randomUUID().slice(0, 8), code, name: name || code, category, active: true, createdAt: new Date().toISOString() });
+          db.products.push({ id: crypto.randomUUID().slice(0, 8), code, name: name || code, category, type, active: true, createdAt: new Date().toISOString() });
           result.created++;
         }
       });
@@ -327,11 +339,11 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
       const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
-      const rows = [['수정일시', '직원', '품번', '상품', '품목', '고객반응(1~5)', '판매반응', '안 팔린 이유', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
+      const rows = [['수정일시', '직원', '품번', '상품', '품목', '복종', '고객반응(1~5)', '판매반응', '안 팔린 이유', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
       db.evaluations.forEach((e) => {
         const pr = prodOf[e.productId] || {};
         rows.push([
-          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.category || '', e.reaction, OPTIONS.sales[e.sales],
+          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.category || '', pr.type || '', e.reaction, OPTIONS.sales[e.sales],
           e.noBuyReasons.join(', '), e.pros.join(', '), e.prosNote, e.cons.join(', '), e.consNote, e.missing, e.improvement,
           e.ageGroups.join(', '), e.genders.join(', '),
         ]);

@@ -155,3 +155,13 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 .pdone { color: var(--accent); }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
 #filter button.warn:not(.on) { border-color: var(--star); }
+.ghead {
+  grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline;
+  font-weight: 700; padding: 10px 2px 2px; border-bottom: 1px solid var(--line);
+}
+.ghead:first-child { padding-top: 0; }
+.ghead small { font-weight: 400; color: var(--muted); }
+.group-title { display: flex; align-items: baseline; gap: 8px; margin: 24px 0 10px; font-size: 1.15rem; }
+.group-title small { color: var(--muted); font-weight: 400; font-size: .85rem; }
+.tag.warn { border-color: var(--star); color: var(--star); }
+.stat { min-width: 0; } .stat .n { overflow-wrap: anywhere; }

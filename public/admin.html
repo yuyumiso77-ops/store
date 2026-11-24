@@ -28,7 +28,7 @@
     <h2>상품 이미지로 등록</h2>
     <p class="hint" style="margin-top:-6px">이미지 파일명이 <b>품번</b>이 됩니다 (예: <code>GM24-PL101.jpg</code> → 품번 GM24-PL101).
       처음 보는 품번은 선택한 품목으로 새로 등록되고, 이미 있는 품번은 이미지만 바뀝니다.<br>
-      <b>상품 정보 CSV</b>(열: 품번, 상품명, 품목)를 이미지와 함께 넣으면 상품명·품목도 한 번에 등록됩니다.</p>
+      <b>상품 정보 CSV</b>(열: 품번, 상품명, 품목, 복종)를 이미지와 함께 넣으면 상품명·품목도 한 번에 등록됩니다.</p>
     <div class="row" style="align-items:center">
       <select id="upCategory" style="flex:0 1 160px"><option value="">품목 선택</option></select>
       <label class="drop" id="drop">
@@ -42,7 +42,8 @@
       <summary class="hint" style="cursor:pointer">이미지 없이 직접 등록</summary>
       <form id="addForm" class="row" style="margin-top:10px">
         <select id="category" required style="flex:0 1 140px"><option value="">품목 선택</option></select>
-        <input type="text" id="code" placeholder="품번 (선택)" maxlength="60" style="flex:0 1 180px">
+        <input type="text" id="code" placeholder="품번 (선택)" maxlength="60" style="flex:0 1 160px">
+        <input type="text" id="type" placeholder="복종 (예: 긴팔 티셔츠)" maxlength="30" list="typeList" style="flex:0 1 180px">
         <input type="text" id="name" placeholder="상품명" maxlength="100" required>
         <button class="btn accent" type="submit" style="flex:0 0 auto">추가</button>
       </form>
@@ -52,8 +53,10 @@
 
   <div class="row" style="align-items:center;margin-bottom:12px">
     <div class="chips" id="filter" style="flex:1 1 auto"></div>
-    <input type="search" id="search" placeholder="품번·상품명 검색" style="flex:0 1 240px">
+    <input type="search" id="search" placeholder="품번·상품명·복종 검색" style="flex:0 1 240px">
   </div>
+  <div class="chips" id="typeFilter" style="margin-bottom:8px"></div>
+  <datalist id="typeList"></datalist>
   <div id="products"></div>
 </main>
 
@@ -127,7 +130,7 @@ function renderProduct(p) {
       p.imageUrl ? el('img', { class: 'aimg', src: p.imageUrl, alt: p.name, loading: 'lazy' }) : el('div', { class: 'aimg noimg' }, '이미지 없음'),
       el('div', {},
         el('h2', { style: 'margin:0 0 4px' }, p.name),
-        el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
+        el('div', {}, p.code ? el('span', { class: 'tag' }, p.code) : '', ' ', el('span', { class: 'tag' }, p.category), ' ', p.type ? el('span', { class: 'tag' }, p.type) : el('span', { class: 'tag warn' }, '복종 미지정'), ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')))),
     el('div', { class: 'actions' }, editBtn, imgBtn, imgDel, toggle, del, fileIn));
 
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
@@ -151,14 +154,15 @@ function editForm(p) {
   cat.value = p.category;
   const code = el('input', { type: 'text', value: p.code, placeholder: '품번', maxlength: '60' });
   const name = el('input', { type: 'text', value: p.name, placeholder: '상품명', maxlength: '100' });
+  const type = el('input', { type: 'text', value: p.type, placeholder: '복종', maxlength: '30', list: 'typeList' });
   const err = el('p', { class: 'error' });
-  const f = el('form', { class: 'row', style: 'align-items:center' }, cat, code, name,
+  const f = el('form', { class: 'row', style: 'align-items:center' }, cat, code, type, name,
     el('button', { class: 'btn accent', type: 'submit', style: 'flex:0 0 auto' }, '저장'),
     el('button', { class: 'btn', type: 'button', style: 'flex:0 0 auto', onclick: () => load() }, '취소'));
   f.onsubmit = async (e) => {
     e.preventDefault();
     try {
-      await api(`/api/admin/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ category: cat.value, code: code.value, name: name.value }) });
+      await api(`/api/admin/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ category: cat.value, code: code.value, type: type.value, name: name.value }) });
       load();
     } catch (ex) { err.textContent = ex.message; }
   };
@@ -217,9 +221,9 @@ async function readCsvFile(f) {
   if (text.includes('\uFFFD')) text = new TextDecoder('euc-kr').decode(buf); // 엑셀 기본 저장(CP949) 대응
   const [head, ...rows] = parseCsv(text);
   const idx = (names) => head.findIndex((h) => names.includes(h.trim()));
-  const ci = idx(['품번', 'code', 'CODE', 'STYLE']), ni = idx(['상품명', 'name', '이름']), ki = idx(['품목', 'category']);
+  const ci = idx(['품번', 'code', 'CODE', 'STYLE']), ni = idx(['상품명', 'name', '이름']), ki = idx(['품목', 'category']), ti = idx(['복종', 'type', '종류']);
   if (ci < 0) throw new Error('첫 줄에 "품번" 열이 필요해요');
-  return rows.map((r) => ({ code: (r[ci] || '').trim(), name: ni >= 0 ? (r[ni] || '').trim() : '', category: ki >= 0 ? (r[ki] || '').trim() : '' }));
+  return rows.map((r) => ({ code: (r[ci] || '').trim(), name: ni >= 0 ? (r[ni] || '').trim() : '', category: ki >= 0 ? (r[ki] || '').trim() : '', type: ti >= 0 ? (r[ti] || '').trim() : '' }));
 }
 
 async function uploadMany(files) {
@@ -266,8 +270,8 @@ async function load() {
     stat(data.totalEvaluations, '총 평가 수'),
     stat(`${ps.filter((p) => p.active && p.count).length} / ${data.activeProducts}`, '평가된 상품'),
     stat(fmt(avgReact), '평균 고객 반응'),
-    stat(best ? best.name : '-', '반응이 가장 좋은 상품'),
-    stat(worst ? worst.name : '-', '반응이 가장 낮은 상품'));
+    stat(best ? best.code || best.name : '-', best ? `반응이 가장 좋은 상품 · ${best.type || best.name}` : '반응이 가장 좋은 상품'),
+    stat(worst ? worst.code || worst.name : '-', worst ? `반응이 가장 낮은 상품 · ${worst.type || worst.name}` : '반응이 가장 낮은 상품'));
   $('staffBox').replaceChildren(...(data.staff.length
     ? [el('span', { class: 'hint' }, '직원별 진행: '), ...data.staff.map((s) => el('span', { class: 'pill' }, `${s.name} ${s.done}/${data.activeProducts}`))]
     : []));
@@ -276,26 +280,74 @@ async function load() {
 }
 
 // 품목 필터
-let LAST = [], FILTER = '', CATS = [];
+let LAST = [], FILTER = '', TYPE = '', CATS = [], TYPE_ORDER = {};
+const groupKey = (p) => `${p.category}|${p.type}`;
+const groupLabel = (p) => p.type || `${p.category} · 복종 미지정`;
+function sortKey(p) {
+  const ci = CATS.indexOf(p.category);
+  const order = TYPE_ORDER[p.category] || [];
+  const ti = p.type ? (order.includes(p.type) ? order.indexOf(p.type) : 500) : 999;
+  return [ci < 0 ? 99 : ci, ti, p.type, p.active ? 0 : 1, p.code || p.name];
+}
+function cmp(a, b) {
+  const x = sortKey(a), y = sortKey(b);
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] < y[i]) return -1;
+    if (x[i] > y[i]) return 1;
+  }
+  return 0;
+}
 function renderList() {
   const NOIMG = '__noimg';
   const match = (p, f) => !f || (f === NOIMG ? !p.imageUrl : p.category === f);
   const noImg = LAST.filter((p) => !p.imageUrl).length;
-  $('filter').replaceChildren(...['', ...CATS, ...(noImg ? [NOIMG] : [])].map((c) => {
-    const n = LAST.filter((p) => match(p, c)).length;
-    return el('button', { type: 'button', class: (FILTER === c ? 'on' : '') + (c === NOIMG ? ' warn' : ''), onclick: () => { FILTER = c; renderList(); } }, `${c === NOIMG ? '⚠️ 이미지 없음' : c || '전체'} ${n}`);
-  }));
   if (FILTER === NOIMG && !noImg) FILTER = '';
+  const chips = ['', ...CATS.filter((c) => LAST.some((p) => p.category === c)), ...(noImg ? [NOIMG] : [])];
+  $('filter').replaceChildren(...chips.map((c) => {
+    const n = LAST.filter((p) => match(p, c)).length;
+    return el('button', { type: 'button', class: (FILTER === c ? 'on' : '') + (c === NOIMG ? ' warn' : ''), onclick: () => { FILTER = c; TYPE = ''; renderList(); } }, `${c === NOIMG ? '⚠️ 이미지 없음' : c || '전체'} ${n}`);
+  }));
+
+  // 복종 버튼 (현재 품목 필터 안에서)
+  const base = LAST.filter((p) => match(p, FILTER)).sort(cmp);
+  const groups = [];
+  base.forEach((p) => { const k = groupKey(p); const g = groups.find((x) => x.k === k); g ? g.n++ : groups.push({ k, label: groupLabel(p), n: 1 }); });
+  if (TYPE && !groups.some((g) => g.k === TYPE)) TYPE = '';
+  $('typeFilter').replaceChildren(...(groups.length > 1
+    ? [{ k: '', label: '모든 복종', n: base.length }, ...groups].map((g) =>
+        el('button', { type: 'button', class: TYPE === g.k ? 'on' : '', onclick: () => { TYPE = g.k; renderList(); } }, `${g.label} ${g.n}`))
+    : []));
+
   const q = $('search').value.trim().toLowerCase();
-  const ps = LAST.filter((p) => match(p, FILTER) && (!q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)));
-  $('products').replaceChildren(...(ps.length
-    ? ps.slice().sort((a, b) => b.active - a.active || b.count - a.count).map(renderProduct)
-    : [el('div', { class: 'card hint' }, LAST.length ? '이 품목에 등록된 상품이 없어요.' : '위에서 조사할 상품을 먼저 등록해 주세요.')]));
+  const ps = base.filter((p) => (!TYPE || groupKey(p) === TYPE) && (!q || [p.name, p.code, p.type].some((v) => v.toLowerCase().includes(q))));
+  if (!ps.length) {
+    $('products').replaceChildren(el('div', { class: 'card hint' }, LAST.length ? '조건에 맞는 상품이 없어요.' : '위에서 조사할 상품을 먼저 등록해 주세요.'));
+    return;
+  }
+  // 복종별 묶음 + 묶음 요약
+  const out = [];
+  let last = null;
+  ps.forEach((p) => {
+    if (groupKey(p) !== last) {
+      last = groupKey(p);
+      const g = ps.filter((x) => groupKey(x) === last);
+      const rated = g.filter((x) => x.count);
+      const evals = rated.reduce((a, x) => a + x.count, 0);
+      const avg = evals ? rated.reduce((a, x) => a + x.avgReaction * x.count, 0) / evals : null;
+      const sales = g.reduce((a, x) => ({ good: a.good + x.sales.good, normal: a.normal + x.sales.normal, poor: a.poor + x.sales.poor }), { good: 0, normal: 0, poor: 0 });
+      out.push(el('h2', { class: 'group-title' }, groupLabel(p),
+        el('small', {}, `상품 ${g.length}개 · 평가된 상품 ${rated.length}개 · 평균 반응 ${fmt(avg)} · 판매 반응 잘 팔림 ${sales.good} / 보통 ${sales.normal} / 안 팔림 ${sales.poor}`)));
+    }
+    out.push(renderProduct(p));
+  });
+  $('products').replaceChildren(...out);
 }
 
 async function init() {
   const o = await api('/api/options');
   CATS = o.categories;
+  TYPE_ORDER = o.typeOrder || {};
+  $('typeList').replaceChildren(...Object.values(TYPE_ORDER).flat().map((t) => el('option', { value: t })));
   CATS.forEach((c) => { $('category').add(new Option(c, c)); $('upCategory').add(new Option(c, c)); });
   $('search').oninput = renderList;
   $('files').onchange = () => { uploadMany([...$('files').files]); $('files').value = ''; };
@@ -311,7 +363,7 @@ $('addForm').onsubmit = async (e) => {
   e.preventDefault();
   $('addError').textContent = '';
   try {
-    await api('/api/admin/products', { method: 'POST', body: JSON.stringify({ name: $('name').value, code: $('code').value, category: $('category').value }) });
+    await api('/api/admin/products', { method: 'POST', body: JSON.stringify({ name: $('name').value, code: $('code').value, type: $('type').value, category: $('category').value }) });
     $('code').value = '';
     $('name').value = '';
     load();

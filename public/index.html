@@ -23,7 +23,7 @@
       <input type="hidden" id="product">
       <div id="picked" class="picked" hidden></div>
       <div id="picker">
-        <input type="search" id="search" placeholder="품번 또는 상품명 검색">
+        <input type="search" id="search" placeholder="품번 · 상품명 · 복종 검색">
         <div class="chips" id="catFilter" style="margin:10px 0"></div>
         <div class="grid" id="grid"></div>
       </div>
@@ -148,18 +148,39 @@ async function loadMine() {
   renderGrid();
 }
 
-// ---- 이미지로 상품 고르기 ----
+// ---- 이미지로 상품 고르기 (복종별로 묶어 정렬) ----
+const groupKey = (p) => `${p.category}|${p.type}`;
+const groupLabel = (p) => p.type || (OPTS.categories.length > 1 ? `${p.category} (복종 미지정)` : '복종 미지정');
+function sortKey(p) {
+  const ci = OPTS.categories.indexOf(p.category);
+  const order = OPTS.typeOrder[p.category] || [];
+  const ti = p.type ? (order.includes(p.type) ? order.indexOf(p.type) : 500) : 999;
+  return [ci < 0 ? 99 : ci, ti, p.type, p.code || p.name];
+}
+function cmp(a, b) {
+  const x = sortKey(a), y = sortKey(b);
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] < y[i]) return -1;
+    if (x[i] > y[i]) return 1;
+  }
+  return 0;
+}
 function renderCatFilter() {
   const box = $('catFilter');
   box.replaceChildren();
-  ['', ...OPTS.categories].forEach((c) => {
-    const n = OPTS.products.filter((p) => !c || p.category === c).length;
-    if (c && !n) return;
+  const groups = [];
+  OPTS.products.slice().sort(cmp).forEach((p) => {
+    const k = groupKey(p);
+    const g = groups.find((x) => x.k === k);
+    g ? g.n++ : groups.push({ k, label: groupLabel(p), n: 1 });
+  });
+  if (CAT && !groups.some((g) => g.k === CAT)) CAT = '';
+  [{ k: '', label: '전체', n: OPTS.products.length }, ...groups].forEach((g) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.textContent = `${c || '전체'} ${n}`;
-    b.className = CAT === c ? 'on' : '';
-    b.onclick = () => { CAT = c; renderCatFilter(); renderGrid(); };
+    b.textContent = `${g.label} ${g.n}`;
+    b.className = CAT === g.k ? 'on' : '';
+    b.onclick = () => { CAT = g.k; renderCatFilter(); renderGrid(); };
     box.appendChild(b);
   });
 }
@@ -176,12 +197,23 @@ function thumb(p, cls) {
 function renderGrid() {
   const q = $('search').value.trim().toLowerCase();
   const list = OPTS.products
-    .filter((p) => (!CAT || p.category === CAT) && (!q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)))
-    .sort((a, b) => !!MINE[a.id] - !!MINE[b.id]); // 아직 안 한 상품 먼저
+    .filter((p) => (!CAT || groupKey(p) === CAT) && (!q || [p.name, p.code, p.type].some((v) => v.toLowerCase().includes(q))))
+    .sort(cmp);
   const grid = $('grid');
   grid.replaceChildren();
   if (!list.length) { grid.innerHTML = '<p class="hint">찾는 상품이 없어요.</p>'; return; }
+  let last = null;
   list.forEach((p) => {
+    if (groupKey(p) !== last) {
+      last = groupKey(p);
+      const inGroup = list.filter((x) => groupKey(x) === last);
+      const h = document.createElement('div');
+      h.className = 'ghead';
+      h.innerHTML = '<span></span><small></small>';
+      h.querySelector('span').textContent = groupLabel(p);
+      h.querySelector('small').textContent = `${inGroup.filter((x) => MINE[x.id]).length}/${inGroup.length} 완료`;
+      grid.appendChild(h);
+    }
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'tile' + (MINE[p.id] ? ' done' : '');
@@ -190,7 +222,7 @@ function renderGrid() {
     cap.className = 'cap';
     cap.innerHTML = '<b></b><small></small>';
     cap.querySelector('b').textContent = p.code || p.category;
-    cap.querySelector('small').textContent = p.name !== p.code ? p.name : p.category;
+    cap.querySelector('small').textContent = p.name !== p.code ? p.name : p.type || p.category;
     b.append(thumb(p, 'timg'), cap);
     if (MINE[p.id]) { const t = document.createElement('span'); t.className = 'badge'; t.textContent = '✓ 평가 완료'; b.append(t); }
     grid.appendChild(b);
@@ -213,7 +245,7 @@ function selectProduct(id) {
   const info = document.createElement('div');
   info.innerHTML = '<div class="pname"></div><div class="hint pcode"></div><div class="hint pdone"></div>';
   info.querySelector('.pname').textContent = p.name;
-  info.querySelector('.pcode').textContent = [p.code, p.category].filter(Boolean).join(' · ');
+  info.querySelector('.pcode').textContent = [p.code, p.category, p.type].filter(Boolean).join(' · ');
   if (MINE[p.id]) info.querySelector('.pdone').textContent = '이미 평가한 상품이에요. 수정 후 저장하면 바뀝니다.';
   const change = document.createElement('button');
   change.type = 'button'; change.className = 'btn'; change.textContent = '다른 상품';
