@@ -3,143 +3,178 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>상품 피드백</title>
+<title>고객 반응 기록</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<main class="wrap" id="app">
-  <h1>상품 피드백</h1>
-  <p class="sub">구매하신 상품에 대한 의견을 들려주세요. 1분이면 충분해요.</p>
+<main class="wrap">
+  <h1>고객 반응 기록</h1>
+  <p class="sub">상품을 안내·판매하면서 고객의 반응과 의견을 기록해 주세요.</p>
 
   <form id="form" novalidate>
     <div class="card">
-      <label for="product">어떤 상품을 구매하셨나요?</label>
-      <select id="product" required>
-        <option value="">상품 선택</option>
-      </select>
-    </div>
-
-    <div class="card">
-      <span class="q">전체적으로 얼마나 만족하셨나요?</span>
-      <div class="stars" data-field="rating"></div>
-      <div class="hint" data-hint="rating"></div>
-    </div>
-
-    <div class="card">
-      <span class="q">품질(맛·성능·상태)은 어떠셨나요?</span>
-      <div class="stars" data-field="quality"></div>
-      <div class="hint" data-hint="quality"></div>
-    </div>
-
-    <div class="card">
-      <span class="q">가격에 만족하시나요?</span>
-      <div class="stars" data-field="price"></div>
-      <div class="hint" data-hint="price"></div>
-    </div>
-
-    <div class="card">
-      <span class="q">다시 구매하실 의향이 있나요?</span>
-      <div class="chips" data-field="repurchase">
-        <button type="button" data-v="yes">네, 있어요</button>
-        <button type="button" data-v="maybe">고민 중이에요</button>
-        <button type="button" data-v="no">아니요</button>
+      <div class="row">
+        <div>
+          <label for="staff">직원 이름</label>
+          <input type="text" id="staff" maxlength="30" placeholder="예: 김민지" autocomplete="name">
+        </div>
+        <div>
+          <label for="product">상품</label>
+          <select id="product"><option value="">상품 선택</option></select>
+        </div>
       </div>
     </div>
 
     <div class="card">
-      <span class="q">연령대 <span class="hint">(선택)</span></span>
-      <div class="chips" data-field="ageGroup">
-        <button type="button" data-v="10대">10대</button>
-        <button type="button" data-v="20대">20대</button>
-        <button type="button" data-v="30대">30대</button>
-        <button type="button" data-v="40대">40대</button>
-        <button type="button" data-v="50대">50대</button>
-        <button type="button" data-v="60대 이상">60대 이상</button>
+      <span class="q">고객 반응은 어땠나요? <span class="req">*</span></span>
+      <div class="chips faces" id="reaction"></div>
+    </div>
+
+    <div class="card">
+      <span class="q">구매 결과 <span class="req">*</span></span>
+      <div class="chips" id="outcome"></div>
+      <div id="reasonsBox" hidden>
+        <span class="q sub-q">구매하지 않은 이유 <span class="hint">(여러 개 선택)</span></span>
+        <div class="chips" id="noBuyReasons"></div>
       </div>
     </div>
 
     <div class="card">
-      <label for="comment">하고 싶은 말씀 <span class="hint">(선택)</span></label>
-      <textarea id="comment" maxlength="1000" placeholder="좋았던 점, 아쉬웠던 점을 자유롭게 적어주세요."></textarea>
+      <span class="q">👍 고객이 좋다고 한 점 <span class="hint">(여러 개 선택)</span></span>
+      <div class="chips" id="pros"></div>
+      <input type="text" id="prosNote" maxlength="500" placeholder="구체적으로 (예: 덜 달아서 아이들 간식으로 좋대요)">
     </div>
 
-    <button class="primary" type="submit" id="submit">의견 보내기</button>
+    <div class="card">
+      <span class="q">👎 아쉽다고 한 점 <span class="hint">(여러 개 선택)</span></span>
+      <div class="chips" id="cons"></div>
+      <input type="text" id="consNote" maxlength="500" placeholder="구체적으로 (예: 뚜껑이 잘 안 열려요)">
+    </div>
+
+    <div class="card">
+      <label for="improvement">💡 개선 아이디어 / 고객 요청</label>
+      <textarea id="improvement" maxlength="500" placeholder="고객이 요청했거나 직원이 느낀 개선점 (예: 소용량 제품이 있으면 좋겠다)"></textarea>
+    </div>
+
+    <div class="card">
+      <span class="q">고객층 <span class="hint">(선택)</span></span>
+      <div class="chips" id="ageGroup"></div>
+      <div class="chips" id="gender" style="margin-top:8px"></div>
+    </div>
+
+    <button class="primary" type="submit" id="submit">기록 저장</button>
     <p class="error" id="error"></p>
   </form>
+  <div class="toast" id="toast" role="status"></div>
 </main>
 
 <script>
-const LABELS = ['', '매우 불만족', '불만족', '보통', '만족', '매우 만족'];
-const state = { rating: 0, quality: 0, price: 0, repurchase: '', ageGroup: '' };
+const state = { reaction: 0, outcome: '', noBuyReasons: [], pros: [], cons: [], ageGroup: '', gender: '' };
+const FACES = ['', '😠', '🙁', '😐', '🙂', '😍'];
+const $ = (id) => document.getElementById(id);
 
-document.querySelectorAll('.stars').forEach((box) => {
-  const field = box.dataset.field;
-  for (let i = 1; i <= 5; i++) {
+function chips(id, items, { multi = false, toggle = false, onChange } = {}) {
+  const box = $(id);
+  box.replaceChildren();
+  items.forEach(([value, label]) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.textContent = '★';
-    b.setAttribute('aria-label', i + '점 ' + LABELS[i]);
+    b.dataset.v = value;
+    b.textContent = label;
     b.onclick = () => {
-      state[field] = i;
-      box.querySelectorAll('button').forEach((s, idx) => s.classList.toggle('on', idx < i));
-      document.querySelector(`[data-hint="${field}"]`).textContent = LABELS[i];
+      if (multi) {
+        const list = state[id];
+        const i = list.indexOf(value);
+        i >= 0 ? list.splice(i, 1) : list.push(value);
+      } else {
+        state[id] = toggle && state[id] === value ? '' : value;
+      }
+      paint(id);
+      onChange && onChange();
     };
     box.appendChild(b);
-  }
-});
-
-document.querySelectorAll('.chips').forEach((box) => {
-  const field = box.dataset.field;
-  box.querySelectorAll('button').forEach((b) => {
-    b.onclick = () => {
-      const same = state[field] === b.dataset.v;
-      // 연령대는 다시 누르면 선택 해제
-      state[field] = same && field === 'ageGroup' ? '' : b.dataset.v;
-      box.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.v === state[field]));
-    };
   });
-});
-
-async function loadProducts() {
-  const sel = document.getElementById('product');
-  const products = await fetch('/api/products').then((r) => r.json());
-  products.forEach((p) => {
-    const o = document.createElement('option');
-    o.value = p.id;
-    o.textContent = p.category ? `${p.name} (${p.category})` : p.name;
-    sel.appendChild(o);
-  });
-  // QR 코드로 들어오면 상품 자동 선택
-  const pid = new URLSearchParams(location.search).get('product');
-  if (pid && products.some((p) => p.id === pid)) sel.value = pid;
 }
-loadProducts();
+function paint(id) {
+  const v = state[id];
+  $(id).querySelectorAll('button').forEach((b) => {
+    const val = typeof v === 'number' ? Number(b.dataset.v) : b.dataset.v;
+    b.classList.toggle('on', Array.isArray(v) ? v.includes(val) : v === val);
+  });
+}
 
-document.getElementById('form').onsubmit = async (e) => {
-  e.preventDefault();
-  const err = document.getElementById('error');
-  const btn = document.getElementById('submit');
-  err.textContent = '';
-  btn.disabled = true;
+async function init() {
+  const res = await fetch('/api/options');
+  const o = await res.json();
+  o.products.forEach((p) => {
+    const op = new Option(p.category ? `${p.name} (${p.category})` : p.name, p.id);
+    $('product').add(op);
+  });
+  if (!o.products.length) $('error').textContent = '등록된 상품이 없어요. 관리자 화면에서 상품을 먼저 등록해 주세요.';
+
+  chips('reaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${o.reactions[n]}`]));
+  // 숫자 값으로 저장
+  $('reaction').querySelectorAll('button').forEach((b) => {
+    b.onclick = () => { state.reaction = Number(b.dataset.v); paint('reaction'); };
+  });
+  chips('outcome', Object.entries(o.outcomes), {
+    onChange: () => { $('reasonsBox').hidden = !state.outcome || state.outcome === 'bought'; },
+  });
+  chips('noBuyReasons', o.noBuyReasons.map((x) => [x, x]), { multi: true });
+  chips('pros', o.aspects.map((x) => [x, x]), { multi: true });
+  chips('cons', o.aspects.map((x) => [x, x]), { multi: true });
+  chips('ageGroup', o.ageGroups.map((x) => [x, x]), { toggle: true });
+  chips('gender', o.genders.map((x) => [x, x]), { toggle: true });
+
   try {
-    const res = await fetch('/api/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        productId: document.getElementById('product').value,
-        ...state,
-        comment: document.getElementById('comment').value,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '전송에 실패했어요.');
-    document.getElementById('app').innerHTML =
-      '<div class="card done"><div class="big">🙏</div><h1>감사합니다!</h1>' +
-      '<p class="sub">보내주신 의견은 더 좋은 상품을 준비하는 데 소중히 쓰겠습니다.</p>' +
-      '<a class="btn" href="/">다른 상품도 평가하기</a></div>';
+    $('staff').value = localStorage.getItem('staff') || '';
+    const last = localStorage.getItem('product');
+    if (o.products.some((p) => p.id === last)) $('product').value = last;
+  } catch {}
+  const pid = new URLSearchParams(location.search).get('product');
+  if (pid && o.products.some((p) => p.id === pid)) $('product').value = pid;
+}
+init();
+
+function resetForm() {
+  // 직원 이름과 상품은 연속 기록을 위해 유지
+  Object.assign(state, { reaction: 0, outcome: '', noBuyReasons: [], pros: [], cons: [], ageGroup: '', gender: '' });
+  ['reaction', 'outcome', 'noBuyReasons', 'pros', 'cons', 'ageGroup', 'gender'].forEach(paint);
+  ['prosNote', 'consNote', 'improvement'].forEach((id) => ($(id).value = ''));
+  $('reasonsBox').hidden = true;
+}
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+$('form').onsubmit = async (e) => {
+  e.preventDefault();
+  $('error').textContent = '';
+  $('submit').disabled = true;
+  try {
+    const body = {
+      ...state,
+      staff: $('staff').value,
+      productId: $('product').value,
+      prosNote: $('prosNote').value,
+      consNote: $('consNote').value,
+      improvement: $('improvement').value,
+    };
+    const res = await fetch('/api/records', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '저장에 실패했어요.');
+    try { localStorage.setItem('staff', body.staff.trim()); localStorage.setItem('product', body.productId); } catch {}
+    resetForm();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    toast('✅ 기록했어요. 다음 고객도 기록해 주세요!');
   } catch (ex) {
-    err.textContent = ex.message;
-    btn.disabled = false;
+    $('error').textContent = ex.message;
+  } finally {
+    $('submit').disabled = false;
   }
 };
 </script>

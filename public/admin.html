@@ -3,24 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>피드백 관리</title>
+<title>고객 반응 분석</title>
 <link rel="stylesheet" href="/style.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 <main class="wrap wide">
   <div class="product-head">
     <div>
-      <h1>피드백 관리</h1>
-      <p class="sub">매장 판매 상품의 고객 의견을 한눈에 확인하세요.</p>
+      <h1>고객 반응 분석</h1>
+      <p class="sub">직원들이 기록한 고객 반응, 장단점, 개선 의견을 상품별로 모아 봅니다.</p>
     </div>
     <div class="actions">
-      <a class="btn" href="/" target="_blank">설문 페이지 열기</a>
-      <a class="btn accent" href="/api/admin/feedback.csv">CSV 내려받기</a>
+      <a class="btn" href="/" target="_blank">기록 화면 열기</a>
+      <a class="btn accent" href="/api/admin/records.csv">CSV 내려받기</a>
     </div>
   </div>
 
-  <div class="stats card" id="stats"></div>
+  <div class="card">
+    <div class="stats" id="stats"></div>
+    <div id="staffBox" style="margin-top:12px"></div>
+  </div>
 
   <div class="card">
     <h2>상품 등록</h2>
@@ -36,14 +38,16 @@
 </main>
 
 <script>
-const REP = { yes: '있음', maybe: '고민 중', no: '없음' };
+const OUT = { bought: '구매함', hold: '보류', no: '미구매' };
+const REACT = ['', '😠 매우 부정', '🙁 부정', '😐 보통', '🙂 긍정', '😍 매우 긍정'];
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
   Object.entries(attrs).forEach(([k, v]) => (k === 'class' ? (n.className = v) : k.startsWith('on') ? (n[k] = v) : n.setAttribute(k, v)));
-  kids.flat().forEach((c) => n.append(c instanceof Node ? c : document.createTextNode(String(c))));
+  kids.flat().forEach((c) => c !== '' && c != null && n.append(c instanceof Node ? c : document.createTextNode(String(c))));
   return n;
 };
 const fmt = (v) => (v == null ? '-' : v.toFixed(1));
+const stat = (n, l) => el('div', { class: 'stat' }, el('div', { class: 'n' }, n), el('div', { class: 'l' }, l));
 
 async function api(url, opts = {}) {
   const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -52,98 +56,75 @@ async function api(url, opts = {}) {
   return data;
 }
 
-function stat(n, l) {
-  return el('div', { class: 'stat' }, el('div', { class: 'n' }, n), el('div', { class: 'l' }, l));
+function rank(title, list, total) {
+  return el('div', {},
+    el('div', { class: 'q' }, title),
+    list.length
+      ? el('ul', { class: 'rank' }, list.slice(0, 6).map((x) => el('li', {}, el('span', {}, x.name), el('span', {}, `${x.n}회 · ${Math.round((x.n / total) * 100)}%`))))
+      : el('p', { class: 'hint' }, '아직 없어요'));
 }
 
 function renderProduct(p) {
-  const surveyUrl = `${location.origin}/?product=${encodeURIComponent(p.id)}`;
-  const qrBox = el('div', { class: 'qr' });
-  const total = p.count || 1;
-  const repTotal = p.repurchase.yes + p.repurchase.maybe + p.repurchase.no;
-
   const toggle = el('button', {
     class: 'btn',
     onclick: async () => { await api(`/api/admin/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ active: !p.active }) }); load(); },
-  }, p.active ? '설문 중지' : '설문 재개');
+  }, p.active ? '조사 중지' : '조사 재개');
 
-  const qrBtn = el('button', {
-    class: 'btn',
-    onclick: () => {
-      if (!qrBox.childElementCount) {
-        const code = el('div');
-        if (window.QRCode) new QRCode(code, { text: surveyUrl, width: 180, height: 180 });
-        else code.append(el('p', { class: 'hint' }, 'QR 라이브러리를 불러오지 못했어요. 아래 주소를 사용하세요.'));
-        code.append(el('p', { class: 'hint', style: 'word-break:break-all' }, surveyUrl));
-        qrBox.append(
-          el('div', { class: 'q' }, p.name),
-          code,
-          el('p', { class: 'hint' }, 'QR을 찍고 의견을 남겨주세요'),
-          el('button', { class: 'btn', onclick: () => { qrBox.classList.add('printing'); window.print(); qrBox.classList.remove('printing'); } }, 'QR 인쇄')
-        );
-      }
-      qrBox.classList.toggle('show');
-    },
-  }, 'QR 코드');
-
-  const bars = [5, 4, 3, 2, 1].map((n) =>
-    el('div', { class: 'bar' }, el('span', { class: 'lbl' }, `${n}★`),
-      el('div', { class: 'track' }, el('div', { class: 'fill', style: `width:${(p.ratingDist[n - 1] / total) * 100}%` })),
-      String(p.ratingDist[n - 1]))
-  );
-
-  const comments = p.recentComments.length
-    ? el('ul', { class: 'comments' }, p.recentComments.map((c) =>
-        el('li', {}, c.comment, el('div', { class: 'meta' }, `${'★'.repeat(c.rating)} · ${new Date(c.createdAt).toLocaleString('ko-KR')}`))))
-    : el('p', { class: 'hint' }, '아직 작성된 의견이 없어요.');
+  const notes = p.notes.length
+    ? el('ul', { class: 'comments' }, p.notes.map((n) => el('li', {},
+        n.prosNote ? el('div', { class: 'note-line' }, '👍 ', n.prosNote) : '',
+        n.consNote ? el('div', { class: 'note-line' }, '👎 ', n.consNote) : '',
+        n.improvement ? el('div', { class: 'note-line' }, '💡 ', n.improvement) : '',
+        el('div', { class: 'meta' }, `${n.staff} · ${REACT[n.reaction]} · ${OUT[n.outcome]} · ${new Date(n.createdAt).toLocaleString('ko-KR')}`))))
+    : el('p', { class: 'hint' }, '아직 메모가 없어요.');
 
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
     el('div', { class: 'product-head' },
-      el('div', {}, el('h2', {}, p.name, ' ', p.category ? el('span', { class: 'tag' }, p.category) : '', p.active ? '' : el('span', { class: 'tag' }, '중지됨'))),
-      el('div', { class: 'actions' }, qrBtn, toggle)),
+      el('h2', {}, p.name, ' ', p.category ? el('span', { class: 'tag' }, p.category) : '', ' ', p.active ? '' : el('span', { class: 'tag' }, '중지됨')),
+      el('div', { class: 'actions' }, toggle)),
     el('div', { class: 'stats' },
-      stat(p.count, '응답 수'),
-      stat(fmt(p.avgRating), '전체 만족도 (5점)'),
-      stat(fmt(p.avgQuality), '품질 (5점)'),
-      stat(fmt(p.avgPrice), '가격 만족도 (5점)'),
-      stat(repTotal ? Math.round((p.repurchase.yes / repTotal) * 100) + '%' : '-', `재구매 의향 있음 (고민 ${p.repurchase.maybe} · 없음 ${p.repurchase.no})`)),
-    p.count ? el('div', { style: 'margin-top:12px' }, bars) : '',
-    el('div', { style: 'margin-top:12px' }, el('div', { class: 'q' }, '최근 의견'), comments),
-    qrBox);
+      stat(p.count, '기록 수'),
+      stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
+      stat(p.buyRate == null ? '-' : p.buyRate + '%', '구매율'),
+      stat(`${p.outcomes.hold} / ${p.outcomes.no}`, '보류 / 미구매')),
+    p.count ? el('div', { class: 'cols' },
+      rank('👍 장점으로 꼽힌 것', p.pros, p.count),
+      rank('👎 단점으로 꼽힌 것', p.cons, p.count),
+      rank('🚫 구매하지 않은 이유', p.noBuyReasons, Math.max(1, p.outcomes.hold + p.outcomes.no))) : '',
+    el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '직원 메모 (장점 · 단점 · 개선 아이디어)'), notes));
 }
 
 async function load() {
   const data = await api('/api/admin/summary');
   const ps = data.products;
-  const rated = ps.filter((p) => p.avgRating != null);
-  const overall = rated.length ? rated.reduce((a, p) => a + p.avgRating * p.count, 0) / rated.reduce((a, p) => a + p.count, 0) : null;
-  const worst = rated.slice().sort((a, b) => a.avgRating - b.avgRating)[0];
-  document.getElementById('stats').replaceChildren(
-    stat(data.totalFeedback, '총 응답 수'),
-    stat(ps.filter((p) => p.active).length, '설문 진행 중인 상품'),
-    stat(fmt(overall), '평균 만족도'),
-    stat(worst ? worst.name : '-', '개선이 필요한 상품'));
-
-  const box = document.getElementById('products');
-  box.replaceChildren(...(ps.length
+  const recorded = ps.filter((p) => p.count);
+  const total = recorded.reduce((a, p) => a + p.count, 0);
+  const avgReact = total ? recorded.reduce((a, p) => a + p.avgReaction * p.count, 0) / total : null;
+  const bought = recorded.reduce((a, p) => a + p.outcomes.bought, 0);
+  const worst = recorded.slice().sort((a, b) => a.avgReaction - b.avgReaction)[0];
+  $('stats').replaceChildren(
+    stat(data.totalRecords, '총 기록 수'),
+    stat(fmt(avgReact), '평균 고객 반응'),
+    stat(total ? Math.round((bought / total) * 100) + '%' : '-', '전체 구매율'),
+    stat(worst ? worst.name : '-', '반응이 가장 낮은 상품'));
+  $('staffBox').replaceChildren(...(data.staff.length
+    ? [el('span', { class: 'hint' }, '직원별 기록: '), ...data.staff.map((s) => el('span', { class: 'pill' }, `${s.name} ${s.n}`))]
+    : []));
+  $('products').replaceChildren(...(ps.length
     ? ps.slice().sort((a, b) => b.active - a.active || b.count - a.count).map(renderProduct)
-    : [el('div', { class: 'card hint' }, '위에서 상품을 먼저 등록해 주세요.')]));
+    : [el('div', { class: 'card hint' }, '위에서 조사할 상품을 먼저 등록해 주세요.')]));
 }
+function $(id) { return document.getElementById(id); }
 
-document.getElementById('addForm').onsubmit = async (e) => {
+$('addForm').onsubmit = async (e) => {
   e.preventDefault();
-  const err = document.getElementById('addError');
-  err.textContent = '';
+  $('addError').textContent = '';
   try {
-    await api('/api/admin/products', {
-      method: 'POST',
-      body: JSON.stringify({ name: document.getElementById('name').value, category: document.getElementById('category').value }),
-    });
+    await api('/api/admin/products', { method: 'POST', body: JSON.stringify({ name: $('name').value, category: $('category').value }) });
     e.target.reset();
     load();
-  } catch (ex) { err.textContent = ex.message; }
+  } catch (ex) { $('addError').textContent = ex.message; }
 };
-
 load();
 </script>
 </body>
