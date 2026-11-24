@@ -33,13 +33,14 @@
       <select id="upCategory" style="flex:0 1 160px"><option value="">품목 선택</option></select>
       <label class="drop" id="drop">
         <input type="file" id="files" accept="image/*,.csv" multiple hidden>
-        📷 이미지·CSV 파일 또는 <b>&nbsp;폴더째&nbsp;</b> 여기로 끌어다 놓기 (클릭하면 파일 선택)
+        <span class="pc-only">📷 이미지·CSV 파일 또는 <b>폴더째</b> 여기로 끌어다 놓기 (클릭하면 파일 선택)</span>
+        <span class="touch-only">📷 이미지·CSV 파일 선택 (여러 개 가능)</span>
       </label>
       <label class="btn" style="flex:0 0 auto;cursor:pointer">
         <input type="file" id="folder" webkitdirectory multiple hidden>📁 폴더 선택
       </label>
     </div>
-    <p class="hint" style="margin:6px 0 0">OneDrive 폴더도 그대로 끌어다 놓으면 하위 폴더까지 이미지·CSV를 찾아 올립니다.
+    <p class="hint pc-only" style="margin:6px 0 0;display:block">OneDrive 폴더도 그대로 끌어다 놓으면 하위 폴더까지 이미지·CSV를 찾아 올립니다.
       OneDrive에서 '필요할 때 다운로드' 상태인 파일은 읽는 데 시간이 걸릴 수 있어요.</p>
     <ul class="uplog" id="uplog"></ul>
 

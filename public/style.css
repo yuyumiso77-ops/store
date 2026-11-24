@@ -176,3 +176,9 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 .tag.gap { border-color: var(--danger); color: var(--danger); }
 .chips.seg button { font-weight: 700; }
 .uplog li.summary { font-weight: 700; }
+.drop { text-align: center; }
+.touch-only { display: none; }
+@media (pointer: coarse) {
+  .touch-only { display: inline; }
+  .pc-only { display: none !important; }
+}
