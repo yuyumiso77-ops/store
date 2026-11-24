@@ -165,3 +165,10 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 .group-title small { color: var(--muted); font-weight: 400; font-size: .85rem; }
 .tag.warn { border-color: var(--star); color: var(--star); }
 .stat { min-width: 0; } .stat .n { overflow-wrap: anywhere; }
+#why { display: flex; flex-direction: column; margin-top: 6px; }
+.why-block { border-left: 3px solid var(--line); padding: 2px 0 6px 12px; margin-top: 10px; }
+.why-block.primary-why { border-left-color: var(--accent); }
+.linkbtn {
+  align-self: flex-start; background: none; border: none; color: var(--accent); cursor: pointer;
+  padding: 10px 0 0; font-size: .92rem;
+}

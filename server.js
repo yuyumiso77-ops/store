@@ -393,6 +393,13 @@ async function handle(req, res) {
     if (!staff) return send(res, 400, { error: '직원 이름을 입력해 주세요.' });
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: '고객 반응을 선택해 주세요.' });
     if (!(b.sales in OPTIONS.sales)) return send(res, 400, { error: '판매 반응을 선택해 주세요.' });
+    // 고객 반응에 따라 이어지는 질문(1-1) 필수 확인
+    const aspects = aspectsFor(product.category);
+    const hasPros = pick(b.pros, aspects).length > 0 || cleanText(b.prosNote, 500) !== '';
+    const hasCons = pick(b.cons, aspects).length > 0 || cleanText(b.consNote, 500) !== '';
+    if (b.reaction >= 4 && !hasPros) return send(res, 400, { error: '고객들이 좋아한 점을 하나 이상 골라 주세요.' });
+    if (b.reaction <= 2 && !hasCons) return send(res, 400, { error: '고객들이 아쉬워한 점을 하나 이상 골라 주세요.' });
+    if (b.reaction === 3 && !hasPros && !hasCons) return send(res, 400, { error: '좋았던 점이나 아쉬웠던 점을 하나 이상 골라 주세요.' });
     const now = new Date().toISOString();
     const data = {
       productId: product.id,

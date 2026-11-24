@@ -33,41 +33,45 @@
       <div class="card">
         <span class="q">1. 고객 반응은 전반적으로 어땠나요? <span class="req">*</span></span>
         <div class="chips faces" id="reaction"></div>
+
+        <!-- 고객 반응에 따라 이어지는 질문 -->
+        <div id="why" hidden>
+          <div class="why-block" id="prosBlock">
+            <span class="q sub-q" id="prosQ"></span>
+            <div class="chips" id="pros"></div>
+            <input type="text" id="prosNote" maxlength="500" placeholder="구체적으로 (예: 신축성이 좋아서 스윙할 때 편하다는 말이 많았어요)">
+          </div>
+          <button type="button" class="linkbtn" id="prosToggle">+ 좋았던 점도 있었다면 추가</button>
+          <div class="why-block" id="consBlock">
+            <span class="q sub-q" id="consQ"></span>
+            <div class="chips" id="cons"></div>
+            <input type="text" id="consNote" maxlength="500" placeholder="구체적으로 (예: 기장이 짧다는 의견이 자주 있었어요)">
+          </div>
+          <button type="button" class="linkbtn" id="consToggle">+ 아쉬웠던 점도 있었다면 추가</button>
+        </div>
       </div>
 
       <div class="card">
         <span class="q">2. 판매 반응은 어땠나요? <span class="req">*</span></span>
         <div class="chips" id="sales"></div>
         <div id="reasonsBox" hidden>
-          <span class="q sub-q">3. 안 팔린 주된 이유 / 고객이 망설인 이유 <span class="hint">(여러 개 선택)</span></span>
+          <span class="q sub-q">2-1. 안 팔린 주된 이유 / 고객이 망설인 이유는 뭐였나요? <span class="hint">(여러 개 선택)</span></span>
           <div class="chips" id="noBuyReasons"></div>
         </div>
       </div>
 
       <div class="card">
-        <span class="q">👍 고객들이 좋다고 한 점 <span class="hint">(여러 개 선택)</span></span>
-        <div class="chips" id="pros"></div>
-        <input type="text" id="prosNote" maxlength="500" placeholder="구체적으로 (예: 신축성이 좋아서 스윙할 때 편하다는 말이 많았어요)">
-      </div>
-
-      <div class="card">
-        <span class="q">👎 고객들이 아쉽다고 한 점 <span class="hint">(여러 개 선택)</span></span>
-        <div class="chips" id="cons"></div>
-        <input type="text" id="consNote" maxlength="500" placeholder="구체적으로 (예: 기장이 짧다는 의견이 자주 있었어요)">
-      </div>
-
-      <div class="card">
-        <label for="missing">🔍 자주 찾았는데 없던 사이즈·색상 <span class="hint">(선택)</span></label>
+        <label for="missing">3. 🔍 자주 찾았는데 없던 사이즈·색상 <span class="hint">(선택)</span></label>
         <input type="text" id="missing" maxlength="200" placeholder="예: 남성 105 네이비 / 270mm 와이드">
       </div>
 
       <div class="card">
-        <label for="improvement">💡 개선 아이디어 / 고객 요청 <span class="hint">(선택)</span></label>
+        <label for="improvement">4. 💡 개선 아이디어 / 고객 요청 <span class="hint">(선택)</span></label>
         <textarea id="improvement" maxlength="500" placeholder="예: 같은 디자인으로 반팔도 나왔으면 좋겠다는 요청이 많았어요"></textarea>
       </div>
 
       <div class="card">
-        <span class="q">주 구매 고객층 <span class="hint">(선택 · 여러 개 가능)</span></span>
+        <span class="q">5. 주 구매 고객층 <span class="hint">(선택 · 여러 개 가능)</span></span>
         <div class="chips" id="ageGroups"></div>
         <div class="chips" id="genders" style="margin-top:8px"></div>
       </div>
@@ -118,11 +122,58 @@ function paint(id) {
 }
 const syncReasons = () => { $('reasonsBox').hidden = !state.sales || state.sales === 'good'; };
 
+// ---- 고객 반응에 따라 이어지는 질문 ----
+const HINT = ' <span class="hint">(여러 개 선택 · 메모 가능)</span>';
+const REQ = ' <span class="req">*</span>';
+let openExtra = { pros: false, cons: false };
+const hasData = (k) => state[k].length > 0 || $(k + 'Note').value.trim() !== '';
+function whyMode() {
+  const r = state.reaction;
+  return !r ? null : r >= 4 ? 'good' : r <= 2 ? 'bad' : 'mid';
+}
+function syncWhy() {
+  const mode = whyMode();
+  $('why').hidden = !mode;
+  if (!mode) return;
+  const primary = mode === 'good' ? 'pros' : mode === 'bad' ? 'cons' : null;
+  const secondary = mode === 'good' ? 'cons' : mode === 'bad' ? 'pros' : null;
+  // 나빴으면 아쉬운 점을 먼저 묻기
+  const first = mode === 'bad' ? 'cons' : 'pros';
+  const second = first === 'pros' ? 'cons' : 'pros';
+  $(first + 'Block').style.order = 1; $(first + 'Toggle').style.order = 2;
+  $(second + 'Block').style.order = 3; $(second + 'Toggle').style.order = 4;
+  if (mode === 'good') {
+    $('prosQ').innerHTML = '1-1. 👍 고객들이 어떤 점을 좋아했나요?' + REQ + HINT;
+    $('consQ').innerHTML = '👎 그래도 아쉬웠던 점이 있었다면? <span class="hint">(선택)</span>';
+  } else if (mode === 'bad') {
+    $('consQ').innerHTML = '1-1. 👎 고객들이 어떤 점을 아쉬워했나요?' + REQ + HINT;
+    $('prosQ').innerHTML = '👍 그래도 좋았던 점이 있었다면? <span class="hint">(선택)</span>';
+  } else {
+    $('prosQ').innerHTML = '1-1. 👍 좋았던 점' + HINT;
+    $('consQ').innerHTML = '1-2. 👎 아쉬웠던 점' + HINT + ' <span class="hint">— 둘 중 하나 이상 답해 주세요</span>';
+  }
+  ['pros', 'cons'].forEach((k) => {
+    const show = k !== secondary || openExtra[k] || hasData(k);
+    $(k + 'Block').hidden = !show;
+    $(k + 'Toggle').hidden = show;
+  });
+  if (primary) $(primary + 'Block').classList.add('primary-why'); 
+  ['pros', 'cons'].forEach((k) => $(k + 'Block').classList.toggle('primary-why', k === primary));
+}
+function whyError() {
+  const mode = whyMode();
+  if (mode === 'good' && !hasData('pros')) return '1-1. 고객들이 좋아한 점을 하나 이상 골라 주세요.';
+  if (mode === 'bad' && !hasData('cons')) return '1-1. 고객들이 아쉬워한 점을 하나 이상 골라 주세요.';
+  if (mode === 'mid' && !hasData('pros') && !hasData('cons')) return '1-1·1-2. 좋았던 점이나 아쉬웠던 점을 하나 이상 골라 주세요.';
+  return '';
+}
+
 async function init() {
   OPTS = await (await fetch('/api/options')).json();
   if (!OPTS.products.length) $('error').textContent = '등록된 상품이 없어요. 관리자 화면에서 상품을 먼저 등록해 주세요.';
   chips('reaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${OPTS.reactions[n]}`]));
-  $('reaction').querySelectorAll('button').forEach((b) => (b.onclick = () => { state.reaction = Number(b.dataset.v); paint('reaction'); }));
+  $('reaction').querySelectorAll('button').forEach((b) => (b.onclick = () => { state.reaction = Number(b.dataset.v); paint('reaction'); syncWhy(); }));
+  ['pros', 'cons'].forEach((k) => ($(k + 'Toggle').onclick = () => { openExtra[k] = true; syncWhy(); $(k + 'Note').focus(); }));
   chips('sales', Object.entries(OPTS.sales), { onChange: syncReasons });
   chips('noBuyReasons', OPTS.noBuyReasons.map((x) => [x, x]), { multi: true });
   chips('ageGroups', OPTS.ageGroups.map((x) => [x, x]), { multi: true });
@@ -260,6 +311,8 @@ function selectProduct(id) {
   fillForm(MINE[p.id]);
   Object.keys(FIELDS).forEach(paint);
   syncReasons();
+  openExtra = { pros: false, cons: false };
+  syncWhy();
   $('submit').textContent = MINE[p.id] ? '평가 수정' : '평가 저장';
 }
 
@@ -275,6 +328,8 @@ $('form').onsubmit = async (e) => {
   $('error').textContent = '';
   $('submit').disabled = true;
   try {
+    const werr = whyError();
+    if (werr) { $('why').scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error(werr); }
     const body = { ...state, staff: $('staff').value, productId: $('product').value };
     TEXTS.forEach((id) => (body[id] = $(id).value));
     const res = await fetch('/api/evaluations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

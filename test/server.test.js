@@ -84,7 +84,7 @@ test('상품 삭제: 이미지·평가도 함께 삭제', async () => {
   const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9]);
   const r = await fetch(base + '/api/admin/images/DEL-1?category=' + encodeURIComponent('장갑'), { method: 'PUT', headers: { ...admin, 'Content-Type': 'image/jpeg' }, body: jpg });
   const p = (await r.json()).product;
-  await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '민지', reaction: 3, sales: 'normal' }) });
+  await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '민지', reaction: 3, sales: 'normal', prosNote: '그립감' }) });
   assert.strictEqual((await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: staff })).status, 401);
   // 이미지만 삭제
   assert.strictEqual((await fetch(base + `/api/admin/products/${p.id}/image`, { method: 'DELETE', headers: admin })).status, 200);
@@ -112,7 +112,10 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
   assert.strictEqual((await post({ reaction: 4, sales: 'good', staff: ' ' })).status, 400); // 이름 누락
 
   // 민지: 처음 저장 → 같은 이름(공백 차이)으로 다시 저장하면 수정
-  assert.strictEqual((await post({ reaction: 2, sales: 'poor', noBuyReasons: ['가격이 비쌈'] })).status, 201);
+  assert.strictEqual((await post({ reaction: 2, sales: 'poor', noBuyReasons: ['가격이 비쌈'] })).status, 400); // 나쁨인데 아쉬운 점 없음
+  assert.strictEqual((await post({ reaction: 5, sales: 'good', cons: ['가격'] })).status, 400); // 좋음인데 좋은 점 없음
+  assert.strictEqual((await post({ reaction: 3, sales: 'normal' })).status, 400); // 보통인데 둘 다 없음
+  assert.strictEqual((await post({ reaction: 2, sales: 'poor', consNote: '기장이 짧음', noBuyReasons: ['가격이 비쌈'] })).status, 201);
   const upd = await post({ staff: '민 지', reaction: 5, sales: 'good', pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['가격이 비쌈'], missing: '105 네이비', ageGroups: ['40대', '50대', '90대'], genders: ['남성'] });
   assert.strictEqual(upd.status, 200);
   assert.strictEqual((await upd.json()).updated, true);
@@ -142,5 +145,5 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
 
   await fetch(base + `/api/admin/products/${p.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
   assert.deepStrictEqual((await (await fetch(base + '/api/options', { headers: staff })).json()).products, []);
-  assert.strictEqual((await post({ reaction: 5, sales: 'good' })).status, 400);
+  assert.strictEqual((await post({ reaction: 5, sales: 'good', pros: ['디자인'] })).status, 400); // 조사 중지된 상품
 });
