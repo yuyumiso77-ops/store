@@ -11,7 +11,7 @@
   <div class="product-head">
     <div>
       <h1>고객 반응 분석</h1>
-      <p class="sub">직원들이 상품별로 평가한 고객 반응, 판매 반응, 장단점, 개선 의견을 모아 봅니다.</p>
+      <p class="sub">샵매니저들이 상품별로 평가한 고객 반응, 판매 반응, 장단점, 개선 의견을 모아 봅니다.</p>
     </div>
     <div class="actions">
       <a class="btn" href="/" target="_blank">평가 화면 열기</a>
@@ -106,7 +106,7 @@ function renderProduct(p) {
     class: 'btn danger',
     onclick: async () => {
       const label = p.code && p.code !== p.name ? `${p.name} (${p.code})` : p.name;
-      const msg = `"${label}" 상품을 삭제할까요?\n이미지` + (p.count ? `와 직원 평가 ${p.count}건도` : '도') + ' 함께 지워지고 되돌릴 수 없어요.';
+      const msg = `"${label}" 상품을 삭제할까요?\n이미지` + (p.count ? `와 샵매니저 평가 ${p.count}건도` : '도') + ' 함께 지워지고 되돌릴 수 없어요.';
       if (!confirm(msg)) return;
       try { await api(`/api/admin/products/${p.id}`, { method: 'DELETE' }); load(); } catch (ex) { alert(ex.message); }
     },
@@ -170,7 +170,7 @@ function renderProduct(p) {
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
     headWrap,
     el('div', { class: 'stats' },
-      stat(p.count, '평가한 직원 수'),
+      stat(p.count, '평가한 샵매니저 수'),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
       stat(`${p.sales.good} · ${p.sales.normal} · ${p.sales.poor}`, '판매 반응: 잘 팔림 · 보통 · 안 팔림')),
     p.count ? el('div', { class: 'cols' },
@@ -181,7 +181,7 @@ function renderProduct(p) {
       rank('👥 주 구매 고객층', [...p.ageGroups, ...p.genders], p.count)) : '',
     p.missing.length ? el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '🔍 자주 찾았는데 없던 사이즈·색상'),
       el('ul', { class: 'comments' }, p.missing.map((x) => el('li', {}, x.missing, el('div', { class: 'meta' }, `${x.staff} · ${new Date(x.updatedAt).toLocaleString('ko-KR')}`))))) : '',
-    el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '직원 의견 (장점 · 단점 · 개선 아이디어)'), notes));
+    el('div', { style: 'margin-top:16px' }, el('div', { class: 'q' }, '샵매니저 의견 (장점 · 단점 · 개선 아이디어)'), notes));
 }
 
 function editForm(p) {
@@ -402,7 +402,7 @@ async function load() {
     stat(best ? best.code || best.name : '-', best ? `반응이 가장 좋은 상품 · ${best.type || best.name}` : '반응이 가장 좋은 상품'),
     stat(worst ? worst.code || worst.name : '-', worst ? `반응이 가장 낮은 상품 · ${worst.type || worst.name}` : '반응이 가장 낮은 상품'));
   $('staffBox').replaceChildren(...(data.staff.length
-    ? [el('span', { class: 'hint' }, '직원별 진행: '), ...data.staff.map((s) => el('span', { class: 'pill' }, `${s.name} ${s.done}/${data.activeProducts}`))]
+    ? [el('span', { class: 'hint' }, '샵매니저별 진행: '), ...data.staff.map((s) => el('span', { class: 'pill' }, `${s.name} ${s.done}/${data.activeProducts}`))]
     : []));
   LAST = ps;
   renderList();

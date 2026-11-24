@@ -1,5 +1,5 @@
 'use strict';
-// 골프웨어 매장 — 직원이 상품별로 고객 반응을 종합 평가하는 서버
+// 골프웨어 매장 — 샵매니저가 상품별로 고객 반응을 종합 평가하는 서버
 // (예전 고객별 기록 db.records 는 파일에 그대로 두고 사용하지 않음) (외부 의존성 없음)
 const http = require('node:http');
 const fs = require('node:fs');
@@ -200,7 +200,7 @@ function guard(req, res, role) {
   const isAdmin = pw !== null && same(pw, ADMIN_PASSWORD);
   const ok = role === 'admin' ? isAdmin : !STAFF_PASSWORD || isAdmin || (pw !== null && same(pw, STAFF_PASSWORD));
   if (ok) return true;
-  send(res, 401, role === 'admin' ? '관리자 인증이 필요합니다.' : '직원 인증이 필요합니다.', {
+  send(res, 401, role === 'admin' ? '관리자 인증이 필요합니다.' : '샵매니저 인증이 필요합니다.', {
     'WWW-Authenticate': `Basic realm="store-${role}", charset="UTF-8"`,
   });
   return false;
@@ -468,7 +468,7 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
       const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
-      const rows = [['수정일시', '직원', '품번', '상품', '구분', '품목', '복종', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
+      const rows = [['수정일시', '샵매니저', '품번', '상품', '구분', '품목', '복종', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
       db.evaluations.forEach((e) => {
         const pr = prodOf[e.productId] || {};
         rows.push([
@@ -483,7 +483,7 @@ async function handle(req, res) {
     return send(res, 404, 'Not found');
   }
 
-  // 직원 기록 화면
+  // 샵매니저 평가 화면
   if (!guard(req, res, 'staff')) return;
 
   if (m === 'GET' && p === '/') return serveStatic(res, 'index.html');
@@ -507,13 +507,13 @@ async function handle(req, res) {
     return send(res, 200, staff ? db.evaluations.filter((e) => sameName(e.staff, staff)) : []);
   }
 
-  // 평가 저장: 같은 직원 + 같은 상품이면 덮어씀
+  // 평가 저장: 같은 샵매니저 + 같은 상품이면 덮어씀
   if (m === 'POST' && p === '/api/evaluations') {
     const b = await readBody(req);
     const product = db.products.find((x) => x.id === b.productId && x.active);
     if (!product) return send(res, 400, { error: '상품을 선택해 주세요.' });
     const staff = cleanText(b.staff, 30);
-    if (!staff) return send(res, 400, { error: '직원 이름을 입력해 주세요.' });
+    if (!staff) return send(res, 400, { error: '샵매니저 이름을 입력해 주세요.' });
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: '고객 반응을 선택해 주세요.' });
     if (!(b.sales in OPTIONS.sales)) return send(res, 400, { error: '판매 반응을 선택해 주세요.' });
     // 판매 반응에 따라 이어지는 질문(2-1) 필수 확인
@@ -568,7 +568,7 @@ if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`서버 실행 중: http://localhost:${PORT}  (관리자: /admin)`);
     if (!process.env.ADMIN_PASSWORD) console.warn('⚠️  ADMIN_PASSWORD 환경변수를 설정하세요. (현재 기본값 사용 중)');
-    if (!STAFF_PASSWORD) console.warn('ℹ️  STAFF_PASSWORD 가 없어 직원 기록 화면이 비밀번호 없이 열려 있습니다.');
+    if (!STAFF_PASSWORD) console.warn('ℹ️  STAFF_PASSWORD 가 없어 샵매니저 평가 화면이 비밀번호 없이 열려 있습니다.');
   });
 }
 
