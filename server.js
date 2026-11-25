@@ -322,7 +322,7 @@ function displayReport() {
 }
 
 // ---------- 진열 분석 (진열 체크 × 상품 평가) ----------
-const DA = { highDisplay: 70, lowDisplay: 50, goodReaction: 3.5, badReaction: 2.8, ratio: 0.4, minChecks: 3, minEvals: 3 };
+const DA = { highDisplay: 70, lowDisplay: 60, goodReaction: 3.5, badReaction: 2.8, ratio: 0.4, minChecks: 3, minEvals: 3 };
 function displayAnalysis() {
   const rep = displayReport();
   const rate = (a, b) => (b ? Math.round((a / b) * 100) : null);
