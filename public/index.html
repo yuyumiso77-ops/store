@@ -22,7 +22,9 @@
   <form id="form" novalidate>
     <div class="card">
       <label for="staff">매장명</label>
-      <input type="text" id="staff" maxlength="30" placeholder="예: 신세계강남점" autocomplete="organization">
+      <input type="text" id="staff" maxlength="30" placeholder="예: 신세계강남 (목록에서 선택)" autocomplete="off" list="storeList">
+      <datalist id="storeList"></datalist>
+      <div class="hint warn-text" id="storeWarn" hidden></div>
       <div class="hint" id="progress"></div>
     </div>
 
@@ -280,6 +282,20 @@ async function init() {
   let sx = 0;
   $('lightbox').addEventListener('touchstart', (e) => (sx = e.touches[0].clientX), { passive: true });
   $('lightbox').addEventListener('touchend', (e) => { const dx = e.changedTouches[0].clientX - sx; if (Math.abs(dx) > 40) stepLb(dx < 0 ? 1 : -1); });
+  // 조사 대상 매장 명단: 자동완성 + 공식 매장명으로 맞춤
+  let STORES = [];
+  try { STORES = await (await fetch('/api/stores')).json(); } catch {}
+  $('storeList').replaceChildren(...STORES.map((n) => Object.assign(document.createElement('option'), { value: n })));
+  const sKey = (n) => String(n || '').toLowerCase().replace(/\s+/g, '').replace(/백화점$/, '').replace(/점$/, '');
+  const normStore = () => {
+    const v = $('staff').value.trim();
+    const hit = v && STORES.find((n) => sKey(n) === sKey(v));
+    if (hit && hit !== v) $('staff').value = hit;
+    const warn = v && STORES.length && !hit;
+    $('storeWarn').hidden = !warn;
+    $('storeWarn').textContent = warn ? '⚠️ 조사 대상 매장 목록에 없는 이름이에요. 입력칸을 누르면 나오는 목록에서 골라 주세요.' : '';
+  };
+  $('staff').addEventListener('change', normStore, true);
   $('staff').onchange = () => { loadMine(); loadZtec(); if (MODE === 'display') loadDisplay(); };
   $('modeTabs').querySelectorAll('button').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
   $('dSearch').oninput = renderDisplay;
@@ -287,6 +303,7 @@ async function init() {
   $('staff').addEventListener('input', () => { $('ztecToggle').disabled = !$('staff').value.trim(); });
   setupZtec(); // 상태는 저장된 매장명을 불러온 뒤 loadZtec()에서 갱신
   try { $('staff').value = localStorage.getItem('staff') || ''; } catch {}
+  normStore();
   try { const l = localStorage.getItem('line') || ''; if (l === '__none' ? OPTS.products.some((p) => !p.line) : OPTS.products.some((p) => p.line === l)) LINE = l; } catch {}
   renderLineFilter();
   renderCatFilter();

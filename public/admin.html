@@ -14,6 +14,32 @@
   <div class="modetabs" id="adminTabs">
     <button type="button" data-tab="analysis">📊 반응 분석</button>
     <button type="button" data-tab="display">📦 진열 현황</button>
+    <button type="button" data-tab="stores">🏬 매장 참여</button>
+  </div>
+
+  <div id="tabStores" hidden>
+    <div class="product-head">
+      <div>
+        <h1>매장 참여 현황</h1>
+        <p class="sub">조사 대상 매장별로 진열 체크·상품 평가·Z-TEC 의견을 얼마나 했는지 봅니다.</p>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn accent" id="copyRemind">📋 미완료 매장 알림 문구 복사</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="stats" id="sStats"></div>
+    </div>
+    <div class="chips bold-chips" id="sMgr" style="margin-bottom:8px"></div>
+    <div class="chips" id="sStatus" style="margin-bottom:10px"></div>
+    <div id="sRows"></div>
+    <div id="sUnknown"></div>
+    <details class="card" style="margin-top:16px">
+      <summary class="q" style="cursor:pointer;margin:0">📁 조사 대상 매장 명단 올리기 <span class="hint" id="sListInfo"></span></summary>
+      <p class="hint">CSV 첫 줄: <code>매장코드,매장명,유통사,담당자</code> — 올리면 명단 전체가 새 명단으로 바뀝니다. 입력된 평가·진열 데이터는 지워지지 않아요.</p>
+      <label class="btn" style="cursor:pointer"><input type="file" id="storeCsv" accept=".csv" hidden>📁 매장 명단 CSV 선택</label>
+      <p class="hint" id="storeCsvResult"></p>
+    </details>
   </div>
 
   <div id="tabDisplay" hidden>
@@ -675,12 +701,72 @@ async function load() {
 let DREP = null, DL = '', DT = '';
 const DOPEN = new Set();
 function setTab(t) {
-  const tab = t === 'display' ? 'display' : 'analysis';
+  const tab = ['display', 'stores'].includes(t) ? t : 'analysis';
   $('tabDisplay').hidden = tab !== 'display';
+  $('tabStores').hidden = tab !== 'stores';
   $('tabAnalysis').hidden = tab !== 'analysis';
   $('adminTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   try { localStorage.setItem('adminTab', tab); } catch {}
   if (tab === 'display') loadDisplayTab();
+  if (tab === 'stores') loadStoresTab();
+}
+
+// ---- 🏬 매장 참여 ----
+let SP = null, SMGR = '', SSTATUS = '';
+const STATUS_L = { none: '미참여', progress: '진행 중', done: '완료' };
+async function loadStoresTab() {
+  $('sRows').replaceChildren(el('p', { class: 'hint' }, '불러오는 중…'));
+  SP = await api('/api/admin/store-progress');
+  renderStoresTab();
+}
+function renderStoresTab() {
+  const r = SP;
+  $('sListInfo').textContent = r.stores.length ? `(현재 ${r.stores.length}곳 등록)` : '(아직 명단이 없어요)';
+  if (!r.stores.length) {
+    $('sStats').replaceChildren(el('p', { class: 'hint' }, '아직 조사 대상 매장 명단이 없어요. 맨 아래 "매장 명단 올리기"에서 CSV를 올려 주세요.'));
+    $('sMgr').replaceChildren(); $('sStatus').replaceChildren(); $('sRows').replaceChildren(); $('sUnknown').replaceChildren();
+    return;
+  }
+  const cnt = (st) => r.stores.filter((x) => x.status === st).length;
+  $('sStats').replaceChildren(
+    stat(r.stores.length + '곳', '조사 대상 매장'),
+    stat(cnt('done') + '곳', '완료 (진열·평가·Z-TEC 모두)'),
+    stat(cnt('progress') + '곳', '진행 중'),
+    stat(cnt('none') + '곳', '미참여'),
+    stat(r.unknown.length + '건', '명단에 없는 이름으로 입력'));
+  const mgrs = [...new Set(r.stores.map((x) => x.manager || '담당자 없음'))];
+  $('sMgr').replaceChildren(...[['', '전체 담당자'], ...mgrs.map((m) => [m, m])].map(([k, l]) => {
+    const n = r.stores.filter((x) => !k || (x.manager || '담당자 없음') === k).length;
+    return el('button', { type: 'button', class: SMGR === k ? 'on' : '', onclick: () => { SMGR = k; renderStoresTab(); } }, `${l} ${n}`);
+  }));
+  const base = r.stores.filter((x) => !SMGR || (x.manager || '담당자 없음') === SMGR);
+  $('sStatus').replaceChildren(...[['', '전체'], ['none', '미참여'], ['progress', '진행 중'], ['done', '완료']].map(([k, l]) =>
+    el('button', { type: 'button', class: SSTATUS === k ? 'on' : '', onclick: () => { SSTATUS = k; renderStoresTab(); } }, `${l} ${base.filter((x) => !k || x.status === k).length}`)));
+  const order = { none: 0, progress: 1, done: 2 };
+  const prog = (x) => (r.totalSkus ? x.display / r.totalSkus : 0) + (r.totalProducts ? x.evals / r.totalProducts : 0);
+  const list = base.filter((x) => !SSTATUS || x.status === SSTATUS).sort((a, b) => order[a.status] - order[b.status] || prog(a) - prog(b) || a.name.localeCompare(b.name));
+  const bar = (v, total) => el('div', { class: 'sbar' }, el('span', { class: 'g', style: `width:${total ? Math.min(100, (v / total) * 100) : 0}%` }));
+  $('sRows').replaceChildren(...list.map((x) => el('div', { class: 'strow' },
+    el('div', { class: 'pc name' }, el('b', {}, x.name), el('small', {}, [x.code, x.channel, x.manager].filter(Boolean).join(' · '))),
+    el('div', { class: 'pc' }, bar(x.display, r.totalSkus), el('small', {}, `진열 체크 ${x.display}/${r.totalSkus}`)),
+    el('div', { class: 'pc' }, bar(x.evals, r.totalProducts), el('small', {}, `상품 평가 ${x.evals}/${r.totalProducts}` + (x.skipped ? ` (제외 ${x.skipped})` : ''))),
+    el('div', { class: 'pc num' }, el('b', {}, x.ztec ? '✓' : '–'), el('small', {}, 'Z-TEC')),
+    el('div', { class: 'pc' }, el('span', { class: 'tag st-' + x.status }, STATUS_L[x.status]), el('small', {}, x.last ? new Date(x.last).toLocaleDateString('ko-KR') : '')),
+  )));
+  $('sUnknown').replaceChildren(...(r.unknown.length ? [el('div', { class: 'card', style: 'margin-top:16px' },
+    el('h2', { style: 'margin:0 0 4px' }, '⚠️ 명단에 없는 이름으로 입력된 데이터'),
+    el('p', { class: 'hint', style: 'margin:0 0 8px' }, '매장명을 다르게 입력한 경우예요. 해당 매장에 정확한 이름으로 다시 입력해 달라고 요청하거나, 반응 분석 탭의 매장별 보기에서 🗑로 지울 수 있어요.'),
+    el('ul', { class: 'comments' }, r.unknown.map((u) => el('li', {}, el('b', {}, u.name), el('span', { class: 'hint' }, ` — 평가 ${u.evals} · 진열 체크 ${u.display} · Z-TEC ${u.ztec ? '✓' : '–'}`)))))] : []));
+}
+function remindText() {
+  const r = SP;
+  const by = {};
+  r.stores.filter((x) => x.status !== 'done').forEach((x) => {
+    const m = x.manager || '담당자 없음';
+    (by[m] = by[m] || []).push(`${x.name}${x.status === 'none' ? '(미참여)' : `(진열 ${x.display}/${r.totalSkus}·평가 ${x.evals}/${r.totalProducts}${x.ztec ? '' : '·Z-TEC 미작성'})`}`);
+  });
+  return ['[FJ 진열·반응 체크 미완료 매장]', ...Object.entries(by).map(([m, l]) => `\n▶ ${m} 담당 (${l.length}곳)\n` + l.join('\n')),
+    '\n링크: ' + location.origin + '/?mode=display'].join('\n');
 }
 async function loadDisplayTab() {
   $('dRows').replaceChildren(el('p', { class: 'hint' }, '불러오는 중…'));
@@ -1018,6 +1104,30 @@ async function init() {
   $('dSearchA').oninput = () => DREP && renderDisplayTab();
   $('dSort').onchange = () => DREP && renderDisplayTab();
   $('dView').querySelectorAll('button').forEach((b) => (b.onclick = () => setDView(b.dataset.v)));
+  $('copyRemind').onclick = async () => {
+    if (!SP || !SP.stores.length) return alert('먼저 매장 명단을 올려 주세요.');
+    const text = remindText();
+    try { await navigator.clipboard.writeText(text); alert('복사했어요. 카톡에 붙여넣기 하세요.'); }
+    catch { prompt('아래 내용을 복사하세요', text); }
+  };
+  $('storeCsv').onchange = async () => {
+    const f = $('storeCsv').files[0];
+    $('storeCsv').value = '';
+    if (!f) return;
+    try {
+      const buf = await f.arrayBuffer();
+      let text = new TextDecoder('utf-8').decode(buf);
+      if (text.includes('\uFFFD')) text = new TextDecoder('euc-kr').decode(buf);
+      const [head, ...rows] = parseCsv(text);
+      const idx = (names) => head.findIndex((h) => names.includes(h.trim()));
+      const ni = idx(['매장명', 'name']), ci = idx(['매장코드', 'code']), chi = idx(['유통사', '채널', 'channel']), mi = idx(['담당자', 'manager']);
+      if (ni < 0) throw new Error('첫 줄에 "매장명" 열이 필요해요');
+      const g = (r, i) => (i >= 0 ? (r[i] || '').trim() : '');
+      const res = await api('/api/admin/stores/import', { method: 'POST', body: JSON.stringify({ rows: rows.map((r) => ({ name: g(r, ni), code: g(r, ci), channel: g(r, chi), manager: g(r, mi) })) }) });
+      $('storeCsvResult').textContent = `✅ ${res.count}곳을 조사 대상으로 등록했어요.` + (res.errors.length ? ` (건너뜀 ${res.errors.length}건: ${res.errors.slice(0, 3).join(' / ')})` : '');
+      loadStoresTab();
+    } catch (ex) { $('storeCsvResult').textContent = '❌ ' + ex.message; }
+  };
   let t0 = 'analysis';
   try { t0 = localStorage.getItem('adminTab') || 'analysis'; } catch {}
   setTab(t0);

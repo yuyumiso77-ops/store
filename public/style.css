@@ -324,3 +324,11 @@ body:not([data-mode="display"]) .mode-display { display: none !important; }
 .dbtns { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
 @media (max-width: 380px) { .seg { padding: 7px 6px; font-size: .8rem; } }
 .sgroup b.tx { color: #7d8085; }
+/* 매장 참여 */
+.strow { display: grid; grid-template-columns: minmax(150px, 1.3fr) minmax(140px, 1.4fr) minmax(140px, 1.4fr) 56px 100px; gap: 12px; align-items: center; padding: 8px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 4px; }
+.strow .sbar { margin-bottom: 3px; }
+.tag.st-none { border-color: var(--danger); color: var(--danger); }
+.tag.st-progress { border-color: var(--star); color: #a7861c; }
+.tag.st-done { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 760px) { .strow { grid-template-columns: 1fr 1fr; } .strow .pc.name { grid-column: 1 / -1; } }
+.warn-text { color: var(--danger); font-weight: 600; }

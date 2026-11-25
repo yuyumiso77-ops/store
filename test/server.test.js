@@ -464,6 +464,25 @@ test('판매 경험 없음 + 응대 반응 피드백(선택)', async () => {
   await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
 });
 
+test('조사 대상 매장 명단·참여 현황', async () => {
+  const imp = (rows) => fetch(base + '/api/admin/stores/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows }) }).then(async (r) => ({ status: r.status, ...(await r.json()) }));
+  assert.strictEqual((await imp([])).status, 400);
+  const r = await imp([{ code: 'C1', name: '롯데잠실', channel: '백화점', manager: '가' }, { code: 'C2', name: '신세계강남', channel: '백화점', manager: '나' }, { name: '롯데 잠실점' }, { name: '' }]);
+  assert.deepStrictEqual([r.count, r.errors.length], [2, 2]); // 중복(롯데 잠실점)·빈 이름 제외
+  assert.deepStrictEqual(await (await fetch(base + '/api/stores', { headers: staff })).json(), ['롯데잠실', '신세계강남']);
+  const prod = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '진행률 상품', category: '용품' }) })).json();
+  // '신세계강남점' 이름으로 입력해도 같은 매장으로 집계, 명단에 없는 이름은 따로
+  await fetch(base + '/api/ztec', { method: 'POST', headers: staff, body: JSON.stringify({ store: '신세계강남점', reaction: 4, ease: 'easy' }) });
+  await fetch(base + '/api/ztec', { method: 'POST', headers: staff, body: JSON.stringify({ store: '강남신세계', reaction: 3, ease: 'easy' }) });
+  const pr = await (await fetch(base + '/api/admin/store-progress', { headers: admin })).json();
+  const g = pr.stores.find((x) => x.name === '신세계강남');
+  assert.deepStrictEqual([g.ztec, g.status, g.manager, g.names], [true, 'progress', '나', ['신세계강남점']]);
+  assert.strictEqual(pr.stores.find((x) => x.name === '롯데잠실').status, 'none');
+  assert.ok(pr.unknown.some((u) => u.name === '강남신세계' && u.ztec));
+  for (const st of ['신세계강남점', '강남신세계']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });
+  await fetch(base + `/api/admin/products/${prod.id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);

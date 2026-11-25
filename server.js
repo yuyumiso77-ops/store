@@ -62,9 +62,9 @@ const OPTIONS = {
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], summaries: d.summaries || {}, displays: d.displays || [] };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [] };
   } catch {
-    return { products: [], evaluations: [], ztec: [], summaries: {}, displays: [] };
+    return { products: [], evaluations: [], ztec: [], summaries: {}, displays: [], stores: [] };
   }
 }
 const db = loadDb();
@@ -378,6 +378,35 @@ function syncEvalFromDisplay(store, productIds) {
   return out;
 }
 
+// ---------- 조사 대상 매장 명단 ----------
+// 매장명 비교: 공백·대소문자 무시, 끝의 '백화점'·'점' 무시 (롯데잠실점 = 롯데잠실)
+const storeKey = (n) => String(n || '').toLowerCase().replace(/\s+/g, '').replace(/백화점$/, '').replace(/점$/, '');
+const matchStore = (name) => { const k = storeKey(name); return k ? db.stores.find((s) => storeKey(s.name) === k) : null; };
+function storeProgress() {
+  const active = db.products.filter((p) => p.active);
+  const activeIds = new Set(active.map((p) => p.id));
+  const totalSkus = active.reduce((a, p) => a + skusOf(p).length, 0);
+  const skuSet = new Set(active.flatMap((p) => skusOf(p).map((k) => k.sku)));
+  const rows = db.stores.map((st) => {
+    const k = storeKey(st.name);
+    const ev = db.evaluations.filter((e) => storeKey(e.staff) === k && activeIds.has(e.productId));
+    const ds = db.displays.filter((d) => storeKey(d.store) === k && skuSet.has(d.sku));
+    const zt = db.ztec.find((z) => storeKey(z.store) === k);
+    const evals = ev.length, display = ds.length;
+    const last = [...ev, ...ds, ...(zt ? [zt] : [])].reduce((m, x) => (x.updatedAt > m ? x.updatedAt : m), '');
+    const names = [...new Set([...ev.map((e) => e.staff), ...ds.map((d) => d.store), ...(zt ? [zt.store] : [])])];
+    const status = !evals && !display && !zt ? 'none' : evals >= active.length && display >= totalSkus && zt ? 'done' : 'progress';
+    return { ...st, evals, evalsDone: ev.filter(isDone).length, skipped: evals - ev.filter(isDone).length, display, ztec: !!zt, last, status, names };
+  });
+  // 명단에 없는 이름으로 입력된 데이터
+  const seen = new Map();
+  const add = (name, field) => { if (matchStore(name)) return; const k = storeKey(name); if (!seen.has(k)) seen.set(k, { name, evals: 0, display: 0, ztec: false }); const r = seen.get(k); if (field === 'ztec') r.ztec = true; else r[field]++; };
+  db.evaluations.forEach((e) => add(e.staff, 'evals'));
+  db.displays.forEach((d) => add(d.store, 'display'));
+  db.ztec.forEach((z) => add(z.store, 'ztec'));
+  return { totalProducts: active.length, totalSkus, stores: rows, unknown: [...seen.values()] };
+}
+
 // ---------- 진열 분석 (진열 체크 × 상품 평가) ----------
 const DA = { highDisplay: 70, lowDisplay: 60, goodReaction: 3.5, badReaction: 2.8, ratio: 0.4, minChecks: 3, minEvals: 3 };
 function displayAnalysis() {
@@ -595,6 +624,25 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/admin') return serveStatic(res, 'admin.html');
     if (m === 'GET' && p === '/api/admin/summary') return send(res, 200, summary());
+
+    // ---- 조사 대상 매장 ----
+    if (m === 'GET' && p === '/api/admin/store-progress') return send(res, 200, storeProgress());
+    if (m === 'POST' && p === '/api/admin/stores/import') {
+      const b = await readBody(req, 256 * 1024);
+      const rows = Array.isArray(b.rows) ? b.rows : [];
+      const list = [];
+      const errors = [];
+      rows.slice(0, 1000).forEach((r, i) => {
+        const name = cleanText(r.name, 30);
+        if (!name) return errors.push(`${i + 2}행: 매장명이 비어 있어요`);
+        if (list.some((x) => storeKey(x.name) === storeKey(name))) return errors.push(`${i + 2}행: 매장명이 중복돼요 (${name})`);
+        list.push({ code: cleanText(r.code, 20), name, channel: cleanText(r.channel, 20), manager: cleanText(r.manager, 20) });
+      });
+      if (!list.length) return send(res, 400, { error: '등록할 매장이 없어요. 첫 줄에 "매장명" 열이 있는지 확인해 주세요.', errors });
+      db.stores = list; // 명단은 통째로 교체
+      saveDb();
+      return send(res, 200, { ok: true, count: list.length, errors });
+    }
 
     // ---- 진열 현황 ----
     if (m === 'GET' && p === '/api/admin/display') return send(res, 200, displayReport());
@@ -898,6 +946,9 @@ async function handle(req, res) {
   if (m === 'GET' && p === '/api/options') {
     return send(res, 200, { ...OPTIONS, products: db.products.filter((x) => x.active).map((x) => ({ ...publicProduct(x), imageUrl: imageUrl(x) })) });
   }
+
+  // 매장 이름 자동완성용 (매장명만)
+  if (m === 'GET' && p === '/api/stores') return send(res, 200, db.stores.map((s) => s.name));
 
   // 진열 체크: 내 매장 상태 / 저장 (한 번에 여러 SKU도 가능, status '' 는 체크 취소)
   if (m === 'GET' && p === '/api/display/mine') {
