@@ -313,3 +313,7 @@ body:not([data-mode="display"]) .mode-display { display: none !important; }
 .scatter .ref { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
 .glist .comments li { display: flex; gap: 8px; align-items: center; }
 @media (max-width: 760px) { .scatter .tick { font-size: 16px; } .scatter .axis { font-size: 17px; } }
+.brand-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand-title .bdiv { width: 1px; height: 22px; background: var(--line); }
+.brand-title .btitle { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
+@media (max-width: 480px) { .brand-title .bdiv { display: none; } .brand-title .btitle { font-size: .95rem; } }
