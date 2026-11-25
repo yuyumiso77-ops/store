@@ -519,6 +519,7 @@ async function handle(req, res) {
   const p = url.pathname;
   const m = req.method;
 
+  if (m === 'GET' && p === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n');
   if (m === 'GET' && p === '/healthz') return send(res, 200, { ok: true, ai: !!process.env.ANTHROPIC_API_KEY }); // 키 값은 노출하지 않음
   if (m === 'GET' && p === '/style.css') return serveStatic(res, 'style.css');
   if (m === 'GET' && (p === '/logo.png' || p === '/favicon.png')) return serveStatic(res, p.slice(1));
@@ -938,6 +939,8 @@ async function handle(req, res) {
 db.products.forEach((p) => { photosOf(p); syncMain(p); });
 
 const server = http.createServer((req, res) => {
+  // 검색엔진에 노출되지 않게 (페이지·이미지·CSV 모두)
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, noimageindex');
   handle(req, res).catch((err) => {
     if (!res.headersSent) send(res, 400, { error: '잘못된 요청입니다.' });
     console.error(err.message);

@@ -346,6 +346,17 @@ test('진열 분석: 확대 후보 / 효자 / 재검토, 복종·매장별, 창�
   for (const x of s.products.filter((p) => p.code.startsWith('AN-'))) await fetch(base + `/api/admin/products/${x.id}`, { method: 'DELETE', headers: admin });
 });
 
+test('검색엔진 차단: robots.txt, X-Robots-Tag, meta', async () => {
+  const r = await fetch(base + '/robots.txt');
+  assert.strictEqual(r.status, 200);
+  assert.match(await r.text(), /Disallow: \//);
+  assert.match(r.headers.get('x-robots-tag'), /noindex/);
+  const page = await fetch(base + '/', { headers: staff });
+  assert.match(page.headers.get('x-robots-tag'), /noindex/);
+  assert.match(await page.text(), /<meta name="robots" content="noindex/);
+  assert.match((await fetch(base + '/logo.png')).headers.get('x-robots-tag'), /noimageindex/);
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);
