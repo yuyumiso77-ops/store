@@ -307,7 +307,7 @@ function notesBlock(p) {
         (kind === 'all' || kind === 'pros') && n.prosNote ? el('div', { class: 'note-line' }, '👍 ', n.prosNote) : '',
         (kind === 'all' || kind === 'cons') && n.consNote ? el('div', { class: 'note-line' }, '👎 ', n.consNote) : '',
         (kind === 'all' || kind === 'idea') && n.improvement ? el('div', { class: 'note-line' }, '💡 ', n.improvement) : '',
-        el('div', { class: 'meta' }, `${n.staff} · ${REACT[n.reaction]} · ${SALES[n.sales]} · ${new Date(n.updatedAt).toLocaleDateString('ko-KR')}`))));
+        el('div', { class: 'meta' }, n.status === 'nosale' ? `${n.staff} · 🙅 판매 경험 없음(응대 의견)${n.reaction ? ' · ' + REACT[n.reaction] : ''} · ${new Date(n.updatedAt).toLocaleDateString('ko-KR')}` : `${n.staff} · ${REACT[n.reaction]} · ${SALES[n.sales]} · ${new Date(n.updatedAt).toLocaleDateString('ko-KR')}`))));
   };
   draw();
   return box;
@@ -408,7 +408,7 @@ function renderProduct(p) {
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
     headWrap,
     el('div', { class: 'stats' },
-      stat(p.count, '평가한 매장 수' + (p.skipped && (p.skipped.nosale || p.skipped.notreceived) ? ` · 제외: 판매 없음 ${p.skipped.nosale} · 미입고 ${p.skipped.notreceived}` : '')),
+      stat(p.count, '평가한 매장 수' + (p.skipped && (p.skipped.nosale || p.skipped.notreceived) ? ` · 제외: 판매 없음 ${p.skipped.nosale}${p.nosaleFeedback ? `(응대 의견 ${p.nosaleFeedback})` : ''} · 미입고 ${p.skipped.notreceived}` : '')),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
       stat(p.displayRate == null ? '-' : p.displayRate + '%', `진열률(진열 체크) · 진열 ${p.display.shown} · 창고만 ${p.display.stock} · 없음 ${p.display.none}` + (p.display.unknown ? ` · 미응답 ${p.display.unknown}` : '')),
       stat(`${p.sales.good} · ${p.sales.normal} · ${p.sales.poor}`, '판매 반응: 잘 팔림 · 보통 · 안 팔림')),

@@ -437,6 +437,33 @@ test('미입고 자동 연동: 평가 ↔ 진열 체크', async () => {
   await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
 });
 
+test('판매 경험 없음 + 응대 반응 피드백(선택)', async () => {
+  await fetch(base + '/api/admin/products/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows: [{ code: 'NOSALE-1', name: 'x', category: '어패럴', plc: '40001', plcColors: '40001:BLACK' }] }) });
+  const opt = await (await fetch(base + '/api/options', { headers: staff })).json();
+  const pr = opt.products.find((x) => x.code === 'NOSALE-1');
+  const ev = (b) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: pr.id, ...b }) });
+  assert.strictEqual((await ev({ staff: '응대점', status: 'nosale' })).status, 201); // 피드백 없이도 저장
+  assert.strictEqual((await ev({ staff: '응대점', status: 'nosale', reaction: 4, pros: ['디자인', '그립감'], prosNote: '색이 예쁘다는 말', improvement: '네이비 요청', sales: 'good' })).status, 200);
+  assert.strictEqual((await ev({ staff: '판매점', reaction: 2, cons: ['가격(가치 대비)'], sales: 'poor', noBuyReasons: ['기타'] })).status, 201);
+  const mine = (await (await fetch(base + '/api/evaluations/mine?staff=' + encodeURIComponent('응대점'), { headers: staff })).json()).find((e) => e.productId === pr.id);
+  assert.deepStrictEqual([mine.status, mine.reaction, mine.pros, mine.sales], ['nosale', 4, ['디자인'], '']); // 다른 품목 항목·판매 반응은 무시
+  const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  const x = s.products.find((p) => p.id === pr.id);
+  assert.deepStrictEqual([x.count, x.avgReaction, x.nosaleFeedback], [1, 2, 1]); // 평균은 판매한 매장만
+  assert.ok(x.pros.some((p) => p.name === '디자인')); // 장점 순위엔 응대 의견 포함
+  const n = x.notes.find((n) => n.staff === '응대점');
+  assert.deepStrictEqual([n.status, n.prosNote, n.improvement], ['nosale', '색이 예쁘다는 말', '네이비 요청']);
+  // AI 요약 소스에 응대 의견 포함
+  process.env.ANTHROPIC_API_KEY = 'test';
+  let req = null;
+  _setAiClient({ beta: { messages: { create: async (r) => { req = r; return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ headline: 'h', strengths: [], weaknesses: [], requests: [], actions: [] }) }] }; } } } });
+  await fetch(base + `/api/admin/ai-summary/product:${pr.id}?force=1`, { method: 'POST', headers: admin });
+  assert.match(req.messages[0].content, /판매 경험 없음, 응대 중 느낌/);
+  _setAiClient(null); delete process.env.ANTHROPIC_API_KEY;
+  for (const st of ['응대점', '판매점']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });
+  await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);

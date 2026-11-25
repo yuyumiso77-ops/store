@@ -240,6 +240,7 @@ function summary() {
   const products = db.products.map((p) => {
     const all = db.evaluations.filter((e) => e.productId === p.id);
     const es = all.filter(isDone);
+    const fb = all.filter((e) => isDone(e) || e.status === 'nosale'); // 장단점·의견에는 '판매 경험 없음' 응대 의견도 포함
     const skipped = { nosale: all.filter((e) => e.status === 'nosale').length, notreceived: all.filter((e) => e.status === 'notreceived').length };
     const sales = { good: 0, normal: 0, poor: 0 };
     const display = { shown: 0, stock: 0, none: 0, notReceived: 0 };
@@ -256,17 +257,18 @@ function summary() {
       sales,
       display,
       displayRate: answered ? Math.round((display.shown / answered) * 100) : null,
-      pros: countBy(es.map((e) => e.pros)),
-      cons: countBy(es.map((e) => e.cons)),
+      pros: countBy(fb.map((e) => e.pros)),
+      cons: countBy(fb.map((e) => e.cons)),
       noBuyReasons: countBy(es.map((e) => e.noBuyReasons)),
       sellReasons: countBy(es.map((e) => e.sellReasons || [])),
       gap: gapOf(avg(es.map((e) => e.reaction)), sales, es.length),
       ageGroups: countBy(es.map((e) => e.ageGroups)),
       genders: countBy(es.map((e) => e.genders)),
       missing: es.filter((e) => e.missing).map(({ missing, staff, updatedAt }) => ({ missing, staff, updatedAt })),
-      notes: es
+      notes: fb
         .filter((e) => e.prosNote || e.consNote || e.improvement)
-        .map(({ staff, reaction, sales, prosNote, consNote, improvement, updatedAt }) => ({ staff, reaction, sales, prosNote, consNote, improvement, updatedAt })),
+        .map(({ staff, status, reaction, sales, prosNote, consNote, improvement, updatedAt }) => ({ staff, status: status || 'done', reaction, sales, prosNote, consNote, improvement, updatedAt })),
+      nosaleFeedback: all.filter((e) => e.status === 'nosale' && (e.reaction || e.pros.length || e.cons.length || e.prosNote || e.consNote || e.improvement)).length,
     };
   });
   const active = db.products.filter((p) => p.active).map((p) => p.id);
@@ -535,15 +537,20 @@ function summarySource(key) {
   const product = db.products.find((x) => x.id === id);
   if (!product) return null;
   const es = db.evaluations.filter((e) => e.productId === id && isDone(e));
-  if (!es.length) return null;
+  const ns = db.evaluations.filter((e) => e.productId === id && e.status === 'nosale' && (e.reaction || e.pros.length || e.cons.length || e.prosNote || e.consNote || e.improvement));
+  if (!es.length && !ns.length) return null;
   const ps = summary().products.find((x) => x.id === id);
   const top = (list) => list.slice(0, 6).map((x) => `${x.name} ${x.n}`).join(', ') || '없음';
   const lines = es.filter((e) => e.prosNote || e.consNote || e.improvement || e.missing).map((e) =>
     `- [${e.staff}] 반응 ${OPTIONS.reactions[e.reaction]}, 판매 ${OPTIONS.sales[e.sales]}` +
     (e.prosNote ? ` / 좋은 점: ${e.prosNote}` : '') + (e.consNote ? ` / 아쉬운 점: ${e.consNote}` : '') +
     (e.improvement ? ` / 개선: ${e.improvement}` : '') + (e.missing ? ` / 없던 사이즈·색상: ${e.missing}` : ''));
+  const nsLines = ns.map((e) => `- [${e.staff}] (판매 경험 없음, 응대 중 느낌) ` + (e.reaction ? `반응 ${OPTIONS.reactions[e.reaction]}` : '반응 미선택') +
+    (e.pros.length ? ` / 좋은 점: ${e.pros.join(', ')}` : '') + (e.prosNote ? ` (${e.prosNote})` : '') +
+    (e.cons.length ? ` / 아쉬운 점: ${e.cons.join(', ')}` : '') + (e.consNote ? ` (${e.consNote})` : '') + (e.improvement ? ` / 개선: ${e.improvement}` : ''));
+  const both = [...es, ...ns];
   return {
-    basis: `${es.length}:${es.reduce((a, e) => (e.updatedAt > a ? e.updatedAt : a), '')}`,
+    basis: `${both.length}:${both.reduce((a, e) => (e.updatedAt > a ? e.updatedAt : a), '')}`,
     title: `${product.code} ${product.name} (${typeOf(product) || product.category})`,
     body: [
       `평가 매장 ${es.length}곳, 평균 고객 반응 ${ps.avgReaction}/5, 판매 반응 잘 팔림 ${ps.sales.good}·보통 ${ps.sales.normal}·잘 안 팔림 ${ps.sales.poor}`,
@@ -554,8 +561,9 @@ function summarySource(key) {
       `판매를 막은 요인: ${top(ps.noBuyReasons)}`,
       '',
       lines.length ? `매장 메모:\n${lines.join('\n')}` : '매장 메모: 없음 (위 항목 집계만으로 요약해 주세요)',
+      nsLines.length ? `\n판매 경험은 없지만 고객 응대 중 느낀 반응 (${nsLines.length}곳, 판매 데이터와 구분해서 참고):\n${nsLines.join('\n')}` : '',
     ].join('\n'),
-    count: es.length,
+    count: both.length,
   };
 }
 
@@ -959,6 +967,16 @@ async function handle(req, res) {
     // 판매 경험 없음 / 미입고: 질문 없이 '평가 제외'로 저장 (평균·비율에서 빠짐)
     if (status !== 'done') {
       const blank = { productId: product.id, staff, status, reaction: 0, sales: '', noBuyReasons: [], sellReasons: [], pros: [], prosNote: '', cons: [], consNote: '', missing: '', improvement: '', ageGroups: [], genders: [], updatedAt: now0 };
+      if (status === 'nosale') {
+        // 판매 경험은 없지만 고객 응대하면서 느낀 반응 (모두 선택)
+        const aspects = aspectsFor(product.category);
+        Object.assign(blank, {
+          reaction: intIn(b.reaction, 1, 5) ? b.reaction : 0,
+          pros: pick(b.pros, aspects), prosNote: cleanText(b.prosNote, 500),
+          cons: pick(b.cons, aspects), consNote: cleanText(b.consNote, 500),
+          improvement: cleanText(b.improvement, 500),
+        });
+      }
       const ex = db.evaluations.find((e) => e.productId === product.id && sameName(e.staff, staff));
       const prev = ex ? ex.status || 'done' : null;
       if (ex) { Object.assign(ex, blank); delete ex.auto; }
