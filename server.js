@@ -561,7 +561,7 @@ function summarySource(key) {
       basis: `d${db.displays.length}:${db.displays.reduce((m, d) => (d.updatedAt > m ? d.updatedAt : m), '')}:e${db.evaluations.length}`,
       title: '매장 진열 현황 분석 (SKU = 품번 × 컬러)',
       body: [
-        `체크한 매장 ${a.storeCount}곳, SKU ${a.totalSkus}개, 체크 ${a.totals.checks}건 (진열 ${a.totals.shown}·창고만 ${a.totals.stock}·없음 ${a.totals.none}·미입고 ${a.totals.notReceived}). 진열률은 미입고를 뺀 기준`,
+        `체크한 매장 ${a.storeCount}매장, SKU ${a.totalSkus}개, 체크 ${a.totals.checks}건 (진열 ${a.totals.shown}·창고만 ${a.totals.stock}·없음 ${a.totals.none}·미입고 ${a.totals.notReceived}). 진열률은 미입고를 뺀 기준`,
         '',
         '복종별 진열률:',
         ...a.byType.map((t) => `- ${t.line} ${t.type}: 진열률 ${pct(t.rate)} (진열 ${t.shown}·창고만 ${t.stock}·없음 ${t.none}·미입고 ${t.notReceived}, SKU ${t.skus}개)`),
@@ -573,9 +573,9 @@ function summarySource(key) {
         `진열 재검토(진열 ${DA.highDisplay}% 이상인데 반응·판매 부진): ${g('review')}`,
         `효자 상품(진열 많고 반응·판매 좋음): ${g('star')}`,
         '',
-        '창고에만 있는 매장이 많은 SKU: ' + (a.stockOnly.map((k) => `${k.code}-${k.color} ${k.stock}곳`).join(', ') || '없음'),
-        '미입고 매장이 많은 SKU(배분 검토): ' + (a.notReceived.map((k) => `${k.code}-${k.color} ${k.notReceived}곳`).join(', ') || '없음'),
-        '매장에 없는 곳이 많은 SKU: ' + (a.missing.map((k) => `${k.code}-${k.color} ${k.none}곳`).join(', ') || '없음'),
+        '창고에만 있는 매장이 많은 SKU: ' + (a.stockOnly.map((k) => `${k.code}-${k.color} ${k.stock}매장`).join(', ') || '없음'),
+        '미입고 매장이 많은 SKU(배분 검토): ' + (a.notReceived.map((k) => `${k.code}-${k.color} ${k.notReceived}매장`).join(', ') || '없음'),
+        '진열·재고 모두 없는 매장이 많은 SKU: ' + (a.missing.map((k) => `${k.code}-${k.color} ${k.none}매장`).join(', ') || '없음'),
         '',
         '요약 지침: 이것은 매장 의견이 아니라 진열 데이터 분석입니다. strengths=잘 되고 있는 점, weaknesses=문제점, requests=추가로 확인할 점, actions=영업·VMD가 바로 할 조치로 써 주세요.',
       ].join('\n'),
@@ -591,7 +591,7 @@ function summarySource(key) {
     return {
       basis: `${z.length}:${z.reduce((a, e) => (e.updatedAt > a ? e.updatedAt : a), '')}`,
       title: 'Z-TEC (기능성 라인)에 대한 매장 의견',
-      body: `응답 매장 ${zs.count}곳, 평균 고객 반응 ${zs.avgReaction}/5, 설명 쉬움 ${zs.ease.easy}·보통 ${zs.ease.normal}·어려움 ${zs.ease.hard}\n\n매장 의견:\n${lines.join('\n')}`,
+      body: `응답 매장 ${zs.count}매장, 평균 고객 반응 ${zs.avgReaction}/5, 설명 쉬움 ${zs.ease.easy}·보통 ${zs.ease.normal}·어려움 ${zs.ease.hard}\n\n매장 의견:\n${lines.join('\n')}`,
       count: z.length,
     };
   }
@@ -615,7 +615,7 @@ function summarySource(key) {
     basis: `${both.length}:${both.reduce((a, e) => (e.updatedAt > a ? e.updatedAt : a), '')}`,
     title: `${product.code} ${product.name} (${typeOf(product) || product.category})`,
     body: [
-      `평가 매장 ${es.length}곳, 평균 고객 반응 ${ps.avgReaction}/5, 판매 반응 잘 팔림 ${ps.sales.good}·보통 ${ps.sales.normal}·잘 안 팔림 ${ps.sales.poor}`,
+      `평가 매장 ${es.length}매장, 평균 고객 반응 ${ps.avgReaction}/5, 판매 반응 잘 팔림 ${ps.sales.good}·보통 ${ps.sales.normal}·잘 안 팔림 ${ps.sales.poor}`,
       `매장 진열 체크(컬러별 합계): 진열 ${ps.display.shown}·창고만 ${ps.display.stock}·없음 ${ps.display.none}`,
       `장점으로 꼽힌 항목(횟수): ${top(ps.pros)}`,
       `단점으로 꼽힌 항목(횟수): ${top(ps.cons)}`,
@@ -623,7 +623,7 @@ function summarySource(key) {
       `판매를 막은 요인: ${top(ps.noBuyReasons)}`,
       '',
       lines.length ? `매장 메모:\n${lines.join('\n')}` : '매장 메모: 없음 (위 항목 집계만으로 요약해 주세요)',
-      nsLines.length ? `\n판매 경험은 없지만 고객 응대 중 느낀 반응 (${nsLines.length}곳, 판매 데이터와 구분해서 참고):\n${nsLines.join('\n')}` : '',
+      nsLines.length ? `\n판매 경험은 없지만 고객 응대 중 느낀 반응 (${nsLines.length}매장, 판매 데이터와 구분해서 참고):\n${nsLines.join('\n')}` : '',
     ].join('\n'),
     count: both.length,
   };

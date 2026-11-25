@@ -687,7 +687,7 @@ async function load() {
         },
       }, '🗑'))));
   $('staffBox').replaceChildren(...(stores.length
-    ? [el('span', { class: 'hint' }, `참여 매장 ${stores.length}곳 · 전부 완료 ${full}곳 · 진행 중 ${stores.length - full}곳 `),
+    ? [el('span', { class: 'hint' }, `참여 매장 ${stores.length}매장 · 전부 완료 ${full}매장 · 진행 중 ${stores.length - full}매장 `),
        el('button', { type: 'button', class: 'linkbtn', style: 'padding:0', onclick: (e) => { pills.hidden = !pills.hidden; e.target.textContent = pills.hidden ? '매장별 보기' : '접기'; } }, '매장별 보기'),
        pills]
     : []));
@@ -721,7 +721,7 @@ async function loadStoresTab() {
 }
 function renderStoresTab() {
   const r = SP;
-  $('sListInfo').textContent = r.stores.length ? `(현재 ${r.stores.length}곳 등록)` : '(아직 명단이 없어요)';
+  $('sListInfo').textContent = r.stores.length ? `(현재 ${r.stores.length}매장 등록)` : '(아직 명단이 없어요)';
   if (!r.stores.length) {
     $('sStats').replaceChildren(el('p', { class: 'hint' }, '아직 조사 대상 매장 명단이 없어요. 맨 아래 "매장 명단 올리기"에서 CSV를 올려 주세요.'));
     $('sMgr').replaceChildren(); $('sStatus').replaceChildren(); $('sRows').replaceChildren(); $('sUnknown').replaceChildren();
@@ -729,11 +729,11 @@ function renderStoresTab() {
   }
   const cnt = (st) => r.stores.filter((x) => x.status === st).length;
   $('sStats').replaceChildren(
-    stat(r.stores.length + '곳', '조사 대상 매장'),
-    stat(cnt('done') + '곳', '완료 (진열·평가·Z-TEC 모두)'),
-    stat(cnt('progress') + '곳', '진행 중'),
-    stat(cnt('none') + '곳', '미참여'),
-    stat(r.stores.filter((x) => x.flags.length).length + '곳', '⚠️ 응답 점검 필요'),
+    stat(r.stores.length + '매장', '조사 대상 매장'),
+    stat(cnt('done') + '매장', '완료 (진열·평가·Z-TEC 모두)'),
+    stat(cnt('progress') + '매장', '진행 중'),
+    stat(cnt('none') + '매장', '미참여'),
+    stat(r.stores.filter((x) => x.flags.length).length + '매장', '⚠️ 응답 점검 필요'),
     stat(r.unknown.length + '건', '명단에 없는 이름으로 입력'));
   const mgrs = [...new Set(r.stores.map((x) => x.manager || '담당자 없음'))];
   $('sMgr').replaceChildren(...[['', '전체 담당자'], ...mgrs.map((m) => [m, m])].map(([k, l]) => {
@@ -784,7 +784,7 @@ function remindText() {
     const m = x.manager || '담당자 없음';
     (by[m] = by[m] || []).push(`${x.name}${x.status === 'none' ? '(미참여)' : `(진열 ${x.display}/${r.totalSkus}·평가 ${x.evals}/${r.totalProducts}${x.ztec ? '' : '·Z-TEC 미작성'})`}`);
   });
-  return ['[FJ 진열·반응 체크 미완료 매장]', ...Object.entries(by).map(([m, l]) => `\n▶ ${m} 담당 (${l.length}곳)\n` + l.join('\n')),
+  return ['[FJ 진열·반응 체크 미완료 매장]', ...Object.entries(by).map(([m, l]) => `\n▶ ${m} 담당 (${l.length}매장)\n` + l.join('\n')),
     ...(r.stores.some((x) => x.flags.length) ? ['\n▶ 응답 다시 확인 부탁 매장\n' + r.stores.filter((x) => x.flags.length).map((x) => `${x.name}: ${x.flags.map((f) => f.label).join(', ')}`).join('\n')] : []),
     '\n링크: ' + location.origin + '/?mode=display'].join('\n');
 }
@@ -801,7 +801,7 @@ function renderDisplayTab() {
   const t = r.totals;
   const pct = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '-');
   $('dStats').replaceChildren(
-    stat(r.stores.length + '곳', '체크한 매장'),
+    stat(r.stores.length + '매장', '체크한 매장'),
     stat(r.totalSkus, 'SKU (품번 × 컬러)'),
     stat(pct(t.shown, t.checks - t.notReceived), `전체 진열률(미입고 제외) · 진열 ${t.shown} · 창고 ${t.stock} · 없음 ${t.none}`),
     stat(t.none, "'매장에 없음' 체크 수"),
@@ -812,7 +812,7 @@ function renderDisplayTab() {
     el('span', { class: 'pill' + (s.checked >= r.totalSkus ? ' full' : '') }, `${s.name} ${s.checked}/${r.totalSkus}` + (s.none ? ` · 없음 ${s.none}` : '') + (s.notReceived ? ` · 미입고 ${s.notReceived}` : ''))));
   const full = r.stores.filter((s) => s.checked >= r.totalSkus).length;
   $('dStores').replaceChildren(...(r.stores.length
-    ? [el('span', { class: 'hint' }, `체크 완료 ${full}곳 · 진행 중 ${r.stores.length - full}곳 `),
+    ? [el('span', { class: 'hint' }, `체크 완료 ${full}매장 · 진행 중 ${r.stores.length - full}매장 `),
        el('button', { type: 'button', class: 'linkbtn', style: 'padding:0', onclick: (e) => { pills.hidden = !pills.hidden; e.target.textContent = pills.hidden ? '매장별 보기' : '접기'; } }, '매장별 보기'), pills]
     : [el('span', { class: 'hint' }, '아직 진열 체크한 매장이 없어요. 평가 화면의 📦 진열 체크 탭에서 매장마다 체크해요.')]));
   // 필터
@@ -963,15 +963,15 @@ function notReceivedCard(a) {
     el('h2', { style: 'margin:0 0 4px' }, '🚚 미입고 매장이 많은 SKU'),
     el('p', { class: 'hint', style: 'margin:0 0 8px' }, '한 번도 입고되지 않은 매장이 많은 SKU예요. 배분·RT(재고 이동)를 검토해 보세요. 진열률 계산에서는 빠져요.'),
     a.notReceived.length ? collapsibleList(a.notReceived, 8, (k) => el('li', { class: 'evrow' },
-      el('div', {}, el('b', {}, `${k.code} · ${k.color}`), ` — 미입고 ${k.notReceived}곳 (진열 ${k.shown} · 창고 ${k.stock} · 없음 ${k.none})`, el('div', { class: 'meta' }, k.stores.join(', ')))), 'SKU')
+      el('div', {}, el('b', {}, `${k.code} · ${k.color}`), ` — 미입고 ${k.notReceived}매장 (진열 ${k.shown} · 창고 ${k.stock} · 없음 ${k.none})`, el('div', { class: 'meta' }, k.stores.join(', ')))), 'SKU')
       : el('p', { class: 'hint' }, '미입고로 체크된 SKU가 없어요.'));
 }
 function stockCard(a) {
   return el('div', { class: 'card' },
     el('h2', { style: 'margin:0 0 4px' }, '📦 창고에만 있는 SKU'),
-    el('p', { class: 'hint', style: 'margin:0 0 8px' }, '재고는 있는데 매장에 안 꺼낸 곳이 많은 SKU예요. 진열하면 바로 팔 수 있어요.'),
+    el('p', { class: 'hint', style: 'margin:0 0 8px' }, '재고는 있는데 진열대에 안 꺼낸 매장이 많은 SKU예요. 진열하면 바로 팔 수 있어요.'),
     a.stockOnly.length ? collapsibleList(a.stockOnly, 8, (k) => el('li', { class: 'evrow' },
-      el('div', {}, el('b', {}, `${k.code} · ${k.color}`), ` — 창고만 ${k.stock}곳 (진열 ${k.shown} · 없음 ${k.none})`, el('div', { class: 'meta' }, k.stores.join(', ')))), 'SKU')
+      el('div', {}, el('b', {}, `${k.code} · ${k.color}`), ` — 창고만 ${k.stock}매장 (진열 ${k.shown} · 없음 ${k.none})`, el('div', { class: 'meta' }, k.stores.join(', ')))), 'SKU')
       : el('p', { class: 'hint' }, '창고에만 있는 SKU가 없어요.'));
 }
 function stackBar(sh, st, no) {
@@ -1144,7 +1144,7 @@ async function init() {
       if (ni < 0) throw new Error('첫 줄에 "매장명" 열이 필요해요');
       const g = (r, i) => (i >= 0 ? (r[i] || '').trim() : '');
       const res = await api('/api/admin/stores/import', { method: 'POST', body: JSON.stringify({ rows: rows.map((r) => ({ name: g(r, ni), code: g(r, ci), channel: g(r, chi), manager: g(r, mi) })) }) });
-      $('storeCsvResult').textContent = `✅ ${res.count}곳을 조사 대상으로 등록했어요.` + (res.errors.length ? ` (건너뜀 ${res.errors.length}건: ${res.errors.slice(0, 3).join(' / ')})` : '');
+      $('storeCsvResult').textContent = `✅ ${res.count}매장을 조사 대상으로 등록했어요.` + (res.errors.length ? ` (건너뜀 ${res.errors.length}건: ${res.errors.slice(0, 3).join(' / ')})` : '');
       loadStoresTab();
     } catch (ex) { $('storeCsvResult').textContent = '❌ ' + ex.message; }
   };
