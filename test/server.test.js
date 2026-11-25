@@ -301,6 +301,51 @@ test('진열 체크: 매장 × SKU(컬러) 저장·취소·일괄·집계·CSV',
   assert.ok(!rep2.skus.some((k) => k.sku === '80001'));
 });
 
+test('진열 분석: 확대 후보 / 효자 / 재검토, 복종·매장별, 창고만 SKU', async () => {
+  const rows = [
+    { code: 'AN-EXP', name: 'x', category: '어패럴', type: '스웨터', plc: '70001', plcColors: '70001:BLACK' },
+    { code: 'AN-STAR', name: 'x', category: '어패럴', type: '스웨터', plc: '70002', plcColors: '70002:WHITE' },
+    { code: 'AN-REV', name: 'x', category: '어패럴', type: '팬츠', plc: '70003', plcColors: '70003:GREY' },
+  ];
+  await fetch(base + '/api/admin/products/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows }) });
+  const stores = ['가점', '나점', '다점', '라점'];
+  const ev = (code, reaction, sales) => (async () => {
+    const opt = await (await fetch(base + '/api/options', { headers: staff })).json();
+    const pr = opt.products.find((x) => x.code === code);
+    for (const st of stores) {
+      const body = { productId: pr.id, staff: st, reaction, sales, ...(reaction >= 3 ? { pros: ['디자인'] } : { cons: ['디자인'] }), ...(sales === 'good' ? { sellReasons: ['선물 수요'] } : { noBuyReasons: ['기타'] }) };
+      const r = await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify(body) });
+      assert.ok(r.ok, await r.text());
+    }
+  })();
+  await ev('AN-EXP', 5, 'good');
+  await ev('AN-STAR', 4, 'good');
+  await ev('AN-REV', 2, 'poor');
+  const disp = (store, items) => fetch(base + '/api/display', { method: 'POST', headers: staff, body: JSON.stringify({ store, items }) });
+  for (const [i, st] of stores.entries()) {
+    await disp(st, [
+      { sku: '70001', status: i === 0 ? 'shown' : 'stock' }, // 25% 진열, 창고만 3
+      { sku: '70002', status: 'shown' },
+      { sku: '70003', status: i === 3 ? 'none' : 'shown' }, // 75%
+    ]);
+  }
+  const a = await (await fetch(base + '/api/admin/display-analysis', { headers: admin })).json();
+  const grp = (c) => a.products.find((x) => x.code === c).group;
+  assert.deepStrictEqual([grp('AN-EXP'), grp('AN-STAR'), grp('AN-REV')], ['expand', 'star', 'review']);
+  const sw = a.byType.find((t) => t.type === '스웨터');
+  assert.deepStrictEqual([sw.shown, sw.stock, sw.checks], [5, 3, 8]);
+  assert.strictEqual(a.stockOnly[0].code, 'AN-EXP');
+  assert.strictEqual(a.stockOnly[0].stock, 3);
+  const ra = a.byStore.find((x) => x.name === '라점');
+  assert.deepStrictEqual(ra.noneSkus, [{ code: 'AN-REV', color: 'GREY' }]);
+  // AI 요약 소스
+  delete process.env.ANTHROPIC_API_KEY;
+  assert.strictEqual((await fetch(base + '/api/admin/ai-summary/display', { method: 'POST', headers: admin })).status, 503);
+  for (const st of stores) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });
+  const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  for (const x of s.products.filter((p) => p.code.startsWith('AN-'))) await fetch(base + `/api/admin/products/${x.id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);

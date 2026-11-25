@@ -321,6 +321,53 @@ function displayReport() {
   };
 }
 
+// ---------- 진열 분석 (진열 체크 × 상품 평가) ----------
+const DA = { highDisplay: 70, lowDisplay: 50, goodReaction: 3.5, badReaction: 2.8, ratio: 0.4, minChecks: 3, minEvals: 3 };
+function displayAnalysis() {
+  const rep = displayReport();
+  const rate = (a, b) => (b ? Math.round((a / b) * 100) : null);
+  // 복종별
+  const gmap = new Map();
+  rep.skus.forEach((k) => {
+    const key = `${k.line}|${k.type || k.category}`;
+    if (!gmap.has(key)) gmap.set(key, { line: k.line, type: k.type || k.category, skus: 0, shown: 0, stock: 0, none: 0, checks: 0 });
+    const g = gmap.get(key);
+    g.skus++; g.shown += k.shown; g.stock += k.stock; g.none += k.none; g.checks += k.checked;
+  });
+  const byType = [...gmap.values()].map((g) => ({ ...g, rate: rate(g.shown, g.checks) }))
+    .sort((a, b) => (a.line + a.type).localeCompare(b.line + b.type));
+  // 매장별 (진열률, 없음·창고만 SKU 목록)
+  const idx = skuIndex();
+  const byStore = rep.stores.map((st) => {
+    const mine = db.displays.filter((d) => d.store === st.name && idx.has(d.sku));
+    const list = (status) => mine.filter((d) => d.status === status).map((d) => { const k = idx.get(d.sku); return { code: k.product.code || k.product.name, color: k.color }; });
+    const shown = mine.filter((d) => d.status === 'shown').length;
+    return { name: st.name, checked: mine.length, coverage: rate(mine.length, rep.totalSkus), rate: rate(shown, mine.length), shown, noneSkus: list('none'), stockSkus: list('stock') };
+  }).sort((a, b) => (a.rate ?? 999) - (b.rate ?? 999) || a.name.localeCompare(b.name));
+  // 상품별: 진열률 × 고객 반응 × 판매 반응
+  const products = summary().products.filter((p) => p.active).map((p) => {
+    const checks = p.display.shown + p.display.stock + p.display.none;
+    const good = p.count ? p.sales.good / p.count : null;
+    const poor = p.count ? p.sales.poor / p.count : null;
+    const enough = checks >= DA.minChecks && p.count >= DA.minEvals;
+    let group = '';
+    if (enough) {
+      if (p.displayRate < DA.lowDisplay && (p.avgReaction >= DA.goodReaction || good >= DA.ratio)) group = 'expand';
+      else if (p.displayRate >= DA.highDisplay && p.avgReaction >= DA.goodReaction && good >= DA.ratio) group = 'star';
+      else if (p.displayRate >= DA.highDisplay && (poor >= DA.ratio || p.avgReaction < DA.badReaction)) group = 'review';
+    }
+    return {
+      id: p.id, code: p.code, name: p.name, line: p.line, type: p.type, imageUrl: p.imageUrl,
+      displayRate: p.displayRate, checks, display: p.display, avgReaction: p.avgReaction, evals: p.count,
+      goodPct: good == null ? null : Math.round(good * 100), poorPct: poor == null ? null : Math.round(poor * 100), group,
+    };
+  });
+  // 창고에만 있는 SKU (진열하면 바로 팔 수 있는 재고), 매장에 없는 SKU
+  const topBy = (field) => rep.skus.filter((k) => k[field] > 0).sort((a, b) => b[field] - a[field] || (a.code + a.color).localeCompare(b.code + b.color)).slice(0, 15)
+    .map(({ sku, code, color, name, line, type, imageUrl, shown, stock, none, checked, stores }) => ({ sku, code, color, name, line, type, imageUrl, shown, stock, none, checked, stores: stores[field] }));
+  return { thresholds: DA, totals: rep.totals, storeCount: rep.stores.length, totalSkus: rep.totalSkus, byType, byStore, products, stockOnly: topBy('stock'), missing: topBy('none') };
+}
+
 // ---------- AI 의견 요약 (Claude API) ----------
 // Railway Variables 에 ANTHROPIC_API_KEY 를 넣으면 켜짐
 let aiClient = null;
@@ -385,6 +432,35 @@ async function runSummary(key, title, body) {
 }
 // 요약할 내용과 '기준'(평가 수·최근 수정 시각)을 만든다. 기준이 바뀌면 다시 요약 필요
 function summarySource(key) {
+  if (key === 'display') {
+    if (!db.displays.length) return null;
+    const a = displayAnalysis();
+    const pct = (v) => (v == null ? '-' : v + '%');
+    const g = (k) => a.products.filter((p) => p.group === k).map((p) => `${p.code}(${p.type}, 진열 ${pct(p.displayRate)}, 반응 ${p.avgReaction}, 잘 팔림 ${pct(p.goodPct)})`).join('; ') || '없음';
+    return {
+      basis: `d${db.displays.length}:${db.displays.reduce((m, d) => (d.updatedAt > m ? d.updatedAt : m), '')}:e${db.evaluations.length}`,
+      title: '매장 진열 현황 분석 (SKU = 품번 × 컬러)',
+      body: [
+        `체크한 매장 ${a.storeCount}곳, SKU ${a.totalSkus}개, 체크 ${a.totals.checks}건 (진열 ${a.totals.shown}·창고만 ${a.totals.stock}·없음 ${a.totals.none})`,
+        '',
+        '복종별 진열률:',
+        ...a.byType.map((t) => `- ${t.line} ${t.type}: 진열률 ${pct(t.rate)} (진열 ${t.shown}·창고만 ${t.stock}·없음 ${t.none}, SKU ${t.skus}개)`),
+        '',
+        '진열률 낮은 매장 (하위 10):',
+        ...a.byStore.slice(0, 10).map((s) => `- ${s.name}: 진열률 ${pct(s.rate)}, 체크 ${s.checked}/${a.totalSkus}, 없음 ${s.noneSkus.length}·창고만 ${s.stockSkus.length}`),
+        '',
+        `진열 확대 후보(반응·판매 좋은데 진열 ${DA.lowDisplay}% 미만): ${g('expand')}`,
+        `진열 재검토(진열 ${DA.highDisplay}% 이상인데 반응·판매 부진): ${g('review')}`,
+        `효자 상품(진열 많고 반응·판매 좋음): ${g('star')}`,
+        '',
+        '창고에만 있는 매장이 많은 SKU: ' + (a.stockOnly.map((k) => `${k.code}-${k.color} ${k.stock}곳`).join(', ') || '없음'),
+        '매장에 없는 곳이 많은 SKU: ' + (a.missing.map((k) => `${k.code}-${k.color} ${k.none}곳`).join(', ') || '없음'),
+        '',
+        '요약 지침: 이것은 매장 의견이 아니라 진열 데이터 분석입니다. strengths=잘 되고 있는 점, weaknesses=문제점, requests=추가로 확인할 점, actions=영업·VMD가 바로 할 조치로 써 주세요.',
+      ].join('\n'),
+      count: db.displays.length,
+    };
+  }
   if (key === 'ztec') {
     const z = db.ztec;
     if (!z.length) return null;
@@ -456,6 +532,7 @@ async function handle(req, res) {
 
     // ---- 진열 현황 ----
     if (m === 'GET' && p === '/api/admin/display') return send(res, 200, displayReport());
+    if (m === 'GET' && p === '/api/admin/display-analysis') return send(res, 200, displayAnalysis());
     if (m === 'GET' && (p === '/api/admin/display-matrix.csv' || p === '/api/admin/display-summary.csv')) {
       const rep = displayReport();
       const skus = rep.skus.slice().sort((a, b) => (a.code + a.sku).localeCompare(b.code + b.sku));
@@ -514,7 +591,7 @@ async function handle(req, res) {
     }
 
     // AI 의견 요약: GET = 저장된 요약, POST = 새로 요약
-    const sm = p.match(/^\/api\/admin\/ai-summary\/(ztec|product:[\w-]+)$/);
+    const sm = p.match(/^\/api\/admin\/ai-summary\/(ztec|display|product:[\w-]+)$/);
     if (sm) {
       const key = sm[1];
       const src = summarySource(key);

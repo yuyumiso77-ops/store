@@ -31,6 +31,12 @@
       <div class="stats" id="dStats"></div>
       <div id="dStores" style="margin-top:12px"></div>
     </div>
+    <div class="chips bold-chips" id="dView" style="margin-bottom:12px">
+      <button type="button" data-v="analysis">📈 분석</button>
+      <button type="button" data-v="list">📋 SKU 목록</button>
+    </div>
+    <div id="dAnalysis"></div>
+    <div id="dListView">
     <div class="chips bold-chips" id="dLineF" style="margin-bottom:8px"></div>
     <div class="row" style="align-items:center;margin-bottom:8px">
       <div class="chips" id="dTypeF" style="flex:1 1 auto"></div>
@@ -48,6 +54,7 @@
       </label>
     </div>
     <div id="dRows"></div>
+    </div>
   </div>
 
   <div id="tabAnalysis">
@@ -163,7 +170,9 @@ function rank(title, list, total) {
 }
 
 // ---- AI 의견 요약 블록 (key: 'ztec' 또는 'product:<id>') ----
-function aiBlock(key) {
+function aiBlock(key, opt = {}) {
+  const titles = opt.titles || ['👍 좋은 점', '👎 아쉬운 점', '💡 요청·아이디어', '✅ 검토할 조치'];
+  const unit = opt.unit || '평가';
   const body = el('div');
   const btn = el('button', { type: 'button', class: 'btn ai-btn' }, '🤖 요약 만들기');
   const draw = (v) => {
@@ -174,14 +183,14 @@ function aiBlock(key) {
       return;
     }
     const sm = v.summary;
-    if (!sm) { btn.textContent = '🤖 요약 만들기'; body.append(el('p', { class: 'hint' }, '버튼을 누르면 매장 의견을 AI가 한눈에 정리해요. (10~30초)')); return; }
+    if (!sm) { btn.textContent = '🤖 요약 만들기'; body.append(el('p', { class: 'hint' }, opt.empty || '버튼을 누르면 매장 의견을 AI가 한눈에 정리해요. (10~30초)')); return; }
     btn.textContent = v.stale ? '🔄 새 평가 반영해서 다시 요약' : '🔄 다시 요약';
     const r = sm.result;
     const sec = (t, list) => (list && list.length ? el('div', { class: 'ai-sec' }, el('b', {}, t), el('ul', {}, list.map((x) => el('li', {}, x)))) : '');
     body.append(
       el('p', { class: 'ai-head' }, r.headline),
-      el('div', { class: 'ai-grid' }, sec('👍 좋은 점', r.strengths), sec('👎 아쉬운 점', r.weaknesses), sec('💡 요청·아이디어', r.requests), sec('✅ 검토할 조치', r.actions)),
-      el('p', { class: 'hint' }, `평가 ${sm.count}건 기준 · ${new Date(sm.at).toLocaleString('ko-KR')} 요약` + (v.stale ? ' · ⚠️ 그 뒤 새 평가가 있어요' : '') + ' · AI 요약은 틀릴 수 있어요'));
+      el('div', { class: 'ai-grid' }, sec(titles[0], r.strengths), sec(titles[1], r.weaknesses), sec(titles[2], r.requests), sec(titles[3], r.actions)),
+      el('p', { class: 'hint' }, `${unit} ${sm.count}건 기준 · ${new Date(sm.at).toLocaleString('ko-KR')} 요약` + (v.stale ? ' · ⚠️ 그 뒤 새 평가가 있어요' : '') + ' · AI 요약은 틀릴 수 있어요'));
   };
   btn.onclick = async () => {
     const old = btn.textContent;
@@ -197,7 +206,7 @@ function aiBlock(key) {
     }
   };
   api(`/api/admin/ai-summary/${key}`).then(draw).catch(() => {});
-  return el('div', { class: 'ai' }, el('div', { class: 'ai-top' }, el('div', { class: 'q', style: 'margin:0' }, '🤖 AI 의견 요약'), btn), body);
+  return el('div', { class: 'ai' }, el('div', { class: 'ai-top' }, el('div', { class: 'q', style: 'margin:0' }, opt.heading || '🤖 AI 의견 요약'), btn), body);
 }
 
 // ---- Z-TEC 매장 의견 ----
@@ -676,6 +685,9 @@ async function loadDisplayTab() {
   $('dRows').replaceChildren(el('p', { class: 'hint' }, '불러오는 중…'));
   DREP = await api('/api/admin/display');
   renderDisplayTab();
+  let v = 'analysis';
+  try { v = localStorage.getItem('dView') || 'analysis'; } catch {}
+  setDView(v);
 }
 function renderDisplayTab() {
   const r = DREP;
@@ -743,6 +755,141 @@ function renderDisplayTab() {
     open(DOPEN.has(k.sku));
     return el('div', { class: 'prow-wrap' }, row, det);
   }));
+}
+
+// ---- 진열 분석 (📈) ----
+let DVIEW = 'analysis';
+const SVGNS = 'http://www.w3.org/2000/svg';
+const sv = (tag, attrs = {}, ...kids) => {
+  const n = document.createElementNS(SVGNS, tag);
+  Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v));
+  kids.forEach((c) => n.append(c instanceof Node ? c : document.createTextNode(String(c))));
+  return n;
+};
+const GROUPS = {
+  expand: { label: '진열 확대 후보', desc: '고객 반응·판매가 좋은데 진열이 적어요', color: 'var(--s1)' },
+  star: { label: '효자 상품', desc: '진열도 많고 반응·판매도 좋아요', color: 'var(--s2)' },
+  review: { label: '진열 재검토', desc: '진열은 많은데 반응·판매가 부진해요', color: 'var(--s3)' },
+};
+const pctS = (v) => (v == null ? '-' : v + '%');
+function setDView(v) {
+  DVIEW = v === 'list' ? 'list' : 'analysis';
+  $('dView').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === DVIEW));
+  $('dAnalysis').hidden = DVIEW !== 'analysis';
+  $('dListView').hidden = DVIEW !== 'list';
+  try { localStorage.setItem('dView', DVIEW); } catch {}
+  if (DVIEW === 'analysis') loadDisplayAnalysis();
+}
+async function loadDisplayAnalysis() {
+  $('dAnalysis').replaceChildren(el('p', { class: 'hint' }, '분석 중…'));
+  const a = await api('/api/admin/display-analysis');
+  if (!a.totals.checks) {
+    $('dAnalysis').replaceChildren(el('div', { class: 'card hint' }, '아직 진열 체크 데이터가 없어요. 매장들이 📦 진열 체크를 하면 여기에서 분석돼요.'));
+    return;
+  }
+  $('dAnalysis').replaceChildren(
+    el('div', { class: 'card' }, aiBlock('display', { heading: '🤖 AI 진열 분석 요약', unit: '진열 체크', titles: ['👍 잘 되고 있는 점', '⚠️ 문제점', '🔍 추가로 확인할 점', '✅ 바로 할 조치'], empty: '버튼을 누르면 아래 진열 분석 전체를 AI가 정리하고 조치를 제안해요. (10~30초)' })),
+    matrixCard(a), stockCard(a), typeCard(a), storeCard(a));
+}
+// 진열률 × 고객 반응 산점도 + 그룹별 목록
+function matrixCard(a) {
+  const T = a.thresholds;
+  const pts = a.products.filter((p) => p.checks >= T.minChecks && p.evals >= T.minEvals && p.displayRate != null && p.avgReaction != null);
+  const W = 640, H = 340, L = 46, R = 16, Tp = 16, B = 40;
+  const x = (v) => L + (v / 100) * (W - L - R);
+  const y = (v) => Tp + ((5 - v) / 4) * (H - Tp - B);
+  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'scatter', role: 'img', 'aria-label': '상품별 진열률과 평균 고객 반응 산점도' });
+  // 축·눈금
+  [0, 25, 50, 75, 100].forEach((v) => {
+    svg.append(sv('line', { x1: x(v), x2: x(v), y1: Tp, y2: H - B, class: 'grid' }));
+    svg.append(sv('text', { x: x(v), y: H - B + 16, 'text-anchor': 'middle', class: 'tick' }, v + '%'));
+  });
+  [1, 2, 3, 4, 5].forEach((v) => {
+    svg.append(sv('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: 'grid' }));
+    svg.append(sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end', class: 'tick' }, v));
+  });
+  // 기준선: 진열 50% / 70%
+  [T.lowDisplay, T.highDisplay].forEach((v) => {
+    svg.append(sv('line', { x1: x(v), x2: x(v), y1: Tp, y2: H - B, class: 'ref' }));
+    svg.append(sv('text', { x: x(v) + 4, y: Tp + 12, class: 'tick' }, `진열 ${v}%`));
+  });
+  svg.append(sv('text', { x: (L + W - R) / 2, y: H - 6, 'text-anchor': 'middle', class: 'axis' }, '진열률 (진열 체크 기준) →'));
+  svg.append(sv('text', { x: 12, y: (Tp + H - B) / 2, 'text-anchor': 'middle', class: 'axis', transform: `rotate(-90 12 ${(Tp + H - B) / 2})` }, '평균 고객 반응 →'));
+  // 점
+  const tip = el('div', { class: 'viztip', hidden: '' });
+  pts.forEach((p) => {
+    const g = GROUPS[p.group];
+    const c = sv('circle', { cx: x(p.displayRate), cy: y(p.avgReaction), r: 6, fill: g ? g.color : 'var(--muted)', 'fill-opacity': g ? 0.95 : 0.45, stroke: 'var(--card)', 'stroke-width': 2, tabindex: 0 });
+    const show = (e) => {
+      tip.hidden = false;
+      tip.replaceChildren(el('b', {}, `${p.code}`), el('div', {}, p.name), el('div', {}, `진열률 ${pctS(p.displayRate)} · 반응 ${p.avgReaction} · 잘 팔림 ${pctS(p.goodPct)}`), g ? el('div', { class: 'hint' }, g.label) : '');
+      const box = svg.getBoundingClientRect();
+      tip.style.left = Math.min(box.width - 200, (x(p.displayRate) / W) * box.width + 12) + 'px';
+      tip.style.top = (y(p.avgReaction) / H) * box.height - 10 + 'px';
+    };
+    c.addEventListener('mouseenter', show); c.addEventListener('focus', show);
+    c.addEventListener('mouseleave', () => (tip.hidden = true)); c.addEventListener('blur', () => (tip.hidden = true));
+    // 넓은 터치 영역
+    const hit = sv('circle', { cx: x(p.displayRate), cy: y(p.avgReaction), r: 12, fill: 'transparent' });
+    hit.addEventListener('mouseenter', show); hit.addEventListener('mouseleave', () => (tip.hidden = true)); hit.addEventListener('click', show);
+    svg.append(c, hit);
+  });
+  const legend = el('div', { class: 'vlegend' }, Object.values(GROUPS).map((g) => el('span', {}, el('i', { style: `background:${g.color}` }), g.label)),
+    el('span', {}, el('i', { style: 'background:var(--muted);opacity:.45' }), '그 외'));
+  const lists = el('div', { class: 'glists' }, Object.entries(GROUPS).map(([k, g]) => {
+    const ps = a.products.filter((p) => p.group === k).sort((p, q) => (k === 'review' ? q.displayRate - p.displayRate : p.displayRate - q.displayRate));
+    return el('div', { class: 'glist' },
+      el('div', { class: 'ghead2' }, el('i', { style: `background:${g.color}` }), el('b', {}, `${g.label} ${ps.length}`)),
+      el('div', { class: 'hint' }, g.desc),
+      ps.length ? collapsibleList(ps, 6, (p) => el('li', {},
+        p.imageUrl ? el('img', { src: p.imageUrl, alt: '', loading: 'lazy' }) : el('span', { class: 'noimg mini-img' }, ''),
+        el('div', {}, el('b', {}, p.code), el('small', {}, `진열 ${pctS(p.displayRate)} · 반응 ${p.avgReaction} · 잘 팔림 ${pctS(p.goodPct)}`))), '상품') : el('p', { class: 'hint' }, '해당 상품 없음'));
+  }));
+  return el('div', { class: 'card' },
+    el('h2', { style: 'margin:0 0 4px' }, '진열 × 고객 반응'),
+    el('p', { class: 'hint', style: 'margin:0 0 8px' }, `점 하나가 상품 하나예요 (진열 체크 ${T.minChecks}건·평가 ${T.minEvals}건 이상인 상품 ${pts.length}개). 진열 ${T.lowDisplay}% 미만인데 반응 ${T.goodReaction} 이상 또는 '잘 팔림' ${Math.round(T.ratio * 100)}% 이상이면 확대 후보, 진열 ${T.highDisplay}% 이상이면서 반응·판매가 둘 다 좋으면 효자, '잘 안 팔림' ${Math.round(T.ratio * 100)}% 이상이거나 반응 ${T.badReaction} 미만이면 재검토로 분류해요.`),
+    legend, el('div', { class: 'scatter-wrap' }, svg, tip), lists);
+}
+function stockCard(a) {
+  return el('div', { class: 'card' },
+    el('h2', { style: 'margin:0 0 4px' }, '📦 창고에만 있는 SKU'),
+    el('p', { class: 'hint', style: 'margin:0 0 8px' }, '재고는 있는데 매장에 안 꺼낸 곳이 많은 SKU예요. 진열하면 바로 팔 수 있어요.'),
+    a.stockOnly.length ? collapsibleList(a.stockOnly, 8, (k) => el('li', { class: 'evrow' },
+      el('div', {}, el('b', {}, `${k.code} · ${k.color}`), ` — 창고만 ${k.stock}곳 (진열 ${k.shown} · 없음 ${k.none})`, el('div', { class: 'meta' }, k.stores.join(', ')))), 'SKU')
+      : el('p', { class: 'hint' }, '창고에만 있는 SKU가 없어요.'));
+}
+function stackBar(sh, st, no) {
+  const n = sh + st + no;
+  const w = (v) => (n ? (v / n) * 100 : 0);
+  return n ? el('div', { class: 'sbar' }, el('span', { class: 'g', style: `width:${w(sh)}%` }), el('span', { class: 'n', style: `width:${w(st)}%` }), el('span', { class: 'p', style: `width:${w(no)}%` })) : el('div', { class: 'sbar empty' });
+}
+function typeCard(a) {
+  const multi = new Set(a.byType.map((t) => t.line)).size > 1;
+  return el('div', { class: 'card' },
+    el('h2', { style: 'margin:0 0 8px' }, '복종별 진열률'),
+    el('div', { class: 'hint', style: 'margin-bottom:6px' }, '막대: 진열 · 창고만 · 없음 (체크 수 기준)'),
+    el('div', { class: 'brows' }, a.byType.map((t) => el('div', { class: 'brow' },
+      el('span', { class: 'blabel' }, (multi ? t.line + ' · ' : '') + t.type),
+      stackBar(t.shown, t.stock, t.none),
+      el('b', { class: t.rate != null && t.rate < 50 ? 'lowtxt' : '' }, pctS(t.rate)),
+      el('small', { class: 'hint' }, `SKU ${t.skus} · 진열 ${t.shown} · 창고 ${t.stock} · 없음 ${t.none}`)))));
+}
+function storeCard(a) {
+  const rows = a.byStore.map((s) => {
+    const det = el('div', { class: 'sdetail', hidden: '' },
+      el('div', { class: 'sgroup' }, el('b', { class: 'tp' }, `없음 ${s.noneSkus.length}`), el('div', { class: 'hint' }, s.noneSkus.map((k) => `${k.code}-${k.color}`).join(', ') || '-')),
+      el('div', { class: 'sgroup' }, el('b', { class: 'tn' }, `창고만 ${s.stockSkus.length}`), el('div', { class: 'hint' }, s.stockSkus.map((k) => `${k.code}-${k.color}`).join(', ') || '-')));
+    const row = el('div', { class: 'brow clickable', role: 'button', tabindex: '0', onclick: () => { det.hidden = !det.hidden; row.classList.toggle('open', !det.hidden); } },
+      el('span', { class: 'blabel' }, s.name),
+      stackBar(s.shown, s.stockSkus.length, s.noneSkus.length),
+      el('b', { class: s.rate != null && s.rate < 50 ? 'lowtxt' : '' }, pctS(s.rate)),
+      el('small', { class: 'hint' }, `체크 ${s.checked}/${a.totalSkus} (${pctS(s.coverage)}) · 없음 ${s.noneSkus.length} · 창고 ${s.stockSkus.length}`));
+    return el('div', {}, row, det);
+  });
+  return el('div', { class: 'card' },
+    el('h2', { style: 'margin:0 0 8px' }, '매장별 진열률'),
+    el('div', { class: 'hint', style: 'margin-bottom:6px' }, '진열률 낮은 매장부터 보여요. 매장을 누르면 없는·창고만 있는 SKU가 나와요.'),
+    el('div', { class: 'brows' }, rows.length > 12 ? collapsibleList(rows.map((r) => ({ r })), 12, (o) => el('li', { style: 'list-style:none;padding:0;border:none' }, o.r), '매장') : rows));
 }
 
 let UPLOADING = false;
@@ -859,6 +1006,7 @@ async function init() {
   $('adminTabs').querySelectorAll('button').forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
   $('dSearchA').oninput = () => DREP && renderDisplayTab();
   $('dSort').onchange = () => DREP && renderDisplayTab();
+  $('dView').querySelectorAll('button').forEach((b) => (b.onclick = () => setDView(b.dataset.v)));
   let t0 = 'analysis';
   try { t0 = localStorage.getItem('adminTab') || 'analysis'; } catch {}
   setTab(t0);
