@@ -382,6 +382,39 @@ function syncEvalFromDisplay(store, productIds) {
 // 매장명 비교: 공백·대소문자 무시, 끝의 '백화점'·'점' 무시 (롯데잠실점 = 롯데잠실)
 const storeKey = (n) => String(n || '').toLowerCase().replace(/\s+/g, '').replace(/백화점$/, '').replace(/점$/, '');
 const matchStore = (name) => { const k = storeKey(name); return k ? db.stores.find((s) => storeKey(s.name) === k) : null; };
+// 응답 품질 점검 기준 (성의 없는 응답 의심 신호)
+const QA = { minEvals: 5, sameRatio: 0.8, fastSec: 15, skipRatio: 0.5, minDisplay: 20, dispSameRatio: 0.95, minText: 5 };
+function qualityFlags(ev, ds) {
+  const flags = [];
+  const done = ev.filter(isDone);
+  if (done.length >= QA.minEvals) {
+    const cnt = {};
+    done.forEach((e) => { const k = `${e.reaction}|${e.sales}`; cnt[k] = (cnt[k] || 0) + 1; });
+    const top = Math.max(...Object.values(cnt));
+    if (top / done.length >= QA.sameRatio) flags.push({ code: 'same', label: '같은 답 반복', detail: `평가한 ${done.length}개 중 ${top}개가 고객 반응·판매 반응이 똑같아요` });
+    const texts = done.filter((e) => [e.prosNote, e.consNote, e.improvement, e.missing].some((t) => String(t || '').trim().length >= QA.minText)).length;
+    if (!texts) flags.push({ code: 'notext', label: '서술 의견 없음', detail: `평가한 ${done.length}개 모두 좋은 점·아쉬운 점·개선 의견을 쓰지 않았어요` });
+    const ts = done.map((e) => Date.parse(e.createdAt || e.updatedAt)).filter(Number.isFinite).sort((a, b) => a - b);
+    const gaps = ts.slice(1).map((t, i) => (t - ts[i]) / 1000).filter((g) => g < 30 * 60); // 30분 넘게 쉰 건 제외
+    if (gaps.length >= QA.minEvals - 1) {
+      const med = gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+      if (med < QA.fastSec) flags.push({ code: 'fast', label: '너무 빠른 평가', detail: `상품 하나 평가에 보통 ${Math.round(med)}초밖에 안 걸렸어요` });
+    }
+  }
+  const skipped = ev.length - done.length;
+  if (ev.length >= QA.minEvals && skipped / ev.length >= QA.skipRatio) {
+    const nr = ev.filter((e) => e.status === 'notreceived').length;
+    flags.push({ code: 'skip', label: '평가 제외 많음', detail: `${ev.length}개 중 ${skipped}개를 '판매 안 함'(${skipped - nr})·'미입고'(${nr})로 넘겼어요` });
+  }
+  if (ds.length >= QA.minDisplay) {
+    const cnt = {};
+    ds.forEach((d) => (cnt[d.status] = (cnt[d.status] || 0) + 1));
+    const [st, n] = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
+    const L = { shown: '진열', stock: '재고만', none: '미진열', notReceived: '미입고' };
+    if (n / ds.length >= QA.dispSameRatio) flags.push({ code: 'dispSame', label: '진열 체크 일괄 입력', detail: `진열 체크 ${ds.length}개 중 ${n}개가 전부 '${L[st] || st}'예요 (실제로 그런지 확인 필요)` });
+  }
+  return flags;
+}
 function storeProgress() {
   const active = db.products.filter((p) => p.active);
   const activeIds = new Set(active.map((p) => p.id));
@@ -396,7 +429,7 @@ function storeProgress() {
     const last = [...ev, ...ds, ...(zt ? [zt] : [])].reduce((m, x) => (x.updatedAt > m ? x.updatedAt : m), '');
     const names = [...new Set([...ev.map((e) => e.staff), ...ds.map((d) => d.store), ...(zt ? [zt.store] : [])])];
     const status = !evals && !display && !zt ? 'none' : evals >= active.length && display >= totalSkus && zt ? 'done' : 'progress';
-    return { ...st, evals, evalsDone: ev.filter(isDone).length, skipped: evals - ev.filter(isDone).length, display, ztec: !!zt, last, status, names };
+    return { ...st, evals, evalsDone: ev.filter(isDone).length, skipped: evals - ev.filter(isDone).length, display, ztec: !!zt, last, status, names, flags: qualityFlags(ev, ds) };
   });
   // 명단에 없는 이름으로 입력된 데이터
   const seen = new Map();
@@ -627,6 +660,17 @@ async function handle(req, res) {
 
     // ---- 조사 대상 매장 ----
     if (m === 'GET' && p === '/api/admin/store-progress') return send(res, 200, storeProgress());
+    if (m === 'GET' && p === '/api/admin/store-answers') {
+      const k = storeKey(url.searchParams.get('name'));
+      const byId = new Map(db.products.map((x) => [x.id, x]));
+      const evals = db.evaluations.filter((e) => storeKey(e.staff) === k).map((e) => {
+        const pr = byId.get(e.productId) || {};
+        return { product: pr.name || e.productId, code: pr.code || '', status: e.status || 'done', reaction: e.reaction || 0, sales: OPTIONS.sales[e.sales] || '',
+          text: [e.prosNote, e.consNote, e.improvement, e.missing].map((t) => String(t || '').trim()).filter(Boolean).join(' / '), at: e.createdAt || e.updatedAt };
+      }).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      const zt = db.ztec.find((z) => storeKey(z.store) === k) || null;
+      return send(res, 200, { evals, ztec: zt && { reaction: zt.reaction, good: zt.good, bad: zt.bad, suggestion: zt.suggestion } });
+    }
     if (m === 'POST' && p === '/api/admin/stores/import') {
       const b = await readBody(req, 256 * 1024);
       const rows = Array.isArray(b.rows) ? b.rows : [];

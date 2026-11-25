@@ -483,6 +483,24 @@ test('조사 대상 매장 명단·참여 현황', async () => {
   await fetch(base + `/api/admin/products/${prod.id}`, { method: 'DELETE', headers: admin });
 });
 
+test('응답 품질 점검: 같은 답 반복·의견 없음·너무 빠름', async () => {
+  await fetch(base + '/api/admin/stores/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows: [{ name: '현대판교' }, { name: '롯데본점' }] }) });
+  const ids = [];
+  for (let i = 0; i < 6; i++) ids.push((await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '점검 상품' + i, category: '용품' }) })).json()).id);
+  const ev = (store, productId, b) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId, staff: store, display: 'shown', ...b }) });
+  for (const id of ids) await ev('현대판교점', id, { reaction: 3, sales: 'normal', pros: ['디자인'], cons: ['가격(가치 대비)'], noBuyReasons: ['기타'], sellReasons: ['기타'] });
+  for (const [i, id] of ids.entries()) await ev('롯데본점', id, i % 2 ? { reaction: 5, sales: 'good', pros: ['디자인'], sellReasons: ['기타'], prosNote: '색감이 좋다는 반응이 많았어요' } : { status: 'nosale' });
+  const pr = await (await fetch(base + '/api/admin/store-progress', { headers: admin })).json();
+  const codes = (n) => pr.stores.find((x) => x.name === n).flags.map((f) => f.code).sort();
+  assert.deepStrictEqual(codes('현대판교'), ['fast', 'notext', 'same']);
+  assert.deepStrictEqual(codes('롯데본점'), ['skip']);
+  const ans = await (await fetch(base + '/api/admin/store-answers?name=' + encodeURIComponent('롯데본점'), { headers: admin })).json();
+  assert.strictEqual(ans.evals.length, 6);
+  assert.ok(ans.evals.some((e) => e.text.includes('색감')));
+  for (const st of ['현대판교점', '롯데본점']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });
+  for (const id of ids) await fetch(base + `/api/admin/products/${id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);

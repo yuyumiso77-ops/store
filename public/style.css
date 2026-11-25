@@ -332,3 +332,10 @@ body:not([data-mode="display"]) .mode-display { display: none !important; }
 .tag.st-done { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 760px) { .strow { grid-template-columns: 1fr 1fr; } .strow .pc.name { grid-column: 1 / -1; } }
 .warn-text { color: var(--danger); font-weight: 600; }
+.strow .qa { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
+.strow .qa small { color: var(--muted); }
+.linklike { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: .85rem; cursor: pointer; align-self: flex-start; }
+.answers { overflow-x: auto; margin-top: 6px; }
+.answers table { border-collapse: collapse; width: 100%; font-size: .82rem; }
+.answers th, .answers td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
+.answers td:first-child { white-space: nowrap; color: var(--muted); }
