@@ -287,7 +287,7 @@ test('진열 체크: 매장 × SKU(컬러) 저장·취소·일괄·집계·CSV',
   // 상품 표의 진열률도 진열 체크에서 계산
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
   const pr = s.products.find((x) => x.code === 'DSP-1');
-  assert.deepStrictEqual([pr.display, pr.displayRate], [{ shown: 1, stock: 1, none: 1 }, 33]);
+  assert.deepStrictEqual([pr.display, pr.displayRate], [{ shown: 1, stock: 1, none: 1, notReceived: 0 }, 33]);
   const mx = await (await fetch(base + '/api/admin/display-matrix.csv', { headers: admin })).text();
   assert.match(mx, /DSP-1-BLACK/);
   assert.match(mx, /"B점","\d+\/\d+".*"진열"/);
@@ -355,6 +355,46 @@ test('검색엔진 차단: robots.txt, X-Robots-Tag, meta', async () => {
   assert.match(page.headers.get('x-robots-tag'), /noindex/);
   assert.match(await page.text(), /<meta name="robots" content="noindex/);
   assert.match((await fetch(base + '/logo.png')).headers.get('x-robots-tag'), /noimageindex/);
+});
+
+test('평가 제외(판매 경험 없음·미입고)와 진열 미입고', async () => {
+  const imp = await (await fetch(base + '/api/admin/products/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows: [{ code: 'SKIP-1', name: 'x', category: '어패럴', plc: '60001 60002', plcColors: '60001:BLACK 60002:WHITE' }] }) })).json();
+  assert.strictEqual(imp.created, 1);
+  const opt = await (await fetch(base + '/api/options', { headers: staff })).json();
+  const pr = opt.products.find((x) => x.code === 'SKIP-1');
+  const post = (b) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: pr.id, ...b }) });
+  // 정상 평가 1건 + 판매 경험 없음 1건 + 미입고 1건
+  assert.strictEqual((await post({ staff: '가점', reaction: 4, pros: ['디자인'], sales: 'good', sellReasons: ['선물 수요'] })).status, 201);
+  assert.strictEqual((await post({ staff: '나점', status: 'nosale' })).status, 201); // 질문 없이 저장
+  assert.strictEqual((await post({ staff: '다점', status: 'notreceived' })).status, 201);
+  assert.strictEqual((await post({ staff: '라점', status: 'x' })).status, 400);
+  // 평가했던 매장이 '판매 경험 없음'으로 바꾸면 기존 답은 지워짐
+  assert.strictEqual((await post({ staff: '가점', status: 'nosale' })).status, 200);
+  const mine = await (await fetch(base + '/api/evaluations/mine?staff=' + encodeURIComponent('가점'), { headers: staff })).json();
+  assert.deepStrictEqual([mine[0].status, mine[0].reaction, mine[0].pros], ['nosale', 0, []]);
+  await post({ staff: '가점', reaction: 4, pros: ['디자인'], sales: 'good', sellReasons: ['선물 수요'] }); // 다시 평가
+  let s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  let x = s.products.find((p) => p.id === pr.id);
+  assert.deepStrictEqual([x.count, x.avgReaction, x.skipped], [1, 4, { nosale: 1, notreceived: 1 }]); // 평균엔 1건만
+  const csv = await (await fetch(base + '/api/admin/evaluations.csv', { headers: admin })).text();
+  assert.match(csv, /판매 경험 없음/);
+  assert.match(csv, /미입고/);
+  // 진열 미입고: 진열률에서 제외
+  const disp = (store, items) => fetch(base + '/api/display', { method: 'POST', headers: staff, body: JSON.stringify({ store, items }) });
+  await disp('가점', [{ sku: '60001', status: 'shown' }, { sku: '60002', status: 'none' }]);
+  await disp('다점', [{ sku: '60001', status: 'notReceived' }, { sku: '60002', status: 'notReceived' }]);
+  const rep = await (await fetch(base + '/api/admin/display', { headers: admin })).json();
+  const k1 = rep.skus.find((k) => k.sku === '60001');
+  assert.deepStrictEqual([k1.shown, k1.notReceived, k1.checked, k1.rate], [1, 1, 2, 100]); // 미입고 제외 → 1/1
+  assert.deepStrictEqual(k1.stores.notReceived, ['다점']);
+  const a = await (await fetch(base + '/api/admin/display-analysis', { headers: admin })).json();
+  assert.ok(a.notReceived.some((k) => k.sku === '60001' && k.notReceived === 1));
+  assert.strictEqual(a.byStore.find((st) => st.name === '다점').notReceivedSkus.length, 2);
+  s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  x = s.products.find((p) => p.id === pr.id);
+  assert.deepStrictEqual([x.display, x.displayRate], [{ shown: 1, stock: 0, none: 1, notReceived: 2 }, 50]);
+  for (const st of ['가점', '나점', '다점']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });
+  await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
 });
 
 test('품목 필수', async () => {

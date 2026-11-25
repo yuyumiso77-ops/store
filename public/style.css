@@ -317,3 +317,10 @@ body:not([data-mode="display"]) .mode-display { display: none !important; }
 .brand-title .bdiv { width: 1px; height: 22px; background: var(--line); }
 .brand-title .btitle { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
 @media (max-width: 480px) { .brand-title .bdiv { display: none; } .brand-title .btitle { font-size: .95rem; } }
+.status-card { border-left: 4px solid var(--accent); }
+.badge.skip { background: var(--muted); }
+.seg { padding: 8px 9px; }
+.seg.notReceived.on, .dlegend .seg.notReceived { background: #7d8085; border-color: #7d8085; color: #fff; }
+.dbtns { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+@media (max-width: 380px) { .seg { padding: 7px 6px; font-size: .8rem; } }
+.sgroup b.tx { color: #7d8085; }

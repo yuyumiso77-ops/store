@@ -41,7 +41,8 @@ const OPTIONS = {
   aspectsByCategory: Object.fromEntries(CATEGORIES.map((c) => [c, aspectsFor(c)])),
   defaultAspects: aspectsFor(''),
   sales: { good: '잘 팔림', normal: '보통', poor: '잘 안 팔림' },
-  display: { shown: '진열', stock: '창고만', none: '없음' }, // 진열 체크 (매장 × SKU)
+  display: { shown: '진열', stock: '창고만', none: '없음', notReceived: '미입고' }, // 진열 체크 (매장 × SKU). 미입고는 진열률 계산에서 제외
+  evalStatus: { done: '평가', nosale: '판매 경험 없음', notreceived: '미입고' }, // 평가 상태. done 외에는 평균·비율에서 제외
   // 2-1은 상품 자체가 아닌 '판매 요인'만 묻는다 (상품 장단점은 1-1에서)
   sellReasons: [
     '직원 추천·코디 제안', '할인·프로모션', '시즌·날씨와 잘 맞음', '눈에 잘 띄는 진열', '사이즈·컬러 재고 충분',
@@ -233,12 +234,15 @@ function gapOf(avgReaction, sales, n) {
   if (avgReaction <= 2.5 && salesScore >= 0.34) return 'poorReactionGoodSales';
   return '';
 }
+const isDone = (e) => (e.status || 'done') === 'done';
 function summary() {
   const avg = (arr) => (arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null);
   const products = db.products.map((p) => {
-    const es = db.evaluations.filter((e) => e.productId === p.id);
+    const all = db.evaluations.filter((e) => e.productId === p.id);
+    const es = all.filter(isDone);
+    const skipped = { nosale: all.filter((e) => e.status === 'nosale').length, notreceived: all.filter((e) => e.status === 'notreceived').length };
     const sales = { good: 0, normal: 0, poor: 0 };
-    const display = { shown: 0, stock: 0, none: 0 };
+    const display = { shown: 0, stock: 0, none: 0, notReceived: 0 };
     db.displays.forEach((d) => { if (d.productId === p.id) display[d.status]++; });
     const answered = display.shown + display.stock + display.none;
     es.forEach((e) => sales[e.sales]++);
@@ -247,6 +251,7 @@ function summary() {
       imageUrl: imageUrl(p),
       createdAt: p.createdAt,
       count: es.length,
+      skipped,
       avgReaction: avg(es.map((e) => e.reaction)),
       sales,
       display,
@@ -269,7 +274,7 @@ function summary() {
     ...x,
     done: db.evaluations.filter((e) => e.staff === x.name && active.includes(e.productId)).length,
   }));
-  return { totalEvaluations: db.evaluations.length, activeProducts: active.length, staff, products, ztec: ztecSummary(), aiEnabled: !!process.env.ANTHROPIC_API_KEY };
+  return { totalEvaluations: db.evaluations.filter(isDone).length, skippedEvaluations: db.evaluations.filter((e) => !isDone(e)).length, activeProducts: active.length, staff, products, ztec: ztecSummary(), aiEnabled: !!process.env.ANTHROPIC_API_KEY };
 }
 
 // ---------- Z-TEC 매장 의견 (매장당 1회) ----------
@@ -298,25 +303,26 @@ function displayReport() {
   const idx = skuIndex();
   const skus = [...idx.values()].map(({ sku, color, product: p }) => {
     const ds = db.displays.filter((d) => d.sku === sku);
-    const by = { shown: [], stock: [], none: [] };
+    const by = { shown: [], stock: [], none: [], notReceived: [] };
     ds.forEach((d) => by[d.status].push(d.store));
     const n = ds.length;
+    const base = n - by.notReceived.length; // 미입고는 진열률에서 제외
     return {
       sku, color, productId: p.id, code: p.code || '', name: p.name, line: lineOf(p), type: typeOf(p), category: p.category, imageUrl: imageUrl(p),
-      shown: by.shown.length, stock: by.stock.length, none: by.none.length, checked: n,
-      rate: n ? Math.round((by.shown.length / n) * 100) : null, stores: by,
+      shown: by.shown.length, stock: by.stock.length, none: by.none.length, notReceived: by.notReceived.length, checked: n,
+      rate: base ? Math.round((by.shown.length / base) * 100) : null, stores: by,
     };
   });
   const storeNames = [...new Set(db.displays.map((d) => d.store))];
   const stores = storeNames.map((name) => {
     const mine = db.displays.filter((d) => d.store === name && idx.has(d.sku));
-    return { name, checked: mine.length, shown: mine.filter((d) => d.status === 'shown').length, none: mine.filter((d) => d.status === 'none').length };
+    return { name, checked: mine.length, shown: mine.filter((d) => d.status === 'shown').length, none: mine.filter((d) => d.status === 'none').length, notReceived: mine.filter((d) => d.status === 'notReceived').length };
   }).sort((a, b) => a.checked - b.checked || a.name.localeCompare(b.name));
   const all = db.displays.filter((d) => idx.has(d.sku));
   return {
     totalSkus: idx.size,
     stores,
-    totals: { checks: all.length, shown: all.filter((d) => d.status === 'shown').length, stock: all.filter((d) => d.status === 'stock').length, none: all.filter((d) => d.status === 'none').length },
+    totals: { checks: all.length, shown: all.filter((d) => d.status === 'shown').length, stock: all.filter((d) => d.status === 'stock').length, none: all.filter((d) => d.status === 'none').length, notReceived: all.filter((d) => d.status === 'notReceived').length },
     skus,
   };
 }
@@ -330,11 +336,11 @@ function displayAnalysis() {
   const gmap = new Map();
   rep.skus.forEach((k) => {
     const key = `${k.line}|${k.type || k.category}`;
-    if (!gmap.has(key)) gmap.set(key, { line: k.line, type: k.type || k.category, skus: 0, shown: 0, stock: 0, none: 0, checks: 0 });
+    if (!gmap.has(key)) gmap.set(key, { line: k.line, type: k.type || k.category, skus: 0, shown: 0, stock: 0, none: 0, notReceived: 0, checks: 0 });
     const g = gmap.get(key);
-    g.skus++; g.shown += k.shown; g.stock += k.stock; g.none += k.none; g.checks += k.checked;
+    g.skus++; g.shown += k.shown; g.stock += k.stock; g.none += k.none; g.notReceived += k.notReceived; g.checks += k.checked;
   });
-  const byType = [...gmap.values()].map((g) => ({ ...g, rate: rate(g.shown, g.checks) }))
+  const byType = [...gmap.values()].map((g) => ({ ...g, rate: rate(g.shown, g.checks - g.notReceived) }))
     .sort((a, b) => (a.line + a.type).localeCompare(b.line + b.type));
   // 매장별 (진열률, 없음·창고만 SKU 목록)
   const idx = skuIndex();
@@ -342,11 +348,12 @@ function displayAnalysis() {
     const mine = db.displays.filter((d) => d.store === st.name && idx.has(d.sku));
     const list = (status) => mine.filter((d) => d.status === status).map((d) => { const k = idx.get(d.sku); return { code: k.product.code || k.product.name, color: k.color }; });
     const shown = mine.filter((d) => d.status === 'shown').length;
-    return { name: st.name, checked: mine.length, coverage: rate(mine.length, rep.totalSkus), rate: rate(shown, mine.length), shown, noneSkus: list('none'), stockSkus: list('stock') };
+    const nr = list('notReceived');
+    return { name: st.name, checked: mine.length, coverage: rate(mine.length, rep.totalSkus), rate: rate(shown, mine.length - nr.length), shown, noneSkus: list('none'), stockSkus: list('stock'), notReceivedSkus: nr };
   }).sort((a, b) => (a.rate ?? 999) - (b.rate ?? 999) || a.name.localeCompare(b.name));
   // 상품별: 진열률 × 고객 반응 × 판매 반응
   const products = summary().products.filter((p) => p.active).map((p) => {
-    const checks = p.display.shown + p.display.stock + p.display.none;
+    const checks = p.display.shown + p.display.stock + p.display.none; // 미입고 제외
     const good = p.count ? p.sales.good / p.count : null;
     const poor = p.count ? p.sales.poor / p.count : null;
     const enough = checks >= DA.minChecks && p.count >= DA.minEvals;
@@ -364,8 +371,8 @@ function displayAnalysis() {
   });
   // 창고에만 있는 SKU (진열하면 바로 팔 수 있는 재고), 매장에 없는 SKU
   const topBy = (field) => rep.skus.filter((k) => k[field] > 0).sort((a, b) => b[field] - a[field] || (a.code + a.color).localeCompare(b.code + b.color)).slice(0, 15)
-    .map(({ sku, code, color, name, line, type, imageUrl, shown, stock, none, checked, stores }) => ({ sku, code, color, name, line, type, imageUrl, shown, stock, none, checked, stores: stores[field] }));
-  return { thresholds: DA, totals: rep.totals, storeCount: rep.stores.length, totalSkus: rep.totalSkus, byType, byStore, products, stockOnly: topBy('stock'), missing: topBy('none') };
+    .map(({ sku, code, color, name, line, type, imageUrl, shown, stock, none, notReceived, checked, stores }) => ({ sku, code, color, name, line, type, imageUrl, shown, stock, none, notReceived, checked, stores: stores[field] }));
+  return { thresholds: DA, totals: rep.totals, storeCount: rep.stores.length, totalSkus: rep.totalSkus, byType, byStore, products, stockOnly: topBy('stock'), missing: topBy('none'), notReceived: topBy('notReceived') };
 }
 
 // ---------- AI 의견 요약 (Claude API) ----------
@@ -441,19 +448,20 @@ function summarySource(key) {
       basis: `d${db.displays.length}:${db.displays.reduce((m, d) => (d.updatedAt > m ? d.updatedAt : m), '')}:e${db.evaluations.length}`,
       title: '매장 진열 현황 분석 (SKU = 품번 × 컬러)',
       body: [
-        `체크한 매장 ${a.storeCount}곳, SKU ${a.totalSkus}개, 체크 ${a.totals.checks}건 (진열 ${a.totals.shown}·창고만 ${a.totals.stock}·없음 ${a.totals.none})`,
+        `체크한 매장 ${a.storeCount}곳, SKU ${a.totalSkus}개, 체크 ${a.totals.checks}건 (진열 ${a.totals.shown}·창고만 ${a.totals.stock}·없음 ${a.totals.none}·미입고 ${a.totals.notReceived}). 진열률은 미입고를 뺀 기준`,
         '',
         '복종별 진열률:',
-        ...a.byType.map((t) => `- ${t.line} ${t.type}: 진열률 ${pct(t.rate)} (진열 ${t.shown}·창고만 ${t.stock}·없음 ${t.none}, SKU ${t.skus}개)`),
+        ...a.byType.map((t) => `- ${t.line} ${t.type}: 진열률 ${pct(t.rate)} (진열 ${t.shown}·창고만 ${t.stock}·없음 ${t.none}·미입고 ${t.notReceived}, SKU ${t.skus}개)`),
         '',
         '진열률 낮은 매장 (하위 10):',
-        ...a.byStore.slice(0, 10).map((s) => `- ${s.name}: 진열률 ${pct(s.rate)}, 체크 ${s.checked}/${a.totalSkus}, 없음 ${s.noneSkus.length}·창고만 ${s.stockSkus.length}`),
+        ...a.byStore.slice(0, 10).map((s) => `- ${s.name}: 진열률 ${pct(s.rate)}, 체크 ${s.checked}/${a.totalSkus}, 없음 ${s.noneSkus.length}·창고만 ${s.stockSkus.length}·미입고 ${s.notReceivedSkus.length}`),
         '',
         `진열 확대 후보(반응·판매 좋은데 진열 ${DA.lowDisplay}% 미만): ${g('expand')}`,
         `진열 재검토(진열 ${DA.highDisplay}% 이상인데 반응·판매 부진): ${g('review')}`,
         `효자 상품(진열 많고 반응·판매 좋음): ${g('star')}`,
         '',
         '창고에만 있는 매장이 많은 SKU: ' + (a.stockOnly.map((k) => `${k.code}-${k.color} ${k.stock}곳`).join(', ') || '없음'),
+        '미입고 매장이 많은 SKU(배분 검토): ' + (a.notReceived.map((k) => `${k.code}-${k.color} ${k.notReceived}곳`).join(', ') || '없음'),
         '매장에 없는 곳이 많은 SKU: ' + (a.missing.map((k) => `${k.code}-${k.color} ${k.none}곳`).join(', ') || '없음'),
         '',
         '요약 지침: 이것은 매장 의견이 아니라 진열 데이터 분석입니다. strengths=잘 되고 있는 점, weaknesses=문제점, requests=추가로 확인할 점, actions=영업·VMD가 바로 할 조치로 써 주세요.',
@@ -477,7 +485,7 @@ function summarySource(key) {
   const id = key.replace(/^product:/, '');
   const product = db.products.find((x) => x.id === id);
   if (!product) return null;
-  const es = db.evaluations.filter((e) => e.productId === id);
+  const es = db.evaluations.filter((e) => e.productId === id && isDone(e));
   if (!es.length) return null;
   const ps = summary().products.find((x) => x.id === id);
   const top = (list) => list.slice(0, 6).map((x) => `${x.name} ${x.n}`).join(', ') || '없음';
@@ -545,8 +553,8 @@ async function handle(req, res) {
         rep.stores.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((s) =>
           rows.push([s.name, `${s.checked}/${rep.totalSkus}`, ...skus.map((k) => st[`${s.name}\u0000${k.sku}`] || '')]));
       } else {
-        rows = [['품번', '컬러', 'PLC', '상품', '구분', '복종', '진열 매장', '창고만', '없음', '체크한 매장', '진열률(%)', '없음 매장 목록']];
-        skus.forEach((k) => rows.push([k.code, k.color, k.sku.startsWith('P-') ? '' : k.sku, k.name, k.line, k.type, k.shown, k.stock, k.none, k.checked, k.rate ?? '', k.stores.none.join(', ')]));
+        rows = [['품번', '컬러', 'PLC', '상품', '구분', '복종', '진열 매장', '창고만', '없음', '미입고', '체크한 매장', '진열률(%, 미입고 제외)', '없음 매장 목록', '미입고 매장 목록']];
+        skus.forEach((k) => rows.push([k.code, k.color, k.sku.startsWith('P-') ? '' : k.sku, k.name, k.line, k.type, k.shown, k.stock, k.none, k.notReceived, k.checked, k.rate ?? '', k.stores.none.join(', '), k.stores.notReceived.join(', ')]));
       }
       const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
       return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${p.split('/').pop()}"` });
@@ -801,11 +809,11 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
       const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
-      const rows = [['수정일시', '매장명', '품번', '상품', '구분', '품목', '복종', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
+      const rows = [['수정일시', '매장명', '품번', '상품', '구분', '품목', '복종', '평가 상태', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
       db.evaluations.forEach((e) => {
         const pr = prodOf[e.productId] || {};
         rows.push([
-          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.id ? lineOf(pr) : '', pr.category || '', pr.id ? typeOf(pr) : '', e.reaction, OPTIONS.sales[e.sales],
+          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.id ? lineOf(pr) : '', pr.category || '', pr.id ? typeOf(pr) : '', OPTIONS.evalStatus[e.status || 'done'], e.reaction || '', OPTIONS.sales[e.sales] || '',
           (e.sellReasons || []).join(', '), e.noBuyReasons.join(', '), e.pros.join(', '), e.prosNote, e.cons.join(', '), e.consNote, e.missing, e.improvement,
           e.ageGroups.join(', '), e.genders.join(', '),
         ]);
@@ -895,6 +903,18 @@ async function handle(req, res) {
     if (!product) return send(res, 400, { error: '상품을 선택해 주세요.' });
     const staff = cleanText(b.staff, 30);
     if (!staff) return send(res, 400, { error: '매장명을 입력해 주세요.' });
+    const status = b.status || 'done';
+    if (!(status in OPTIONS.evalStatus)) return send(res, 400, { error: '평가 상태가 올바르지 않아요.' });
+    const now0 = new Date().toISOString();
+    // 판매 경험 없음 / 미입고: 질문 없이 '평가 제외'로 저장 (평균·비율에서 빠짐)
+    if (status !== 'done') {
+      const blank = { productId: product.id, staff, status, reaction: 0, sales: '', noBuyReasons: [], sellReasons: [], pros: [], prosNote: '', cons: [], consNote: '', missing: '', improvement: '', ageGroups: [], genders: [], updatedAt: now0 };
+      const ex = db.evaluations.find((e) => e.productId === product.id && sameName(e.staff, staff));
+      if (ex) Object.assign(ex, blank);
+      else db.evaluations.push({ id: crypto.randomUUID(), createdAt: now0, ...blank });
+      saveDb();
+      return send(res, ex ? 200 : 201, { ok: true, updated: !!ex });
+    }
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: '고객 반응을 선택해 주세요.' });
     if (!(b.sales in OPTIONS.sales)) return send(res, 400, { error: '판매 반응을 선택해 주세요.' });
     // 판매 반응에 따라 이어지는 질문(2-1) 필수 확인
@@ -911,6 +931,7 @@ async function handle(req, res) {
     const data = {
       productId: product.id,
       staff,
+      status: 'done',
       reaction: b.reaction,
       sales: b.sales,
       noBuyReasons: b.sales === 'good' ? [] : pick(b.noBuyReasons, OPTIONS.noBuyReasons),

@@ -260,7 +260,7 @@ function storeEvalsBlock(p) {
     const list = await api(`/api/admin/products/${p.id}/evaluations`);
     body.replaceChildren(collapsibleList(list, 10, (e) => el('li', { class: 'evrow' },
       el('div', {},
-        el('b', {}, e.staff), ` · ${REACT[e.reaction]} · ${SALES[e.sales]}`,
+        el('b', {}, e.staff), (e.status && e.status !== 'done') ? el('span', { class: 'tag' }, e.status === 'nosale' ? '판매 경험 없음' : '미입고') : ` · ${REACT[e.reaction]} · ${SALES[e.sales]}`,
         el('div', { class: 'meta' }, [e.prosNote && '👍 ' + e.prosNote, e.consNote && '👎 ' + e.consNote, e.improvement && '💡 ' + e.improvement].filter(Boolean).join('  ') || '메모 없음'),
         el('div', { class: 'meta' }, new Date(e.updatedAt).toLocaleString('ko-KR'))),
       el('button', {
@@ -408,7 +408,7 @@ function renderProduct(p) {
   return el('div', { class: 'card' + (p.active ? '' : ' inactive') },
     headWrap,
     el('div', { class: 'stats' },
-      stat(p.count, '평가한 매장 수'),
+      stat(p.count, '평가한 매장 수' + (p.skipped && (p.skipped.nosale || p.skipped.notreceived) ? ` · 제외: 판매 없음 ${p.skipped.nosale} · 미입고 ${p.skipped.notreceived}` : '')),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
       stat(p.displayRate == null ? '-' : p.displayRate + '%', `진열률(진열 체크) · 진열 ${p.display.shown} · 창고만 ${p.display.stock} · 없음 ${p.display.none}` + (p.display.unknown ? ` · 미응답 ${p.display.unknown}` : '')),
       stat(`${p.sales.good} · ${p.sales.normal} · ${p.sales.poor}`, '판매 반응: 잘 팔림 · 보통 · 안 팔림')),
@@ -637,7 +637,7 @@ async function load() {
   const worst = recorded.slice().sort((a, b) => a.avgReaction - b.avgReaction)[0];
   const best = recorded.slice().sort((a, b) => b.avgReaction - a.avgReaction)[0];
   $('stats').replaceChildren(
-    stat(data.totalEvaluations, '총 평가 수'),
+    stat(data.totalEvaluations, '총 평가 수' + (data.skippedEvaluations ? ` · 평가 제외 ${data.skippedEvaluations}건(판매 없음·미입고)` : '')),
     stat(`${ps.filter((p) => p.active && p.count).length} / ${data.activeProducts}`, '평가된 상품'),
     stat(fmt(avgReact), '평균 고객 반응'),
     stat(best ? best.code || best.name : '-', best ? `반응이 가장 좋은 상품 · ${best.type || best.name}` : '반응이 가장 좋은 상품'),
@@ -697,12 +697,13 @@ function renderDisplayTab() {
   $('dStats').replaceChildren(
     stat(r.stores.length + '곳', '체크한 매장'),
     stat(r.totalSkus, 'SKU (품번 × 컬러)'),
-    stat(pct(t.shown, t.checks), `전체 진열률 · 진열 ${t.shown} · 창고 ${t.stock} · 없음 ${t.none}`),
+    stat(pct(t.shown, t.checks - t.notReceived), `전체 진열률(미입고 제외) · 진열 ${t.shown} · 창고 ${t.stock} · 없음 ${t.none}`),
     stat(t.none, "'매장에 없음' 체크 수"),
+    stat(t.notReceived, "'미입고' 체크 수"),
     stat(pct(t.checks, r.stores.length * r.totalSkus), '체크 완료율 (참여 매장 기준)'));
   // 매장별 진행
   const pills = el('div', { class: 'pills', hidden: '' }, r.stores.map((s) =>
-    el('span', { class: 'pill' + (s.checked >= r.totalSkus ? ' full' : '') }, `${s.name} ${s.checked}/${r.totalSkus}` + (s.none ? ` · 없음 ${s.none}` : ''))));
+    el('span', { class: 'pill' + (s.checked >= r.totalSkus ? ' full' : '') }, `${s.name} ${s.checked}/${r.totalSkus}` + (s.none ? ` · 없음 ${s.none}` : '') + (s.notReceived ? ` · 미입고 ${s.notReceived}` : ''))));
   const full = r.stores.filter((s) => s.checked >= r.totalSkus).length;
   $('dStores').replaceChildren(...(r.stores.length
     ? [el('span', { class: 'hint' }, `체크 완료 ${full}곳 · 진행 중 ${r.stores.length - full}곳 `),
@@ -738,16 +739,16 @@ function renderDisplayTab() {
       el('div', { class: 'pc num' + (k.rate != null && k.rate < 50 ? ' low' : '') }, el('b', {}, k.rate == null ? '-' : k.rate + '%'), el('small', {}, '진열률')),
       el('div', { class: 'pc sales' },
         n ? el('div', { class: 'sbar' }, el('span', { class: 'g', style: `width:${w(k.shown)}%` }), el('span', { class: 'n', style: `width:${w(k.stock)}%` }), el('span', { class: 'p', style: `width:${w(k.none)}%` })) : el('div', { class: 'sbar empty' }),
-        el('small', {}, `진열 ${k.shown} · 창고 ${k.stock} · 없음 ${k.none} · 미체크 ${Math.max(0, nStores - n)}`)),
+        el('small', {}, `진열 ${k.shown} · 창고 ${k.stock} · 없음 ${k.none}` + (k.notReceived ? ` · 미입고 ${k.notReceived}` : '') + ` · 미체크 ${Math.max(0, nStores - n)}`)),
       el('span', { class: 'chev' }, '▾'));
     const open = (on) => {
       row.classList.toggle('open', on);
       det.hidden = !on;
       on ? DOPEN.add(k.sku) : DOPEN.delete(k.sku);
       if (on && !det.firstChild) {
-        const unchecked = allStores.filter((s) => ![...k.stores.shown, ...k.stores.stock, ...k.stores.none].includes(s));
+        const unchecked = allStores.filter((s) => ![...k.stores.shown, ...k.stores.stock, ...k.stores.none, ...k.stores.notReceived].includes(s));
         const sec = (label, cls, arr) => el('div', { class: 'sgroup' }, el('b', { class: cls }, `${label} ${arr.length}`), el('div', { class: 'hint' }, arr.length ? arr.join(', ') : '-'));
-        det.append(sec('진열', 'tg', k.stores.shown), sec('창고만', 'tn', k.stores.stock), sec('없음', 'tp', k.stores.none), sec('미체크', '', unchecked),
+        det.append(sec('진열', 'tg', k.stores.shown), sec('창고만', 'tn', k.stores.stock), sec('없음', 'tp', k.stores.none), sec('미입고', 'tx', k.stores.notReceived), sec('미체크', '', unchecked),
           el('div', { class: 'hint' }, k.sku.startsWith('P-') ? '' : `PLC ${k.sku}`));
       }
     };
@@ -790,7 +791,7 @@ async function loadDisplayAnalysis() {
   }
   $('dAnalysis').replaceChildren(
     el('div', { class: 'card' }, aiBlock('display', { heading: '🤖 AI 진열 분석 요약', unit: '진열 체크', titles: ['👍 잘 되고 있는 점', '⚠️ 문제점', '🔍 추가로 확인할 점', '✅ 바로 할 조치'], empty: '버튼을 누르면 아래 진열 분석 전체를 AI가 정리하고 조치를 제안해요. (10~30초)' })),
-    matrixCard(a), stockCard(a), typeCard(a), storeCard(a));
+    matrixCard(a), stockCard(a), notReceivedCard(a), typeCard(a), storeCard(a));
 }
 // 진열률 × 고객 반응 산점도 + 그룹별 목록
 function matrixCard(a) {
@@ -851,6 +852,14 @@ function matrixCard(a) {
     el('p', { class: 'hint', style: 'margin:0 0 8px' }, `점 하나가 상품 하나예요 (진열 체크 ${T.minChecks}건·평가 ${T.minEvals}건 이상인 상품 ${pts.length}개). 진열 ${T.lowDisplay}% 미만인데 반응 ${T.goodReaction} 이상 또는 '잘 팔림' ${Math.round(T.ratio * 100)}% 이상이면 확대 후보, 진열 ${T.highDisplay}% 이상이면서 반응·판매가 둘 다 좋으면 효자, '잘 안 팔림' ${Math.round(T.ratio * 100)}% 이상이거나 반응 ${T.badReaction} 미만이면 재검토로 분류해요.`),
     legend, el('div', { class: 'scatter-wrap' }, svg, tip), lists);
 }
+function notReceivedCard(a) {
+  return el('div', { class: 'card' },
+    el('h2', { style: 'margin:0 0 4px' }, '🚚 미입고 매장이 많은 SKU'),
+    el('p', { class: 'hint', style: 'margin:0 0 8px' }, '한 번도 입고되지 않은 매장이 많은 SKU예요. 배분·RT(재고 이동)를 검토해 보세요. 진열률 계산에서는 빠져요.'),
+    a.notReceived.length ? collapsibleList(a.notReceived, 8, (k) => el('li', { class: 'evrow' },
+      el('div', {}, el('b', {}, `${k.code} · ${k.color}`), ` — 미입고 ${k.notReceived}곳 (진열 ${k.shown} · 창고 ${k.stock} · 없음 ${k.none})`, el('div', { class: 'meta' }, k.stores.join(', ')))), 'SKU')
+      : el('p', { class: 'hint' }, '미입고로 체크된 SKU가 없어요.'));
+}
 function stockCard(a) {
   return el('div', { class: 'card' },
     el('h2', { style: 'margin:0 0 4px' }, '📦 창고에만 있는 SKU'),
@@ -868,28 +877,29 @@ function typeCard(a) {
   const multi = new Set(a.byType.map((t) => t.line)).size > 1;
   return el('div', { class: 'card' },
     el('h2', { style: 'margin:0 0 8px' }, '복종별 진열률'),
-    el('div', { class: 'hint', style: 'margin-bottom:6px' }, '막대: 진열 · 창고만 · 없음 (체크 수 기준)'),
+    el('div', { class: 'hint', style: 'margin-bottom:6px' }, '막대: 진열 · 창고만 · 없음 (미입고는 제외)'),
     el('div', { class: 'brows' }, a.byType.map((t) => el('div', { class: 'brow' },
       el('span', { class: 'blabel' }, (multi ? t.line + ' · ' : '') + t.type),
       stackBar(t.shown, t.stock, t.none),
       el('b', { class: t.rate != null && t.rate < 50 ? 'lowtxt' : '' }, pctS(t.rate)),
-      el('small', { class: 'hint' }, `SKU ${t.skus} · 진열 ${t.shown} · 창고 ${t.stock} · 없음 ${t.none}`)))));
+      el('small', { class: 'hint' }, `SKU ${t.skus} · 진열 ${t.shown} · 창고 ${t.stock} · 없음 ${t.none}` + (t.notReceived ? ` · 미입고 ${t.notReceived}` : ''))))));
 }
 function storeCard(a) {
   const rows = a.byStore.map((s) => {
     const det = el('div', { class: 'sdetail', hidden: '' },
       el('div', { class: 'sgroup' }, el('b', { class: 'tp' }, `없음 ${s.noneSkus.length}`), el('div', { class: 'hint' }, s.noneSkus.map((k) => `${k.code}-${k.color}`).join(', ') || '-')),
-      el('div', { class: 'sgroup' }, el('b', { class: 'tn' }, `창고만 ${s.stockSkus.length}`), el('div', { class: 'hint' }, s.stockSkus.map((k) => `${k.code}-${k.color}`).join(', ') || '-')));
+      el('div', { class: 'sgroup' }, el('b', { class: 'tn' }, `창고만 ${s.stockSkus.length}`), el('div', { class: 'hint' }, s.stockSkus.map((k) => `${k.code}-${k.color}`).join(', ') || '-')),
+      el('div', { class: 'sgroup' }, el('b', { class: 'tx' }, `미입고 ${s.notReceivedSkus.length}`), el('div', { class: 'hint' }, s.notReceivedSkus.map((k) => `${k.code}-${k.color}`).join(', ') || '-')));
     const row = el('div', { class: 'brow clickable', role: 'button', tabindex: '0', onclick: () => { det.hidden = !det.hidden; row.classList.toggle('open', !det.hidden); } },
       el('span', { class: 'blabel' }, s.name),
       stackBar(s.shown, s.stockSkus.length, s.noneSkus.length),
       el('b', { class: s.rate != null && s.rate < 50 ? 'lowtxt' : '' }, pctS(s.rate)),
-      el('small', { class: 'hint' }, `체크 ${s.checked}/${a.totalSkus} (${pctS(s.coverage)}) · 없음 ${s.noneSkus.length} · 창고 ${s.stockSkus.length}`));
+      el('small', { class: 'hint' }, `체크 ${s.checked}/${a.totalSkus} (${pctS(s.coverage)}) · 없음 ${s.noneSkus.length} · 창고 ${s.stockSkus.length}` + (s.notReceivedSkus.length ? ` · 미입고 ${s.notReceivedSkus.length}` : '')));
     return el('div', {}, row, det);
   });
   return el('div', { class: 'card' },
     el('h2', { style: 'margin:0 0 8px' }, '매장별 진열률'),
-    el('div', { class: 'hint', style: 'margin-bottom:6px' }, '진열률 낮은 매장부터 보여요. 매장을 누르면 없는·창고만 있는 SKU가 나와요.'),
+    el('div', { class: 'hint', style: 'margin-bottom:6px' }, '진열률(미입고 제외) 낮은 매장부터 보여요. 매장을 누르면 없는·창고만·미입고 SKU가 나와요.'),
     el('div', { class: 'brows' }, rows.length > 12 ? collapsibleList(rows.map((r) => ({ r })), 12, (o) => el('li', { style: 'list-style:none;padding:0;border:none' }, o.r), '매장') : rows));
 }
 
