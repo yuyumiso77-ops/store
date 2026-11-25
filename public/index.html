@@ -10,8 +10,13 @@
 <body>
 <main class="wrap">
   <header class="brand"><img src="/logo.png" alt="FootJoy" width="473" height="120"></header>
-  <h1>상품 반응 평가</h1>
-  <p class="sub">상품 사진을 보고, 그동안 판매하면서 느낀 고객 반응을 정리해 주세요. 상품마다 한 번씩 평가하면 됩니다.</p>
+  <div class="modetabs" id="modeTabs">
+    <button type="button" data-mode="eval">📝 상품 평가</button>
+    <button type="button" data-mode="display">📦 진열 체크</button>
+  </div>
+  <h1 id="pageTitle">상품 반응 평가</h1>
+  <p class="sub mode-eval">상품 사진을 보고, 그동안 판매하면서 느낀 고객 반응을 정리해 주세요. 상품마다 한 번씩 평가하면 됩니다.</p>
+  <p class="sub mode-display">지금 매장에 컬러(SKU)별로 진열돼 있는지 눌러 주세요. <b>누르는 즉시 저장</b>되고, 다시 누르면 취소돼요.</p>
 
   <form id="form" novalidate>
     <div class="card">
@@ -21,7 +26,7 @@
     </div>
 
     <!-- Z-TEC 매장 의견: 매장당 한 번 (상품 평가와 별도) -->
-    <div class="card ztec">
+    <div class="card ztec mode-eval">
       <div class="ztec-head">
         <div>
           <span class="q" style="margin:0">⚡ Z-TEC 매장 의견 <span class="hint">(매장당 1회)</span></span>
@@ -45,25 +50,20 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card mode-eval">
       <span class="q">상품 <span class="req">*</span></span>
       <input type="hidden" id="product">
       <div id="picked" class="picked" hidden></div>
       <div id="gallery" class="gallery" hidden></div>
       <div id="picker">
         <input type="search" id="search" placeholder="품번 · 상품명 · 복종 검색">
-        <div class="chips seg" id="lineFilter" style="margin-top:10px"></div>
+        <div class="chips bold-chips" id="lineFilter" style="margin-top:10px"></div>
         <div class="chips" id="catFilter" style="margin:10px 0"></div>
         <div class="grid" id="grid"></div>
       </div>
     </div>
 
-    <div id="survey" hidden>
-      <div class="card display-card">
-        <span class="q">📍 현재 매장에 진열되어 있나요? <span class="req">*</span></span>
-        <div class="chips" id="display"></div>
-      </div>
-
+    <div id="survey" class="mode-eval" hidden>
       <div class="card">
         <span class="q">1. 상품 자체에 대한 고객 반응은 어땠나요? <span class="req">*</span></span>
         <p class="hint qdesc">디자인·핏·소재처럼 <b>상품만 놓고</b> 고객들이 보인 반응이에요. 실제로 팔렸는지는 2번에서 따로 물어요.</p>
@@ -119,6 +119,21 @@
       <button class="primary" type="submit" id="submit">평가 저장</button>
     </div>
     <p class="error" id="error"></p>
+    <!-- 진열 체크 (매장 × SKU) -->
+    <div class="mode-display">
+      <div class="card">
+        <div class="ztec-head">
+          <span class="q" style="margin:0">📦 진열 현황 체크</span>
+          <b id="dispProgress" class="hint"></b>
+        </div>
+        <div class="dlegend"><span class="seg shown">진열</span> 매장에 진열 중 <span class="seg stock">창고</span> 창고 재고만 있음 <span class="seg none">없음</span> 매장에 없음</div>
+        <input type="search" id="dSearch" placeholder="품번 · 상품명 · 컬러 검색" style="margin-top:10px">
+        <div class="chips bold-chips" id="dLine" style="margin-top:10px"></div>
+        <div class="chips" id="dType" style="margin-top:8px"></div>
+        <label class="hint dtodo"><input type="checkbox" id="dTodo"> 아직 체크 안 한 SKU만 보기</label>
+      </div>
+      <div id="dList"></div>
+    </div>
   </form>
   <div class="toast" id="toast" role="status"></div>
   <div class="lightbox" id="lightbox" hidden><img id="lbImg" alt=""><div class="lbcap" id="lbCap"></div><div class="lbnav"><button type="button" id="lbPrev">‹</button><button type="button" id="lbClose">닫기</button><button type="button" id="lbNext">›</button></div></div>
@@ -126,7 +141,7 @@
 
 <script>
 const FACES = ['', '😠', '🙁', '😐', '🙂', '😍'];
-const FIELDS = { display: '', reaction: 0, sales: '', sellReasons: [], noBuyReasons: [], pros: [], cons: [], ageGroups: [], genders: [] };
+const FIELDS = { reaction: 0, sales: '', sellReasons: [], noBuyReasons: [], pros: [], cons: [], ageGroups: [], genders: [] };
 const TEXTS = ['prosNote', 'consNote', 'missing', 'improvement'];
 const state = structuredClone(FIELDS);
 let OPTS = null;
@@ -218,7 +233,6 @@ async function init() {
   chips('reaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${OPTS.reactions[n]}`]));
   $('reaction').querySelectorAll('button').forEach((b) => (b.onclick = () => { state.reaction = Number(b.dataset.v); paint('reaction'); syncWhy(); }));
   ['pros', 'cons'].forEach((k) => ($(k + 'Toggle').onclick = () => { openExtra[k] = true; syncWhy(); $(k + 'Note').focus(); }));
-  chips('display', Object.entries(OPTS.display));
   chips('sales', Object.entries(OPTS.sales), { onChange: syncReasons });
   chips('noBuyReasons', OPTS.noBuyReasons.map((x) => [x, x]), { multi: true });
   chips('sellReasons', OPTS.sellReasons.map((x) => [x, x]), { multi: true });
@@ -238,7 +252,10 @@ async function init() {
   let sx = 0;
   $('lightbox').addEventListener('touchstart', (e) => (sx = e.touches[0].clientX), { passive: true });
   $('lightbox').addEventListener('touchend', (e) => { const dx = e.changedTouches[0].clientX - sx; if (Math.abs(dx) > 40) stepLb(dx < 0 ? 1 : -1); });
-  $('staff').onchange = () => { loadMine(); loadZtec(); };
+  $('staff').onchange = () => { loadMine(); loadZtec(); if (MODE === 'display') loadDisplay(); };
+  $('modeTabs').querySelectorAll('button').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+  $('dSearch').oninput = renderDisplay;
+  $('dTodo').onchange = renderDisplay;
   $('staff').addEventListener('input', () => { $('ztecToggle').disabled = !$('staff').value.trim(); });
   setupZtec(); // 상태는 저장된 매장명을 불러온 뒤 loadZtec()에서 갱신
   try { $('staff').value = localStorage.getItem('staff') || ''; } catch {}
@@ -247,8 +264,138 @@ async function init() {
   renderCatFilter();
   await loadMine();
   loadZtec();
+  let m0 = new URLSearchParams(location.search).get('mode');
+  if (!m0) { try { m0 = localStorage.getItem('mode'); } catch {} }
+  setMode(m0 || 'eval');
   const pid = new URLSearchParams(location.search).get('product');
   if (pid) selectProduct(pid);
+}
+
+// ---- 진열 체크 (매장 × SKU) ----
+let MODE = 'eval', DISP = {}, DLINE = '', DTYPE = '';
+const SEGS = [['shown', '진열'], ['stock', '창고'], ['none', '없음']];
+const skusOfP = (p) => (p.plcs && p.plcs.length ? p.plcs.map((q) => ({ sku: q.plc, color: q.color })) : [{ sku: 'P-' + p.id, color: '' }]);
+function setMode(m) {
+  MODE = m === 'display' ? 'display' : 'eval';
+  document.body.dataset.mode = MODE;
+  $('modeTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === MODE));
+  $('pageTitle').textContent = MODE === 'display' ? '진열 현황 체크' : '상품 반응 평가';
+  try { localStorage.setItem('mode', MODE); } catch {}
+  if (MODE === 'display') loadDisplay();
+}
+async function loadDisplay() {
+  const store = $('staff').value.trim();
+  DISP = store ? await (await fetch('/api/display/mine?store=' + encodeURIComponent(store))).json() : {};
+  renderDisplay();
+}
+function dProgress() {
+  const store = $('staff').value.trim();
+  const total = OPTS.products.reduce((a, p) => a + skusOfP(p).length, 0);
+  const done = OPTS.products.reduce((a, p) => a + skusOfP(p).filter((k) => DISP[k.sku]).length, 0);
+  $('dispProgress').textContent = store ? `${done} / ${total} SKU 체크` : '⬆️ 매장명을 먼저 입력해 주세요';
+}
+function dChips(boxId, items, cur, onPick) {
+  const box = $(boxId);
+  box.replaceChildren();
+  items.forEach(([k, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.className = cur === k ? 'on' : '';
+    b.onclick = () => onPick(k);
+    box.appendChild(b);
+  });
+}
+function renderDisplay() {
+  dProgress();
+  const q = $('dSearch').value.trim().toLowerCase();
+  const todo = $('dTodo').checked;
+  // 구분·복종 필터
+  const lines = [...new Set(OPTS.products.map((p) => p.line))];
+  if (lines.length > 1) dChips('dLine', [['', '전체'], ...lines.map((l) => [l, l || '구분 없음'])], DLINE, (k) => { DLINE = k; DTYPE = ''; renderDisplay(); });
+  const base = OPTS.products.filter((p) => !DLINE || p.line === DLINE).sort(cmp);
+  const types = [...new Set(base.map((p) => p.type || p.category))];
+  dChips('dType', [['', '모든 복종'], ...types.map((t) => [t, t])], DTYPE, (k) => { DTYPE = k; renderDisplay(); });
+  const list = $('dList');
+  list.replaceChildren();
+  let last = null, shownCount = 0;
+  base.forEach((p) => {
+    if (DTYPE && (p.type || p.category) !== DTYPE) return;
+    let skus = skusOfP(p);
+    if (q && ![p.code, p.name, ...skus.map((k) => k.color)].some((v) => (v || '').toLowerCase().includes(q))) return;
+    if (todo && skus.every((k) => DISP[k.sku])) return;
+    shownCount++;
+    const g = `${p.line} · ${p.type || p.category}`;
+    if (g !== last) {
+      last = g;
+      const h = document.createElement('div');
+      h.className = 'dgroup';
+      h.textContent = lines.length > 1 && !DLINE ? g : (p.type || p.category);
+      list.appendChild(h);
+    }
+    list.appendChild(dProduct(p, skus));
+  });
+  if (!shownCount) list.innerHTML = '<p class="hint" style="padding:12px">' + (todo ? '🎉 이 조건의 SKU는 모두 체크했어요.' : '찾는 상품이 없어요.') + '</p>';
+}
+function dProduct(p, skus) {
+  const card = document.createElement('div');
+  card.className = 'dprod';
+  const head = document.createElement('div');
+  head.className = 'dhead';
+  const t = thumb(p, 'dimg');
+  if (p.photos && p.photos.length) { t.style.cursor = 'zoom-in'; t.onclick = () => openLightbox(p, 0); }
+  const info = document.createElement('div');
+  info.className = 'dinfo';
+  info.innerHTML = '<b></b><small></small>';
+  info.querySelector('b').textContent = p.code || p.name;
+  info.querySelector('small').textContent = p.name;
+  const all = document.createElement('button');
+  all.type = 'button'; all.className = 'mini'; all.textContent = '모두 진열';
+  all.onclick = () => setDisp(skus.map((k) => k.sku), 'shown');
+  head.append(t, info, all);
+  card.appendChild(head);
+  skus.forEach((k) => {
+    const row = document.createElement('div');
+    row.className = 'drow';
+    row.dataset.sku = k.sku;
+    const c = document.createElement('span');
+    c.className = 'dcolor';
+    c.textContent = k.color || '단일';
+    const segs = document.createElement('div');
+    segs.className = 'segs';
+    SEGS.forEach(([v, label]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'seg ' + v + (DISP[k.sku] === v ? ' on' : '');
+      b.textContent = label;
+      b.onclick = () => setDisp([k.sku], DISP[k.sku] === v ? '' : v); // 같은 걸 다시 누르면 취소
+      segs.appendChild(b);
+    });
+    row.append(c, segs);
+    card.appendChild(row);
+  });
+  return card;
+}
+function paintSku(sku) {
+  document.querySelectorAll(`.drow[data-sku="${CSS.escape(sku)}"] .seg`).forEach((b) => b.classList.toggle('on', b.classList.contains(DISP[sku] || '__')));
+}
+async function setDisp(skus, status) {
+  const store = $('staff').value.trim();
+  if (!store) { toast('⬆️ 매장명을 먼저 입력해 주세요'); $('staff').focus(); return; }
+  const prev = skus.map((s) => DISP[s]);
+  skus.forEach((s) => (status ? (DISP[s] = status) : delete DISP[s]));
+  skus.forEach(paintSku);
+  dProgress();
+  try {
+    const res = await fetch('/api/display', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store, items: skus.map((sku) => ({ sku, status })) }) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '저장 실패');
+    try { localStorage.setItem('staff', store); } catch {}
+  } catch (ex) {
+    skus.forEach((s, i) => (prev[i] ? (DISP[s] = prev[i]) : delete DISP[s]));
+    skus.forEach(paintSku);
+    dProgress();
+    toast('❌ 저장하지 못했어요: ' + ex.message);
+  }
 }
 
 // ---- Z-TEC 매장 의견 ----
@@ -500,7 +647,6 @@ $('form').onsubmit = async (e) => {
   $('error').textContent = '';
   $('submit').disabled = true;
   try {
-    if (!state.display) { $('display').scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error('📍 현재 매장 진열 여부를 선택해 주세요.'); }
     const werr = whyError();
     if (werr) { $('why').scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error(werr); }
     const serr = state.sales === 'good' && !state.sellReasons.length ? '2-1. 판매를 도운 요인을 하나 이상 골라 주세요.'

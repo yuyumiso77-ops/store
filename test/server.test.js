@@ -264,23 +264,41 @@ test('평가 삭제: 한 건 / Z-TEC 한 건 / 매장 전체', async () => {
   await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
 });
 
-test('진열 여부: 필수, 집계·CSV 반영', async () => {
-  const pr = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '진열 테스트', category: '용품' }) })).json();
-  const post = (b) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: pr.id, reaction: 4, pros: ['디자인'], sales: 'good', sellReasons: ['선물 수요'], ...b }) });
-  assert.strictEqual((await post({ staff: 'A점' })).status, 400); // 진열 여부 없음
-  assert.strictEqual((await post({ staff: 'A점', display: 'x' })).status, 400);
-  await post({ staff: 'A점', display: 'shown' });
-  await post({ staff: 'B점', display: 'shown' });
-  await post({ staff: 'C점', display: 'none' });
-  await post({ staff: 'D점', display: 'stock' });
+test('진열 체크: 매장 × SKU(컬러) 저장·취소·일괄·집계·CSV', async () => {
+  const imp = await (await fetch(base + '/api/admin/products/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows: [{ code: 'DSP-1', name: '진열 상품', category: '어패럴', plc: '80001 80002', plcColors: '80001:BLACK 80002:WHITE' }] }) })).json();
+  assert.strictEqual(imp.created, 1);
+  const put = (b) => fetch(base + '/api/display', { method: 'POST', headers: staff, body: JSON.stringify(b) });
+  assert.strictEqual((await put({ sku: '80001', status: 'shown' })).status, 400); // 매장명 없음
+  assert.strictEqual((await put({ store: 'A점', sku: '99999', status: 'shown' })).status, 400); // 없는 SKU
+  assert.strictEqual((await put({ store: 'A점', sku: '80001', status: 'x' })).status, 400);
+  assert.strictEqual((await put({ store: 'A점', sku: '80001', status: 'shown' })).status, 200);
+  await put({ store: 'A 점', sku: '80001', status: 'none' }); // 같은 매장 → 덮어씀
+  await put({ store: 'B점', items: [{ sku: '80001', status: 'shown' }, { sku: '80002', status: 'stock' }] }); // 일괄
+  await put({ store: 'C점', sku: '80002', status: 'shown' });
+  await put({ store: 'C점', sku: '80002', status: '' }); // 취소
+  const mine = await (await fetch(base + '/api/display/mine?store=' + encodeURIComponent('A점'), { headers: staff })).json();
+  assert.deepStrictEqual(mine, { 80001: 'none' });
+  const rep = await (await fetch(base + '/api/admin/display', { headers: admin })).json();
+  const k1 = rep.skus.find((k) => k.sku === '80001'), k2 = rep.skus.find((k) => k.sku === '80002');
+  assert.deepStrictEqual([k1.color, k1.shown, k1.none, k1.checked, k1.rate], ['BLACK', 1, 1, 2, 50]);
+  assert.deepStrictEqual(k1.stores.none, ['A점']);
+  assert.deepStrictEqual([k2.stock, k2.checked], [1, 1]);
+  assert.deepStrictEqual(rep.stores.map((x) => x.name).sort(), ['A점', 'B점']);
+  // 상품 표의 진열률도 진열 체크에서 계산
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
-  const x = s.products.find((p) => p.id === pr.id);
-  assert.deepStrictEqual(x.display, { shown: 2, stock: 1, none: 1, unknown: 0 });
-  assert.strictEqual(x.displayRate, 50);
-  const csv = await (await fetch(base + '/api/admin/evaluations.csv', { headers: admin })).text();
-  assert.match(csv, /진열 여부/);
-  assert.match(csv, /창고 재고만 있음/);
+  const pr = s.products.find((x) => x.code === 'DSP-1');
+  assert.deepStrictEqual([pr.display, pr.displayRate], [{ shown: 1, stock: 1, none: 1 }, 33]);
+  const mx = await (await fetch(base + '/api/admin/display-matrix.csv', { headers: admin })).text();
+  assert.match(mx, /DSP-1-BLACK/);
+  assert.match(mx, /"B점","\d+\/\d+".*"진열"/);
+  const sm = await (await fetch(base + '/api/admin/display-summary.csv', { headers: admin })).text();
+  assert.match(sm, /"DSP-1","BLACK","80001"/);
+  // 매장 전체 삭제에 진열 체크도 포함
+  const d = await (await fetch(base + `/api/admin/stores/${encodeURIComponent('B점')}?confirm=${encodeURIComponent('B점')}`, { method: 'DELETE', headers: admin })).json();
+  assert.strictEqual(d.deletedDisplays, 2);
   await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
+  const rep2 = await (await fetch(base + '/api/admin/display', { headers: admin })).json();
+  assert.ok(!rep2.skus.some((k) => k.sku === '80001'));
 });
 
 test('품목 필수', async () => {

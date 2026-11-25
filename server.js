@@ -41,7 +41,7 @@ const OPTIONS = {
   aspectsByCategory: Object.fromEntries(CATEGORIES.map((c) => [c, aspectsFor(c)])),
   defaultAspects: aspectsFor(''),
   sales: { good: '잘 팔림', normal: '보통', poor: '잘 안 팔림' },
-  display: { shown: '진열 중', stock: '창고 재고만 있음', none: '매장에 없음' },
+  display: { shown: '진열', stock: '창고만', none: '없음' }, // 진열 체크 (매장 × SKU)
   // 2-1은 상품 자체가 아닌 '판매 요인'만 묻는다 (상품 장단점은 1-1에서)
   sellReasons: [
     '직원 추천·코디 제안', '할인·프로모션', '시즌·날씨와 잘 맞음', '눈에 잘 띄는 진열', '사이즈·컬러 재고 충분',
@@ -61,9 +61,9 @@ const OPTIONS = {
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], summaries: d.summaries || {} };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], summaries: d.summaries || {}, displays: d.displays || [] };
   } catch {
-    return { products: [], evaluations: [], ztec: [], summaries: {} };
+    return { products: [], evaluations: [], ztec: [], summaries: {}, displays: [] };
   }
 }
 const db = loadDb();
@@ -238,9 +238,9 @@ function summary() {
   const products = db.products.map((p) => {
     const es = db.evaluations.filter((e) => e.productId === p.id);
     const sales = { good: 0, normal: 0, poor: 0 };
-    const display = { shown: 0, stock: 0, none: 0, unknown: 0 };
-    es.forEach((e) => display[e.display in OPTIONS.display ? e.display : 'unknown']++);
-    const answered = es.length - display.unknown;
+    const display = { shown: 0, stock: 0, none: 0 };
+    db.displays.forEach((d) => { if (d.productId === p.id) display[d.status]++; });
+    const answered = display.shown + display.stock + display.none;
     es.forEach((e) => sales[e.sales]++);
     return {
       ...publicProduct(p),
@@ -283,6 +283,41 @@ function ztecSummary() {
     reactionDist: [1, 2, 3, 4, 5].map((n) => z.filter((e) => e.reaction === n).length),
     ease,
     entries: z.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+  };
+}
+
+// ---------- 진열 현황 (매장 × SKU) ----------
+// SKU = 품번 × 컬러(PLC). PLC가 없는 상품은 상품 자체를 SKU 하나로 본다
+const skusOf = (p) => ((p.plcs && p.plcs.length) ? p.plcs.map((q) => ({ sku: q.plc, color: q.color })) : [{ sku: 'P-' + p.id, color: '' }]);
+const skuIndex = () => {
+  const map = new Map();
+  db.products.filter((p) => p.active).forEach((p) => skusOf(p).forEach((k) => map.set(k.sku, { ...k, product: p })));
+  return map;
+};
+function displayReport() {
+  const idx = skuIndex();
+  const skus = [...idx.values()].map(({ sku, color, product: p }) => {
+    const ds = db.displays.filter((d) => d.sku === sku);
+    const by = { shown: [], stock: [], none: [] };
+    ds.forEach((d) => by[d.status].push(d.store));
+    const n = ds.length;
+    return {
+      sku, color, productId: p.id, code: p.code || '', name: p.name, line: lineOf(p), type: typeOf(p), category: p.category, imageUrl: imageUrl(p),
+      shown: by.shown.length, stock: by.stock.length, none: by.none.length, checked: n,
+      rate: n ? Math.round((by.shown.length / n) * 100) : null, stores: by,
+    };
+  });
+  const storeNames = [...new Set(db.displays.map((d) => d.store))];
+  const stores = storeNames.map((name) => {
+    const mine = db.displays.filter((d) => d.store === name && idx.has(d.sku));
+    return { name, checked: mine.length, shown: mine.filter((d) => d.status === 'shown').length, none: mine.filter((d) => d.status === 'none').length };
+  }).sort((a, b) => a.checked - b.checked || a.name.localeCompare(b.name));
+  const all = db.displays.filter((d) => idx.has(d.sku));
+  return {
+    totalSkus: idx.size,
+    stores,
+    totals: { checks: all.length, shown: all.filter((d) => d.status === 'shown').length, stock: all.filter((d) => d.status === 'stock').length, none: all.filter((d) => d.status === 'none').length },
+    skus,
   };
 }
 
@@ -379,7 +414,7 @@ function summarySource(key) {
     title: `${product.code} ${product.name} (${typeOf(product) || product.category})`,
     body: [
       `평가 매장 ${es.length}곳, 평균 고객 반응 ${ps.avgReaction}/5, 판매 반응 잘 팔림 ${ps.sales.good}·보통 ${ps.sales.normal}·잘 안 팔림 ${ps.sales.poor}`,
-      `현재 진열: 진열 중 ${ps.display.shown}·창고 재고만 ${ps.display.stock}·매장에 없음 ${ps.display.none}` + (ps.display.unknown ? `·미응답 ${ps.display.unknown}` : ''),
+      `매장 진열 체크(컬러별 합계): 진열 ${ps.display.shown}·창고만 ${ps.display.stock}·없음 ${ps.display.none}`,
       `장점으로 꼽힌 항목(횟수): ${top(ps.pros)}`,
       `단점으로 꼽힌 항목(횟수): ${top(ps.cons)}`,
       `판매를 도운 요인: ${top(ps.sellReasons)}`,
@@ -419,6 +454,26 @@ async function handle(req, res) {
     if (m === 'GET' && p === '/admin') return serveStatic(res, 'admin.html');
     if (m === 'GET' && p === '/api/admin/summary') return send(res, 200, summary());
 
+    // ---- 진열 현황 ----
+    if (m === 'GET' && p === '/api/admin/display') return send(res, 200, displayReport());
+    if (m === 'GET' && (p === '/api/admin/display-matrix.csv' || p === '/api/admin/display-summary.csv')) {
+      const rep = displayReport();
+      const skus = rep.skus.slice().sort((a, b) => (a.code + a.sku).localeCompare(b.code + b.sku));
+      let rows;
+      if (p.endsWith('matrix.csv')) {
+        // 행 = 매장, 열 = SKU (품번-컬러)
+        const st = Object.fromEntries(db.displays.map((d) => [`${d.store}\u0000${d.sku}`, OPTIONS.display[d.status]]));
+        rows = [['매장명', '체크한 SKU', ...skus.map((k) => `${k.code}${k.color ? '-' + k.color : ''}`)]];
+        rep.stores.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((s) =>
+          rows.push([s.name, `${s.checked}/${rep.totalSkus}`, ...skus.map((k) => st[`${s.name}\u0000${k.sku}`] || '')]));
+      } else {
+        rows = [['품번', '컬러', 'PLC', '상품', '구분', '복종', '진열 매장', '창고만', '없음', '체크한 매장', '진열률(%)', '없음 매장 목록']];
+        skus.forEach((k) => rows.push([k.code, k.color, k.sku.startsWith('P-') ? '' : k.sku, k.name, k.line, k.type, k.shown, k.stock, k.none, k.checked, k.rate ?? '', k.stores.none.join(', ')]));
+      }
+      const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+      return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${p.split('/').pop()}"` });
+    }
+
     // ---- 평가 삭제 ----
     // 상품의 매장별 평가 전체 목록
     const pev = p.match(/^\/api\/admin\/products\/([\w-]+)\/evaluations$/);
@@ -452,8 +507,10 @@ async function handle(req, res) {
       const ev = db.evaluations.length, zt = db.ztec.length;
       db.evaluations = db.evaluations.filter((e) => !sameName(e.staff, store));
       db.ztec = db.ztec.filter((e) => !sameName(e.store, store));
+      const dp = db.displays.length;
+      db.displays = db.displays.filter((d) => !sameName(d.store, store));
       saveDb();
-      return send(res, 200, { ok: true, deletedEvaluations: ev - db.evaluations.length, deletedZtec: zt - db.ztec.length });
+      return send(res, 200, { ok: true, deletedEvaluations: ev - db.evaluations.length, deletedZtec: zt - db.ztec.length, deletedDisplays: dp - db.displays.length });
     }
 
     // AI 의견 요약: GET = 저장된 요약, POST = 새로 요약
@@ -553,6 +610,7 @@ async function handle(req, res) {
       removePhotos(product);
       const before = db.evaluations.length;
       db.evaluations = db.evaluations.filter((e) => e.productId !== product.id);
+      db.displays = db.displays.filter((d) => d.productId !== product.id);
       db.products = db.products.filter((x) => x.id !== product.id);
       saveDb();
       return send(res, 200, { ok: true, deletedEvaluations: before - db.evaluations.length });
@@ -665,11 +723,11 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
       const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
-      const rows = [['수정일시', '매장명', '품번', '상품', '구분', '품목', '복종', '진열 여부', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
+      const rows = [['수정일시', '매장명', '품번', '상품', '구분', '품목', '복종', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
       db.evaluations.forEach((e) => {
         const pr = prodOf[e.productId] || {};
         rows.push([
-          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.id ? lineOf(pr) : '', pr.category || '', pr.id ? typeOf(pr) : '', OPTIONS.display[e.display] || '', e.reaction, OPTIONS.sales[e.sales],
+          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.id ? lineOf(pr) : '', pr.category || '', pr.id ? typeOf(pr) : '', e.reaction, OPTIONS.sales[e.sales],
           (e.sellReasons || []).join(', '), e.noBuyReasons.join(', '), e.pros.join(', '), e.prosNote, e.cons.join(', '), e.consNote, e.missing, e.improvement,
           e.ageGroups.join(', '), e.genders.join(', '),
         ]);
@@ -696,6 +754,35 @@ async function handle(req, res) {
 
   if (m === 'GET' && p === '/api/options') {
     return send(res, 200, { ...OPTIONS, products: db.products.filter((x) => x.active).map((x) => ({ ...publicProduct(x), imageUrl: imageUrl(x) })) });
+  }
+
+  // 진열 체크: 내 매장 상태 / 저장 (한 번에 여러 SKU도 가능, status '' 는 체크 취소)
+  if (m === 'GET' && p === '/api/display/mine') {
+    const store = cleanText(url.searchParams.get('store'), 30);
+    const mine = {};
+    if (store) db.displays.forEach((d) => { if (sameName(d.store, store)) mine[d.sku] = d.status; });
+    return send(res, 200, mine);
+  }
+  if (m === 'POST' && p === '/api/display') {
+    const b = await readBody(req, 256 * 1024);
+    const store = cleanText(b.store, 30);
+    if (!store) return send(res, 400, { error: '매장명을 먼저 입력해 주세요.' });
+    const items = Array.isArray(b.items) ? b.items.slice(0, 1000) : [{ sku: b.sku, status: b.status }];
+    const idx = skuIndex();
+    for (const it of items) {
+      if (!idx.has(String(it.sku))) return send(res, 400, { error: `없는 SKU예요: ${it.sku}` });
+      if (it.status !== '' && !(it.status in OPTIONS.display)) return send(res, 400, { error: '진열 상태가 올바르지 않아요.' });
+    }
+    const now = new Date().toISOString();
+    for (const it of items) {
+      const sku = String(it.sku);
+      const i = db.displays.findIndex((d) => d.sku === sku && sameName(d.store, store));
+      if (it.status === '') { if (i >= 0) db.displays.splice(i, 1); continue; }
+      const rec = { store: i >= 0 ? db.displays[i].store : store, sku, productId: idx.get(sku).product.id, status: it.status, updatedAt: now };
+      if (i >= 0) db.displays[i] = rec; else db.displays.push(rec);
+    }
+    saveDb();
+    return send(res, 200, { ok: true, count: items.length });
   }
 
   // Z-TEC 매장 의견 (매장당 1회, 다시 저장하면 수정)
@@ -731,7 +818,6 @@ async function handle(req, res) {
     const staff = cleanText(b.staff, 30);
     if (!staff) return send(res, 400, { error: '매장명을 입력해 주세요.' });
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: '고객 반응을 선택해 주세요.' });
-    if (!(b.display in OPTIONS.display)) return send(res, 400, { error: '현재 매장 진열 여부를 선택해 주세요.' });
     if (!(b.sales in OPTIONS.sales)) return send(res, 400, { error: '판매 반응을 선택해 주세요.' });
     // 판매 반응에 따라 이어지는 질문(2-1) 필수 확인
     if (b.sales === 'good' && !pick(b.sellReasons, OPTIONS.sellReasons).length) return send(res, 400, { error: '판매를 도운 요인을 하나 이상 골라 주세요.' });
@@ -748,7 +834,6 @@ async function handle(req, res) {
       productId: product.id,
       staff,
       reaction: b.reaction,
-      display: b.display,
       sales: b.sales,
       noBuyReasons: b.sales === 'good' ? [] : pick(b.noBuyReasons, OPTIONS.noBuyReasons),
       sellReasons: b.sales === 'good' ? pick(b.sellReasons, OPTIONS.sellReasons) : [],

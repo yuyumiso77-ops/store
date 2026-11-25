@@ -10,6 +10,47 @@
 <body>
 <main class="wrap wide">
   <header class="brand"><img src="/logo.png" alt="FootJoy" width="473" height="120"></header>
+  <div class="modetabs" id="adminTabs">
+    <button type="button" data-tab="analysis">📊 반응 분석</button>
+    <button type="button" data-tab="display">📦 진열 현황</button>
+  </div>
+
+  <div id="tabDisplay" hidden>
+    <div class="product-head">
+      <div>
+        <h1>진열 현황</h1>
+        <p class="sub">매장별로 체크한 SKU(품번 × 컬러) 진열 상태를 모아 봅니다.</p>
+      </div>
+      <div class="actions">
+        <a class="btn" href="/?mode=display" target="_blank">진열 체크 화면 열기</a>
+        <a class="btn" href="/api/admin/display-summary.csv">SKU별 요약 CSV</a>
+        <a class="btn accent" href="/api/admin/display-matrix.csv">매장 × SKU 표 CSV</a>
+      </div>
+    </div>
+    <div class="card">
+      <div class="stats" id="dStats"></div>
+      <div id="dStores" style="margin-top:12px"></div>
+    </div>
+    <div class="chips bold-chips" id="dLineF" style="margin-bottom:8px"></div>
+    <div class="row" style="align-items:center;margin-bottom:8px">
+      <div class="chips" id="dTypeF" style="flex:1 1 auto"></div>
+      <input type="search" id="dSearchA" placeholder="품번·상품명·컬러 검색" style="flex:0 1 240px">
+    </div>
+    <div class="listctl">
+      <span class="hint" id="dCount"></span>
+      <label class="hint">정렬
+        <select id="dSort">
+          <option value="rateAsc">진열률 낮은 순</option>
+          <option value="noneDesc">'없음' 많은 순</option>
+          <option value="uncheckedDesc">미체크 많은 순</option>
+          <option value="code">품번순</option>
+        </select>
+      </label>
+    </div>
+    <div id="dRows"></div>
+  </div>
+
+  <div id="tabAnalysis">
   <div class="product-head">
     <div>
       <h1>고객 반응 분석</h1>
@@ -67,7 +108,7 @@
     <p class="error" id="addError"></p>
   </div>
 
-  <div class="chips seg" id="lineFilter" style="margin-bottom:8px"></div>
+  <div class="chips bold-chips" id="lineFilter" style="margin-bottom:8px"></div>
   <div class="row" style="align-items:center;margin-bottom:12px">
     <div class="chips" id="filter" style="flex:1 1 auto"></div>
     <input type="search" id="search" placeholder="품번·상품명·복종 검색" style="flex:0 1 240px">
@@ -90,6 +131,7 @@
     </label>
   </div>
   <div id="products"></div>
+  </div>
 </main>
 
 <script>
@@ -358,7 +400,7 @@ function renderProduct(p) {
     el('div', { class: 'stats' },
       stat(p.count, '평가한 매장 수'),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
-      stat(p.displayRate == null ? '-' : p.displayRate + '%', `진열률 · 진열 ${p.display.shown} · 창고만 ${p.display.stock} · 없음 ${p.display.none}` + (p.display.unknown ? ` · 미응답 ${p.display.unknown}` : '')),
+      stat(p.displayRate == null ? '-' : p.displayRate + '%', `진열률(진열 체크) · 진열 ${p.display.shown} · 창고만 ${p.display.stock} · 없음 ${p.display.none}` + (p.display.unknown ? ` · 미응답 ${p.display.unknown}` : '')),
       stat(`${p.sales.good} · ${p.sales.normal} · ${p.sales.poor}`, '판매 반응: 잘 팔림 · 보통 · 안 팔림')),
     p.count ? el('div', { class: 'cols' },
       rank('👍 상품 장점', p.pros, p.count),
@@ -619,6 +661,90 @@ async function load() {
 }
 
 // 품목 필터
+// ---- 진열 현황 탭 ----
+let DREP = null, DL = '', DT = '';
+const DOPEN = new Set();
+function setTab(t) {
+  const tab = t === 'display' ? 'display' : 'analysis';
+  $('tabDisplay').hidden = tab !== 'display';
+  $('tabAnalysis').hidden = tab !== 'analysis';
+  $('adminTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  try { localStorage.setItem('adminTab', tab); } catch {}
+  if (tab === 'display') loadDisplayTab();
+}
+async function loadDisplayTab() {
+  $('dRows').replaceChildren(el('p', { class: 'hint' }, '불러오는 중…'));
+  DREP = await api('/api/admin/display');
+  renderDisplayTab();
+}
+function renderDisplayTab() {
+  const r = DREP;
+  const t = r.totals;
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '-');
+  $('dStats').replaceChildren(
+    stat(r.stores.length + '곳', '체크한 매장'),
+    stat(r.totalSkus, 'SKU (품번 × 컬러)'),
+    stat(pct(t.shown, t.checks), `전체 진열률 · 진열 ${t.shown} · 창고 ${t.stock} · 없음 ${t.none}`),
+    stat(t.none, "'매장에 없음' 체크 수"),
+    stat(pct(t.checks, r.stores.length * r.totalSkus), '체크 완료율 (참여 매장 기준)'));
+  // 매장별 진행
+  const pills = el('div', { class: 'pills', hidden: '' }, r.stores.map((s) =>
+    el('span', { class: 'pill' + (s.checked >= r.totalSkus ? ' full' : '') }, `${s.name} ${s.checked}/${r.totalSkus}` + (s.none ? ` · 없음 ${s.none}` : ''))));
+  const full = r.stores.filter((s) => s.checked >= r.totalSkus).length;
+  $('dStores').replaceChildren(...(r.stores.length
+    ? [el('span', { class: 'hint' }, `체크 완료 ${full}곳 · 진행 중 ${r.stores.length - full}곳 `),
+       el('button', { type: 'button', class: 'linkbtn', style: 'padding:0', onclick: (e) => { pills.hidden = !pills.hidden; e.target.textContent = pills.hidden ? '매장별 보기' : '접기'; } }, '매장별 보기'), pills]
+    : [el('span', { class: 'hint' }, '아직 진열 체크한 매장이 없어요. 평가 화면의 📦 진열 체크 탭에서 매장마다 체크해요.')]));
+  // 필터
+  const lines = [...new Set(r.skus.map((k) => k.line))];
+  $('dLineF').replaceChildren(...(lines.length > 1 ? [['', '전체'], ...lines.map((l) => [l, l || '구분 없음'])].map(([k, l]) =>
+    el('button', { type: 'button', class: DL === k ? 'on' : '', onclick: () => { DL = k; DT = ''; renderDisplayTab(); } }, l)) : []));
+  const base = r.skus.filter((k) => !DL || k.line === DL);
+  const types = [...new Set(base.map((k) => k.type || k.category))];
+  $('dTypeF').replaceChildren(...[['', '모든 복종'], ...types.map((x) => [x, x])].map(([k, l]) =>
+    el('button', { type: 'button', class: DT === k ? 'on' : '', onclick: () => { DT = k; renderDisplayTab(); } }, l)));
+  const q = $('dSearchA').value.trim().toLowerCase();
+  const nStores = r.stores.length;
+  let list = base.filter((k) => (!DT || (k.type || k.category) === DT) && (!q || [k.code, k.name, k.color].some((v) => (v || '').toLowerCase().includes(q))));
+  const val = {
+    rateAsc: (k) => (k.rate == null ? 999 : k.rate),
+    noneDesc: (k) => -k.none,
+    uncheckedDesc: (k) => -(nStores - k.checked),
+    code: () => 0,
+  }[$('dSort').value];
+  list.sort((a, b) => val(a) - val(b) || (a.code + a.color).localeCompare(b.code + b.color));
+  $('dCount').textContent = `SKU ${list.length}개`;
+  const allStores = r.stores.map((s) => s.name);
+  $('dRows').replaceChildren(...list.map((k) => {
+    const n = k.checked;
+    const w = (v) => (n ? (v / n) * 100 : 0);
+    const det = el('div', { class: 'sdetail' });
+    const row = el('div', { class: 'srow', role: 'button', tabindex: '0' },
+      k.imageUrl ? el('img', { class: 'rimg', src: k.imageUrl, alt: '', loading: 'lazy' }) : el('div', { class: 'rimg noimg' }, '없음'),
+      el('div', { class: 'pc name' }, el('b', {}, `${k.code}${k.color ? ' · ' + k.color : ''}`), el('small', {}, `${k.line ? k.line + ' · ' : ''}${k.name}`)),
+      el('div', { class: 'pc num' + (k.rate != null && k.rate < 50 ? ' low' : '') }, el('b', {}, k.rate == null ? '-' : k.rate + '%'), el('small', {}, '진열률')),
+      el('div', { class: 'pc sales' },
+        n ? el('div', { class: 'sbar' }, el('span', { class: 'g', style: `width:${w(k.shown)}%` }), el('span', { class: 'n', style: `width:${w(k.stock)}%` }), el('span', { class: 'p', style: `width:${w(k.none)}%` })) : el('div', { class: 'sbar empty' }),
+        el('small', {}, `진열 ${k.shown} · 창고 ${k.stock} · 없음 ${k.none} · 미체크 ${Math.max(0, nStores - n)}`)),
+      el('span', { class: 'chev' }, '▾'));
+    const open = (on) => {
+      row.classList.toggle('open', on);
+      det.hidden = !on;
+      on ? DOPEN.add(k.sku) : DOPEN.delete(k.sku);
+      if (on && !det.firstChild) {
+        const unchecked = allStores.filter((s) => ![...k.stores.shown, ...k.stores.stock, ...k.stores.none].includes(s));
+        const sec = (label, cls, arr) => el('div', { class: 'sgroup' }, el('b', { class: cls }, `${label} ${arr.length}`), el('div', { class: 'hint' }, arr.length ? arr.join(', ') : '-'));
+        det.append(sec('진열', 'tg', k.stores.shown), sec('창고만', 'tn', k.stores.stock), sec('없음', 'tp', k.stores.none), sec('미체크', '', unchecked),
+          el('div', { class: 'hint' }, k.sku.startsWith('P-') ? '' : `PLC ${k.sku}`));
+      }
+    };
+    row.onclick = () => open(det.hidden);
+    row.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(det.hidden); } };
+    open(DOPEN.has(k.sku));
+    return el('div', { class: 'prow-wrap' }, row, det);
+  }));
+}
+
 let UPLOADING = false;
 let VIEW = (() => { try { return localStorage.getItem('view') || 'table'; } catch { return 'table'; } })();
 let SORT = 'type';
@@ -730,6 +856,12 @@ async function init() {
   $('typeList').replaceChildren(...Object.values(TYPE_ORDER).flat().map((t) => el('option', { value: t })));
   CATS.forEach((c) => { $('category').add(new Option(c, c)); $('upCategory').add(new Option(c, c)); });
   $('search').oninput = renderList;
+  $('adminTabs').querySelectorAll('button').forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
+  $('dSearchA').oninput = () => DREP && renderDisplayTab();
+  $('dSort').onchange = () => DREP && renderDisplayTab();
+  let t0 = 'analysis';
+  try { t0 = localStorage.getItem('adminTab') || 'analysis'; } catch {}
+  setTab(t0);
   $('sortBy').onchange = () => { SORT = $('sortBy').value; renderList(); };
   $('wipeImages').onclick = async () => {
     const n = LAST.filter((p) => p.imageUrl).length;
