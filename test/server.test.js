@@ -88,7 +88,7 @@ test('상품 삭제: 이미지·평가도 함께 삭제', async () => {
   const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9]);
   const r = await fetch(base + '/api/admin/images/DEL-1?category=' + encodeURIComponent('장갑'), { method: 'PUT', headers: { ...admin, 'Content-Type': 'image/jpeg' }, body: jpg });
   const p = (await r.json()).product;
-  await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '민지', reaction: 3, sales: 'normal', prosNote: '그립감', noBuyReasons: ['기타'] }) });
+  await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '민지', reaction: 3, display: 'shown', sales: 'normal', prosNote: '그립감', noBuyReasons: ['기타'] }) });
   assert.strictEqual((await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: staff })).status, 401);
   // 이미지만 삭제
   assert.strictEqual((await fetch(base + `/api/admin/products/${p.id}/image`, { method: 'DELETE', headers: admin })).status, 200);
@@ -104,7 +104,7 @@ test('상품 삭제: 이미지·평가도 함께 삭제', async () => {
 test('반응·판매 엇갈림 표시', async () => {
   const p = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '갭 테스트', category: '어패럴' }) })).json();
   for (const staffName of ['가', '나'])
-    await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: staffName, reaction: 5, pros: ['디자인'], sales: 'poor', noBuyReasons: ['맞는 사이즈 결품'] }) });
+    await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: staffName, reaction: 5, display: 'shown', pros: ['디자인'], sales: 'poor', noBuyReasons: ['맞는 사이즈 결품'] }) });
   const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
   assert.strictEqual(s.products.find((x) => x.id === p.id).gap, 'goodReactionPoorSales');
   await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: admin });
@@ -237,7 +237,7 @@ test('AI 의견 요약: 키 없으면 안내, 있으면 요약하고 저장(기�
 
 test('평가 삭제: 한 건 / Z-TEC 한 건 / 매장 전체', async () => {
   const pr = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '삭제 테스트', category: '장갑' }) })).json();
-  const ev = (store) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: pr.id, staff: store, reaction: 4, pros: ['그립감'], sales: 'good', sellReasons: ['선물 수요'] }) });
+  const ev = (store) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: pr.id, staff: store, reaction: 4, display: 'shown', pros: ['그립감'], sales: 'good', sellReasons: ['선물 수요'] }) });
   await ev('테스트점'); await ev('진짜점');
   await fetch(base + '/api/ztec', { method: 'POST', headers: staff, body: JSON.stringify({ store: '테스트 점', reaction: 3, ease: 'normal' }) });
   let list = await (await fetch(base + `/api/admin/products/${pr.id}/evaluations`, { headers: admin })).json();
@@ -264,6 +264,25 @@ test('평가 삭제: 한 건 / Z-TEC 한 건 / 매장 전체', async () => {
   await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
 });
 
+test('진열 여부: 필수, 집계·CSV 반영', async () => {
+  const pr = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '진열 테스트', category: '용품' }) })).json();
+  const post = (b) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: pr.id, reaction: 4, pros: ['디자인'], sales: 'good', sellReasons: ['선물 수요'], ...b }) });
+  assert.strictEqual((await post({ staff: 'A점' })).status, 400); // 진열 여부 없음
+  assert.strictEqual((await post({ staff: 'A점', display: 'x' })).status, 400);
+  await post({ staff: 'A점', display: 'shown' });
+  await post({ staff: 'B점', display: 'shown' });
+  await post({ staff: 'C점', display: 'none' });
+  await post({ staff: 'D점', display: 'stock' });
+  const s = await (await fetch(base + '/api/admin/summary', { headers: admin })).json();
+  const x = s.products.find((p) => p.id === pr.id);
+  assert.deepStrictEqual(x.display, { shown: 2, stock: 1, none: 1, unknown: 0 });
+  assert.strictEqual(x.displayRate, 50);
+  const csv = await (await fetch(base + '/api/admin/evaluations.csv', { headers: admin })).text();
+  assert.match(csv, /진열 여부/);
+  assert.match(csv, /창고 재고만 있음/);
+  await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);
@@ -275,21 +294,21 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
   assert.deepStrictEqual(opts.products.map((x) => x.name), ['쿨링 폴로']);
 
   const post = (b) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '민지', ...b }) });
-  assert.strictEqual((await post({ reaction: 4 })).status, 400); // 판매 반응 누락
-  assert.strictEqual((await post({ reaction: 4, sales: 'good', staff: ' ' })).status, 400); // 이름 누락
+  assert.strictEqual((await post({ reaction: 4, display: 'shown' })).status, 400); // 판매 반응 누락
+  assert.strictEqual((await post({ reaction: 4, display: 'shown', sales: 'good', staff: ' ' })).status, 400); // 이름 누락
 
   // 민지: 처음 저장 → 같은 이름(공백 차이)으로 다시 저장하면 수정
-  assert.strictEqual((await post({ reaction: 2, sales: 'poor', noBuyReasons: ['정가 부담·할인 없음'] })).status, 400); // 나쁨인데 아쉬운 점 없음
-  assert.strictEqual((await post({ reaction: 5, sales: 'good', cons: ['가격(가치 대비)'], sellReasons: ['선물 수요'] })).status, 400); // 좋음인데 좋은 점 없음
-  assert.strictEqual((await post({ reaction: 5, sales: 'good', pros: ['디자인'] })).status, 400); // 잘 팔린 이유 없음
-  assert.strictEqual((await post({ reaction: 2, sales: 'poor', cons: ['가격(가치 대비)'] })).status, 400); // 안 팔린 이유 없음
-  assert.strictEqual((await post({ reaction: 3, sales: 'normal', noBuyReasons: ['기타'] })).status, 400); // 보통인데 둘 다 없음
-  assert.strictEqual((await post({ reaction: 2, sales: 'poor', consNote: '기장이 짧음', noBuyReasons: ['정가 부담·할인 없음'] })).status, 201);
-  const upd = await post({ staff: '민 지', reaction: 5, sales: 'good', sellReasons: ['직원 추천·코디 제안', '없는이유'], pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['정가 부담·할인 없음'], missing: '105 네이비', ageGroups: ['40대', '50대', '90대'], genders: ['남성'] });
+  assert.strictEqual((await post({ reaction: 2, display: 'shown', sales: 'poor', noBuyReasons: ['정가 부담·할인 없음'] })).status, 400); // 나쁨인데 아쉬운 점 없음
+  assert.strictEqual((await post({ reaction: 5, display: 'shown', sales: 'good', cons: ['가격(가치 대비)'], sellReasons: ['선물 수요'] })).status, 400); // 좋음인데 좋은 점 없음
+  assert.strictEqual((await post({ reaction: 5, display: 'shown', sales: 'good', pros: ['디자인'] })).status, 400); // 잘 팔린 이유 없음
+  assert.strictEqual((await post({ reaction: 2, display: 'shown', sales: 'poor', cons: ['가격(가치 대비)'] })).status, 400); // 안 팔린 이유 없음
+  assert.strictEqual((await post({ reaction: 3, display: 'shown', sales: 'normal', noBuyReasons: ['기타'] })).status, 400); // 보통인데 둘 다 없음
+  assert.strictEqual((await post({ reaction: 2, display: 'shown', sales: 'poor', consNote: '기장이 짧음', noBuyReasons: ['정가 부담·할인 없음'] })).status, 201);
+  const upd = await post({ staff: '민 지', reaction: 5, display: 'shown', sales: 'good', sellReasons: ['직원 추천·코디 제안', '없는이유'], pros: ['신축성', '신축성', '그립감'], prosNote: '=스윙이 편해요', noBuyReasons: ['정가 부담·할인 없음'], missing: '105 네이비', ageGroups: ['40대', '50대', '90대'], genders: ['남성'] });
   assert.strictEqual(upd.status, 200);
   assert.strictEqual((await upd.json()).updated, true);
   // 준호
-  assert.strictEqual((await post({ staff: '준호', reaction: 2, sales: 'poor', pros: ['신축성'], cons: ['가격(가치 대비)'], noBuyReasons: ['맞는 사이즈 결품'], improvement: '반팔 출시', ageGroups: ['40대'] })).status, 201);
+  assert.strictEqual((await post({ staff: '준호', reaction: 2, display: 'shown', sales: 'poor', pros: ['신축성'], cons: ['가격(가치 대비)'], noBuyReasons: ['맞는 사이즈 결품'], improvement: '반팔 출시', ageGroups: ['40대'] })).status, 201);
 
   const mine = await (await fetch(base + '/api/evaluations/mine?staff=' + encodeURIComponent('민지'), { headers: staff })).json();
   assert.strictEqual(mine.length, 1);
@@ -317,5 +336,5 @@ test('상품 등록 → 직원 평가(수정 포함) → 집계 → CSV', async 
 
   await fetch(base + `/api/admin/products/${p.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ active: false }) });
   assert.deepStrictEqual((await (await fetch(base + '/api/options', { headers: staff })).json()).products, []);
-  assert.strictEqual((await post({ reaction: 5, sales: 'good', pros: ['디자인'], sellReasons: ['선물 수요'] })).status, 400); // 조사 중지된 상품
+  assert.strictEqual((await post({ reaction: 5, display: 'shown', sales: 'good', pros: ['디자인'], sellReasons: ['선물 수요'] })).status, 400); // 조사 중지된 상품
 });

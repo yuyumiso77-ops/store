@@ -59,6 +59,11 @@
     </div>
 
     <div id="survey" hidden>
+      <div class="card display-card">
+        <span class="q">📍 현재 매장에 진열되어 있나요? <span class="req">*</span></span>
+        <div class="chips" id="display"></div>
+      </div>
+
       <div class="card">
         <span class="q">1. 상품 자체에 대한 고객 반응은 어땠나요? <span class="req">*</span></span>
         <p class="hint qdesc">디자인·핏·소재처럼 <b>상품만 놓고</b> 고객들이 보인 반응이에요. 실제로 팔렸는지는 2번에서 따로 물어요.</p>
@@ -121,7 +126,7 @@
 
 <script>
 const FACES = ['', '😠', '🙁', '😐', '🙂', '😍'];
-const FIELDS = { reaction: 0, sales: '', sellReasons: [], noBuyReasons: [], pros: [], cons: [], ageGroups: [], genders: [] };
+const FIELDS = { display: '', reaction: 0, sales: '', sellReasons: [], noBuyReasons: [], pros: [], cons: [], ageGroups: [], genders: [] };
 const TEXTS = ['prosNote', 'consNote', 'missing', 'improvement'];
 const state = structuredClone(FIELDS);
 let OPTS = null;
@@ -213,6 +218,7 @@ async function init() {
   chips('reaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${OPTS.reactions[n]}`]));
   $('reaction').querySelectorAll('button').forEach((b) => (b.onclick = () => { state.reaction = Number(b.dataset.v); paint('reaction'); syncWhy(); }));
   ['pros', 'cons'].forEach((k) => ($(k + 'Toggle').onclick = () => { openExtra[k] = true; syncWhy(); $(k + 'Note').focus(); }));
+  chips('display', Object.entries(OPTS.display));
   chips('sales', Object.entries(OPTS.sales), { onChange: syncReasons });
   chips('noBuyReasons', OPTS.noBuyReasons.map((x) => [x, x]), { multi: true });
   chips('sellReasons', OPTS.sellReasons.map((x) => [x, x]), { multi: true });
@@ -494,6 +500,7 @@ $('form').onsubmit = async (e) => {
   $('error').textContent = '';
   $('submit').disabled = true;
   try {
+    if (!state.display) { $('display').scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error('📍 현재 매장 진열 여부를 선택해 주세요.'); }
     const werr = whyError();
     if (werr) { $('why').scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error(werr); }
     const serr = state.sales === 'good' && !state.sellReasons.length ? '2-1. 판매를 도운 요인을 하나 이상 골라 주세요.'

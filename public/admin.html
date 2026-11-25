@@ -83,6 +83,7 @@
         <option value="reactionDesc">고객 반응 높은 순</option>
         <option value="poorDesc">'잘 안 팔림' 비율 높은 순</option>
         <option value="goodDesc">'잘 팔림' 비율 높은 순</option>
+        <option value="displayAsc">진열률 낮은 순</option>
         <option value="countAsc">평가 매장 적은 순</option>
         <option value="countDesc">평가 매장 많은 순</option>
       </select>
@@ -271,6 +272,7 @@ function renderRow(p) {
     el('div', { class: 'pc name' }, el('b', {}, p.code || p.name), el('small', {}, p.name)),
     el('div', { class: 'pc num' }, el('b', {}, n), el('small', {}, '매장')),
     el('div', { class: 'pc num' }, el('b', {}, fmt(p.avgReaction)), el('small', {}, '반응')),
+    el('div', { class: 'pc num' + (p.displayRate != null && p.displayRate < 50 ? ' low' : '') }, el('b', {}, p.displayRate == null ? '-' : p.displayRate + '%'), el('small', {}, '진열')),
     el('div', { class: 'pc sales' },
       n ? el('div', { class: 'sbar', title: `잘 팔림 ${p.sales.good} · 보통 ${p.sales.normal} · 잘 안 팔림 ${p.sales.poor}` },
         el('span', { class: 'g', style: `width:${pct(p.sales.good)}%` }), el('span', { class: 'n', style: `width:${pct(p.sales.normal)}%` }), el('span', { class: 'p', style: `width:${pct(p.sales.poor)}%` }))
@@ -356,6 +358,7 @@ function renderProduct(p) {
     el('div', { class: 'stats' },
       stat(p.count, '평가한 매장 수'),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
+      stat(p.displayRate == null ? '-' : p.displayRate + '%', `진열률 · 진열 ${p.display.shown} · 창고만 ${p.display.stock} · 없음 ${p.display.none}` + (p.display.unknown ? ` · 미응답 ${p.display.unknown}` : '')),
       stat(`${p.sales.good} · ${p.sales.normal} · ${p.sales.poor}`, '판매 반응: 잘 팔림 · 보통 · 안 팔림')),
     p.count ? el('div', { class: 'cols' },
       rank('👍 상품 장점', p.pros, p.count),
@@ -692,6 +695,7 @@ function renderList() {
       reactionDesc: (p) => (p.count ? -p.avgReaction : 99),
       poorDesc: (p) => -ratio(p, 'poor'),
       goodDesc: (p) => -ratio(p, 'good'),
+      displayAsc: (p) => (p.displayRate == null ? 999 : p.displayRate),
       countAsc: (p) => p.count,
       countDesc: (p) => -p.count,
     }[SORT];

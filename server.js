@@ -41,6 +41,7 @@ const OPTIONS = {
   aspectsByCategory: Object.fromEntries(CATEGORIES.map((c) => [c, aspectsFor(c)])),
   defaultAspects: aspectsFor(''),
   sales: { good: '잘 팔림', normal: '보통', poor: '잘 안 팔림' },
+  display: { shown: '진열 중', stock: '창고 재고만 있음', none: '매장에 없음' },
   // 2-1은 상품 자체가 아닌 '판매 요인'만 묻는다 (상품 장단점은 1-1에서)
   sellReasons: [
     '직원 추천·코디 제안', '할인·프로모션', '시즌·날씨와 잘 맞음', '눈에 잘 띄는 진열', '사이즈·컬러 재고 충분',
@@ -237,6 +238,9 @@ function summary() {
   const products = db.products.map((p) => {
     const es = db.evaluations.filter((e) => e.productId === p.id);
     const sales = { good: 0, normal: 0, poor: 0 };
+    const display = { shown: 0, stock: 0, none: 0, unknown: 0 };
+    es.forEach((e) => display[e.display in OPTIONS.display ? e.display : 'unknown']++);
+    const answered = es.length - display.unknown;
     es.forEach((e) => sales[e.sales]++);
     return {
       ...publicProduct(p),
@@ -245,6 +249,8 @@ function summary() {
       count: es.length,
       avgReaction: avg(es.map((e) => e.reaction)),
       sales,
+      display,
+      displayRate: answered ? Math.round((display.shown / answered) * 100) : null,
       pros: countBy(es.map((e) => e.pros)),
       cons: countBy(es.map((e) => e.cons)),
       noBuyReasons: countBy(es.map((e) => e.noBuyReasons)),
@@ -373,6 +379,7 @@ function summarySource(key) {
     title: `${product.code} ${product.name} (${typeOf(product) || product.category})`,
     body: [
       `평가 매장 ${es.length}곳, 평균 고객 반응 ${ps.avgReaction}/5, 판매 반응 잘 팔림 ${ps.sales.good}·보통 ${ps.sales.normal}·잘 안 팔림 ${ps.sales.poor}`,
+      `현재 진열: 진열 중 ${ps.display.shown}·창고 재고만 ${ps.display.stock}·매장에 없음 ${ps.display.none}` + (ps.display.unknown ? `·미응답 ${ps.display.unknown}` : ''),
       `장점으로 꼽힌 항목(횟수): ${top(ps.pros)}`,
       `단점으로 꼽힌 항목(횟수): ${top(ps.cons)}`,
       `판매를 도운 요인: ${top(ps.sellReasons)}`,
@@ -658,11 +665,11 @@ async function handle(req, res) {
 
     if (m === 'GET' && p === '/api/admin/evaluations.csv') {
       const prodOf = Object.fromEntries(db.products.map((x) => [x.id, x]));
-      const rows = [['수정일시', '매장명', '품번', '상품', '구분', '품목', '복종', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
+      const rows = [['수정일시', '매장명', '품번', '상품', '구분', '품목', '복종', '진열 여부', '고객반응(1~5)', '판매반응', '판매를 도운 요인', '판매를 막은 요인', '장점', '장점 메모', '단점', '단점 메모', '찾았지만 없던 사이즈·색상', '개선 아이디어', '주 구매 연령대', '주 구매 성별']];
       db.evaluations.forEach((e) => {
         const pr = prodOf[e.productId] || {};
         rows.push([
-          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.id ? lineOf(pr) : '', pr.category || '', pr.id ? typeOf(pr) : '', e.reaction, OPTIONS.sales[e.sales],
+          e.updatedAt, e.staff, pr.code || '', pr.name || e.productId, pr.id ? lineOf(pr) : '', pr.category || '', pr.id ? typeOf(pr) : '', OPTIONS.display[e.display] || '', e.reaction, OPTIONS.sales[e.sales],
           (e.sellReasons || []).join(', '), e.noBuyReasons.join(', '), e.pros.join(', '), e.prosNote, e.cons.join(', '), e.consNote, e.missing, e.improvement,
           e.ageGroups.join(', '), e.genders.join(', '),
         ]);
@@ -724,6 +731,7 @@ async function handle(req, res) {
     const staff = cleanText(b.staff, 30);
     if (!staff) return send(res, 400, { error: '매장명을 입력해 주세요.' });
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: '고객 반응을 선택해 주세요.' });
+    if (!(b.display in OPTIONS.display)) return send(res, 400, { error: '현재 매장 진열 여부를 선택해 주세요.' });
     if (!(b.sales in OPTIONS.sales)) return send(res, 400, { error: '판매 반응을 선택해 주세요.' });
     // 판매 반응에 따라 이어지는 질문(2-1) 필수 확인
     if (b.sales === 'good' && !pick(b.sellReasons, OPTIONS.sellReasons).length) return send(res, 400, { error: '판매를 도운 요인을 하나 이상 골라 주세요.' });
@@ -740,6 +748,7 @@ async function handle(req, res) {
       productId: product.id,
       staff,
       reaction: b.reaction,
+      display: b.display,
       sales: b.sales,
       noBuyReasons: b.sales === 'good' ? [] : pick(b.noBuyReasons, OPTIONS.noBuyReasons),
       sellReasons: b.sales === 'good' ? pick(b.sellReasons, OPTIONS.sellReasons) : [],
