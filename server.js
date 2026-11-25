@@ -327,6 +327,55 @@ function displayReport() {
   };
 }
 
+// ---------- 미입고 자동 연동 (상품 평가 ↔ 진열 체크) ----------
+// 평가를 '미입고'로 저장 → 그 상품의 모든 컬러를 진열 체크 '미입고'로.
+// 평가를 미입고에서 다른 상태로 바꾸면 → 그 상품의 '미입고' 진열 체크를 지움.
+function syncDisplayFromEval(store, product, status, prevStatus) {
+  const now = new Date().toISOString();
+  if (status === 'notreceived') {
+    let n = 0;
+    skusOf(product).forEach(({ sku }) => {
+      const i = db.displays.findIndex((d) => d.sku === sku && sameName(d.store, store));
+      const rec = { store: i >= 0 ? db.displays[i].store : store, sku, productId: product.id, status: 'notReceived', updatedAt: now, auto: true };
+      if (i >= 0) { if (db.displays[i].status !== 'notReceived') n++; db.displays[i] = rec; } else { db.displays.push(rec); n++; }
+    });
+    return n ? { display: 'notReceived', count: n } : null;
+  }
+  if (prevStatus === 'notreceived') {
+    const before = db.displays.length;
+    db.displays = db.displays.filter((d) => !(d.productId === product.id && sameName(d.store, store) && d.status === 'notReceived'));
+    const n = before - db.displays.length;
+    return n ? { display: 'cleared', count: n } : null;
+  }
+  return null;
+}
+// 진열 체크에서 한 상품의 모든 컬러가 '미입고' → 평가를 '미입고'로 (이미 정식 평가한 건 그대로).
+// 미입고가 아닌 컬러가 생기면 → '미입고' 평가를 지움.
+function syncEvalFromDisplay(store, productIds) {
+  const out = [];
+  const now = new Date().toISOString();
+  productIds.forEach((pid) => {
+    const product = db.products.find((x) => x.id === pid);
+    if (!product) return;
+    const skus = skusOf(product).map((k) => k.sku);
+    const st = skus.map((sku) => (db.displays.find((d) => d.sku === sku && sameName(d.store, store)) || {}).status);
+    const allNR = st.every((x) => x === 'notReceived');
+    const i = db.evaluations.findIndex((e) => e.productId === pid && sameName(e.staff, store));
+    const ev = i >= 0 ? db.evaluations[i] : null;
+    if (allNR) {
+      if (ev && (ev.status || 'done') === 'done') return; // 정식 평가는 덮어쓰지 않음
+      if (ev && ev.status === 'notreceived') return;
+      const blank = { productId: pid, staff: ev ? ev.staff : store, status: 'notreceived', reaction: 0, sales: '', noBuyReasons: [], sellReasons: [], pros: [], prosNote: '', cons: [], consNote: '', missing: '', improvement: '', ageGroups: [], genders: [], updatedAt: now, auto: true };
+      if (ev) Object.assign(ev, blank); else db.evaluations.push({ id: crypto.randomUUID(), createdAt: now, ...blank });
+      out.push({ productId: pid, code: product.code, evaluation: 'notreceived' });
+    } else if (ev && ev.status === 'notreceived' && st.some((x) => x && x !== 'notReceived')) {
+      db.evaluations.splice(i, 1);
+      out.push({ productId: pid, code: product.code, evaluation: 'cleared' });
+    }
+  });
+  return out;
+}
+
 // ---------- 진열 분석 (진열 체크 × 상품 평가) ----------
 const DA = { highDisplay: 70, lowDisplay: 60, goodReaction: 3.5, badReaction: 2.8, ratio: 0.4, minChecks: 3, minEvals: 3 };
 function displayAnalysis() {
@@ -867,8 +916,9 @@ async function handle(req, res) {
       const rec = { store: i >= 0 ? db.displays[i].store : store, sku, productId: idx.get(sku).product.id, status: it.status, updatedAt: now };
       if (i >= 0) db.displays[i] = rec; else db.displays.push(rec);
     }
+    const synced = syncEvalFromDisplay(store, [...new Set(items.map((it) => idx.get(String(it.sku)).product.id))]);
     saveDb();
-    return send(res, 200, { ok: true, count: items.length });
+    return send(res, 200, { ok: true, count: items.length, synced });
   }
 
   // Z-TEC 매장 의견 (매장당 1회, 다시 저장하면 수정)
@@ -910,10 +960,12 @@ async function handle(req, res) {
     if (status !== 'done') {
       const blank = { productId: product.id, staff, status, reaction: 0, sales: '', noBuyReasons: [], sellReasons: [], pros: [], prosNote: '', cons: [], consNote: '', missing: '', improvement: '', ageGroups: [], genders: [], updatedAt: now0 };
       const ex = db.evaluations.find((e) => e.productId === product.id && sameName(e.staff, staff));
-      if (ex) Object.assign(ex, blank);
+      const prev = ex ? ex.status || 'done' : null;
+      if (ex) { Object.assign(ex, blank); delete ex.auto; }
       else db.evaluations.push({ id: crypto.randomUUID(), createdAt: now0, ...blank });
+      const synced = syncDisplayFromEval(ex ? ex.staff : staff, product, status, prev);
       saveDb();
-      return send(res, ex ? 200 : 201, { ok: true, updated: !!ex });
+      return send(res, ex ? 200 : 201, { ok: true, updated: !!ex, synced });
     }
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: '고객 반응을 선택해 주세요.' });
     if (!(b.sales in OPTIONS.sales)) return send(res, 400, { error: '판매 반응을 선택해 주세요.' });
@@ -947,10 +999,12 @@ async function handle(req, res) {
       updatedAt: now,
     };
     const existing = db.evaluations.find((e) => e.productId === product.id && sameName(e.staff, staff));
-    if (existing) Object.assign(existing, data);
+    const prev = existing ? existing.status || 'done' : null;
+    if (existing) { Object.assign(existing, data); delete existing.auto; }
     else db.evaluations.push({ id: crypto.randomUUID(), createdAt: now, ...data });
+    const synced = syncDisplayFromEval(existing ? existing.staff : staff, product, 'done', prev);
     saveDb();
-    return send(res, existing ? 200 : 201, { ok: true, updated: !!existing });
+    return send(res, existing ? 200 : 201, { ok: true, updated: !!existing, synced });
   }
 
   send(res, 404, 'Not found');

@@ -294,6 +294,11 @@ async function init() {
 let MODE = 'eval', DISP = {}, DLINE = '', DTYPE = '';
 const SEGS = [['shown', '진열'], ['stock', '창고'], ['none', '없음'], ['notReceived', '미입고']];
 const skusOfP = (p) => (p.plcs && p.plcs.length ? p.plcs.map((q) => ({ sku: q.plc, color: q.color })) : [{ sku: 'P-' + p.id, color: '' }]);
+// 평가 → 진열 체크 미입고 자동 연동 안내
+function syncMsg(sy) {
+  if (!sy) return '';
+  return sy.display === 'notReceived' ? ` 진열 체크에도 컬러 ${sy.count}개를 '미입고'로 반영했어요.` : sy.display === 'cleared' ? ` 진열 체크의 '미입고' ${sy.count}개를 지웠어요.` : '';
+}
 function setMode(m) {
   MODE = m === 'display' ? 'display' : 'eval';
   document.body.dataset.mode = MODE;
@@ -301,6 +306,7 @@ function setMode(m) {
   $('pageTitle').textContent = MODE === 'display' ? '진열 현황 체크' : '상품 반응 평가';
   try { localStorage.setItem('mode', MODE); } catch {}
   if (MODE === 'display') loadDisplay();
+  else if (OPTS) loadMine(); // 다른 탭에서 바뀐 내용 반영
 }
 async function loadDisplay() {
   const store = $('staff').value.trim();
@@ -413,8 +419,16 @@ async function setDisp(skus, status) {
   dProgress();
   try {
     const res = await fetch('/api/display', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store, items: skus.map((sku) => ({ sku, status })) }) });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '저장 실패');
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || '저장 실패');
     try { localStorage.setItem('staff', store); } catch {}
+    // 진열 체크 → 상품 평가 미입고 자동 연동 안내
+    if (out.synced && out.synced.length) {
+      loadMine();
+      const add = out.synced.filter((x) => x.evaluation === 'notreceived').map((x) => x.code);
+      const del = out.synced.filter((x) => x.evaluation === 'cleared').map((x) => x.code);
+      toast(add.length ? `🚚 ${add.join(', ')}: 모든 컬러가 미입고라 상품 평가도 '미입고'로 저장했어요` : `↩️ ${del.join(', ')}: 상품 평가의 '미입고'를 지웠어요`);
+    }
   } catch (ex) {
     skus.forEach((s, i) => (prev[i] ? (DISP[s] = prev[i]) : delete DISP[s]));
     skus.forEach(paintSku);
@@ -628,7 +642,7 @@ function selectProduct(id) {
   info.innerHTML = '<div class="pname"></div><div class="hint pcode"></div><div class="hint pdone"></div>';
   info.querySelector('.pname').textContent = p.name;
   info.querySelector('.pcode').textContent = [p.code, p.line, p.type || p.category].filter(Boolean).join(' · ');
-  if (MINE[p.id]) { const st = MINE[p.id].status || 'done'; info.querySelector('.pdone').textContent = st === 'done' ? '이미 평가한 상품이에요. 수정 후 저장하면 바뀝니다.' : `'${st === 'nosale' ? '판매 경험 없음' : '미입고'}'으로 저장했어요. 평가하려면 '평가하기'를 고르세요.`; }
+  if (MINE[p.id]) { const st = MINE[p.id].status || 'done'; info.querySelector('.pdone').textContent = st === 'done' ? '이미 평가한 상품이에요. 수정 후 저장하면 바뀝니다.' : `${st === 'nosale' ? "'판매 경험 없음'으로" : "'미입고'로"} 저장했어요. 평가하려면 '평가하기'를 고르세요.`; }
   const change = document.createElement('button');
   change.type = 'button'; change.className = 'btn'; change.textContent = '다른 상품';
   change.onclick = () => { selectProduct(''); $('search').focus(); };
@@ -664,7 +678,8 @@ function toast(msg) {
   const t = $('toast');
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2200);
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove('show'), msg.length > 30 ? 4000 : 2200);
 }
 
 $('form').onsubmit = async (e) => {
@@ -680,7 +695,7 @@ $('form').onsubmit = async (e) => {
       await loadMine();
       selectProduct('');
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      toast(`✅ '${state.status === 'nosale' ? '판매 경험 없음' : '미입고'}'으로 저장했어요. 다음 상품을 골라 주세요!`);
+      toast(`✅ ${state.status === 'nosale' ? "'판매 경험 없음'으로" : "'미입고'로"} 저장했어요.` + syncMsg(d0.synced));
       return;
     }
     const werr = whyError();
@@ -697,7 +712,7 @@ $('form').onsubmit = async (e) => {
     await loadMine();
     selectProduct('');
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    toast(data.updated ? '✅ 평가를 수정했어요.' : '✅ 저장했어요. 다음 상품을 골라 주세요!');
+    toast((data.updated ? '✅ 평가를 수정했어요.' : '✅ 저장했어요. 다음 상품을 골라 주세요!') + syncMsg(data.synced));
   } catch (ex) {
     $('error').textContent = ex.message;
   } finally {

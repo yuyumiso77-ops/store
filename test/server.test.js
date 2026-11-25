@@ -397,6 +397,46 @@ test('평가 제외(판매 경험 없음·미입고)와 진열 미입고', async
   await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
 });
 
+test('미입고 자동 연동: 평가 ↔ 진열 체크', async () => {
+  await fetch(base + '/api/admin/products/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows: [{ code: 'SYNC-1', name: 'x', category: '어패럴', plc: '50001 50002', plcColors: '50001:BLACK 50002:WHITE' }] }) });
+  const opt = await (await fetch(base + '/api/options', { headers: staff })).json();
+  const pr = opt.products.find((x) => x.code === 'SYNC-1');
+  const ev = (b) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: pr.id, ...b }) }).then((r) => r.json());
+  const disp = (store, items) => fetch(base + '/api/display', { method: 'POST', headers: staff, body: JSON.stringify({ store, items }) }).then((r) => r.json());
+  const myDisp = async (st) => (await fetch(base + '/api/display/mine?store=' + encodeURIComponent(st), { headers: staff })).json();
+  const myEval = async (st) => (await (await fetch(base + '/api/evaluations/mine?staff=' + encodeURIComponent(st), { headers: staff })).json()).find((e) => e.productId === pr.id);
+  // 1) 평가 '미입고' → 진열 체크 모든 컬러 미입고
+  let r = await ev({ staff: '연동점', status: 'notreceived' });
+  assert.deepStrictEqual(r.synced, { display: 'notReceived', count: 2 });
+  assert.deepStrictEqual(await myDisp('연동점'), { 50001: 'notReceived', 50002: 'notReceived' });
+  // 2) 평가를 '판매 경험 없음'으로 바꾸면 미입고 진열 체크 지움
+  r = await ev({ staff: '연동점', status: 'nosale' });
+  assert.deepStrictEqual(r.synced, { display: 'cleared', count: 2 });
+  assert.deepStrictEqual(await myDisp('연동점'), {});
+  // 3) 진열 체크: 한 컬러만 미입고 → 평가 변화 없음, 두 컬러 다 미입고 → 평가 '미입고' (기존 nosale을 바꿈)
+  r = await disp('연동2점', [{ sku: '50001', status: 'notReceived' }]);
+  assert.deepStrictEqual(r.synced, []);
+  assert.strictEqual(await myEval('연동2점'), undefined);
+  r = await disp('연동2점', [{ sku: '50002', status: 'notReceived' }]);
+  assert.strictEqual(r.synced[0].evaluation, 'notreceived');
+  assert.strictEqual((await myEval('연동2점')).status, 'notreceived');
+  // 4) 한 컬러를 진열로 바꾸면 '미입고' 평가 삭제
+  r = await disp('연동2점', [{ sku: '50001', status: 'shown' }]);
+  assert.strictEqual(r.synced[0].evaluation, 'cleared');
+  assert.strictEqual(await myEval('연동2점'), undefined);
+  // 5) 정식 평가가 있으면 진열 체크가 모두 미입고여도 덮어쓰지 않음
+  await ev({ staff: '연동3점', reaction: 4, pros: ['디자인'], sales: 'good', sellReasons: ['선물 수요'] });
+  r = await disp('연동3점', [{ sku: '50001', status: 'notReceived' }, { sku: '50002', status: 'notReceived' }]);
+  assert.deepStrictEqual(r.synced, []);
+  assert.strictEqual((await myEval('연동3점')).status, 'done');
+  // 6) '미입고' 평가 → 정식 평가로 바꾸면 미입고 진열 체크도 지움
+  await ev({ staff: '연동4점', status: 'notreceived' });
+  r = await ev({ staff: '연동4점', reaction: 3, pros: ['디자인'], sales: 'normal', noBuyReasons: ['기타'] });
+  assert.deepStrictEqual(r.synced, { display: 'cleared', count: 2 });
+  for (const st of ['연동점', '연동2점', '연동3점', '연동4점']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });
+  await fetch(base + `/api/admin/products/${pr.id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);
