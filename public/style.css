@@ -339,3 +339,5 @@ body:not([data-mode="display"]) .mode-display { display: none !important; }
 .answers table { border-collapse: collapse; width: 100%; font-size: .82rem; }
 .answers th, .answers td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
 .answers td:first-child { white-space: nowrap; color: var(--muted); }
+.draft-note { margin: 8px 0; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--star) 15%, transparent); font-size: .85rem; }
+.badge.draft { background: var(--star); color: #222; }

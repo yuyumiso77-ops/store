@@ -38,6 +38,7 @@
         <button type="button" class="btn" id="ztecToggle" disabled>작성하기</button>
       </div>
       <div id="ztecBody" hidden>
+        <div id="zDraftNote" class="draft-note" hidden>✏️ 작성하던 내용을 불러왔어요. 저장을 눌러야 제출돼요.</div>
         <span class="q sub-q">1. Z-TEC에 대한 고객 반응은 어땠나요? <span class="req">*</span></span>
         <div class="chips" id="zReaction"></div>
         <span class="q sub-q">2. 고객에게 Z-TEC을 설명하기 쉬웠나요? <span class="req">*</span></span>
@@ -57,6 +58,7 @@
       <span class="q">상품 <span class="req">*</span></span>
       <input type="hidden" id="product">
       <div id="picked" class="picked" hidden></div>
+      <div id="draftNote" class="draft-note" hidden><span></span> <button type="button" class="linklike" id="draftClear">임시저장 지우기</button></div>
       <div id="gallery" class="gallery" hidden></div>
       <div id="picker">
         <input type="search" id="search" placeholder="품번 · 상품명 · 복종 검색">
@@ -291,6 +293,7 @@ async function init() {
     const v = $('staff').value.trim();
     const hit = v && STORES.find((n) => sKey(n) === sKey(v));
     if (hit && hit !== v) $('staff').value = hit;
+    try { localStorage.setItem('staff', $('staff').value.trim()); } catch {}
     const warn = v && STORES.length && !hit;
     $('storeWarn').hidden = !warn;
     $('storeWarn').textContent = warn ? '⚠️ 조사 대상 매장 목록에 없는 이름이에요. 입력칸을 누르면 나오는 목록에서 골라 주세요.' : '';
@@ -301,6 +304,14 @@ async function init() {
   $('dSearch').oninput = renderDisplay;
   $('dTodo').onchange = renderDisplay;
   $('staff').addEventListener('input', () => { $('ztecToggle').disabled = !$('staff').value.trim(); });
+  ['click', 'input'].forEach((ev) => {
+    $('survey').addEventListener(ev, (e) => { if (e.target.closest && e.target.closest('#submit')) return; saveDraft(); });
+    $('ztecBody').addEventListener(ev, (e) => { if (e.target.id === 'zSave' || e.target.id === 'zCancel') return; saveZDraft(); });
+  });
+  $('draftClear').onclick = () => {
+    if (!confirm('임시저장한 내용을 지우고 원래대로 되돌릴까요?')) return;
+    const pid = $('product').value; clearTimeout(draftT); clearDraft(pid); selectProduct(pid);
+  };
   setupZtec(); // 상태는 저장된 매장명을 불러온 뒤 loadZtec()에서 갱신
   try { $('staff').value = localStorage.getItem('staff') || ''; } catch {}
   normStore();
@@ -313,7 +324,12 @@ async function init() {
   if (!m0) { try { m0 = localStorage.getItem('mode'); } catch {} }
   setMode(m0 || 'eval');
   const pid = new URLSearchParams(location.search).get('product');
+  const open = lsGet('draftOpen');
   if (pid) selectProduct(pid);
+  else if (MODE === 'eval' && open && open.store === $('staff').value.trim() && getDraft(open.pid) && OPTS.products.some((x) => x.id === open.pid)) {
+    selectProduct(open.pid);
+    toast('✏️ 작성하던 상품을 이어서 열었어요');
+  }
 }
 
 // ---- 진열 체크 (매장 × SKU) ----
@@ -497,6 +513,7 @@ function setupZtec() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || '저장에 실패했어요.');
       try { localStorage.setItem('staff', body.store.trim()); } catch {}
+      lsSet(zKey(), null);
       $('ztecBody').hidden = true;
       await loadZtec();
       toast(data.updated ? '✅ Z-TEC 의견을 수정했어요.' : '✅ Z-TEC 의견을 저장했어요. 감사합니다!');
@@ -517,9 +534,15 @@ async function loadZtec() {
   $('zGood').value = e ? e.good : '';
   $('zBad').value = e ? e.bad : '';
   $('zSuggest').value = e ? e.suggestion : '';
+  const zd = lsGet(zKey());
+  if (zd && (!e || zd.at > Date.parse(e.updatedAt))) {
+    zstate.reaction = zd.reaction; zstate.ease = zd.ease;
+    $('zGood').value = zd.good; $('zBad').value = zd.bad; $('zSuggest').value = zd.suggestion;
+  } else if (zd) lsSet(zKey(), null);
+  $('zDraftNote').hidden = !(zd && (!e || zd.at > Date.parse(e.updatedAt)));
   drawZ();
   $('ztecToggle').dataset.done = e ? '1' : '';
-  $('ztecStatus').textContent = e ? `✓ ${new Date(e.updatedAt).toLocaleDateString('ko-KR')}에 작성했어요. 내용을 고칠 수 있어요.` : '아직 작성하지 않았어요.';
+  $('ztecStatus').textContent = (e ? `✓ ${new Date(e.updatedAt).toLocaleDateString('ko-KR')}에 작성했어요. 내용을 고칠 수 있어요.` : '아직 작성하지 않았어요.') + ($('zDraftNote').hidden ? '' : ' ✏️ 작성하던 내용이 있어요.');
   $('ztecStatus').className = e ? 'hint pdone' : 'hint';
   if ($('ztecBody').hidden) $('ztecToggle').textContent = e ? '수정하기' : '작성하기';
 }
@@ -532,7 +555,8 @@ async function loadMine() {
     list.forEach((e) => (MINE[e.productId] = e));
   }
   const done = OPTS.products.filter((p) => MINE[p.id]).length;
-  $('progress').textContent = name ? `평가 완료 ${done} / ${OPTS.products.length}개` : '';
+  const drafts = OPTS.products.filter((p) => getDraft(p.id)).length;
+  $('progress').textContent = name ? `평가 완료 ${done} / ${OPTS.products.length}개` + (drafts ? ` · ✏️ 작성 중 ${drafts}개 (저장 전)` : '') : '';
   renderGrid();
 }
 
@@ -634,11 +658,42 @@ function renderGrid() {
     cap.querySelector('small').textContent = p.name !== p.code ? p.name : p.type || p.category;
     b.append(thumb(p, 'timg'), cap);
     if (p.photos && p.photos.length > 1) { const c = document.createElement('span'); c.className = 'pcount'; c.textContent = `📷 ${p.photos.length}`; b.append(c); }
-    if (MINE[p.id]) { const st = MINE[p.id].status || 'done'; const t = document.createElement('span'); t.className = 'badge' + (st === 'done' ? '' : ' skip'); t.textContent = st === 'nosale' ? '판매 없음' : st === 'notreceived' ? '미입고' : '✓ 평가 완료'; b.append(t); }
+    if (getDraft(p.id)) { const t = document.createElement('span'); t.className = 'badge draft'; t.textContent = '✏️ 작성 중'; b.append(t); }
+    else if (MINE[p.id]) { const st = MINE[p.id].status || 'done'; const t = document.createElement('span'); t.className = 'badge' + (st === 'done' ? '' : ' skip'); t.textContent = st === 'nosale' ? '판매 없음' : st === 'notreceived' ? '미입고' : '✓ 평가 완료'; b.append(t); }
     grid.appendChild(b);
   });
 }
 
+// ---- 임시저장 (이 기기 브라우저에만, 저장 버튼 누르기 전 내용) ----
+const dKey = (pid) => { const st = $('staff').value.trim().toLowerCase().replace(/\s+/g, ''); return st && pid ? `draft:${st}:${pid}` : ''; };
+const zKey = () => { const st = $('staff').value.trim().toLowerCase().replace(/\s+/g, ''); return st ? `zdraft:${st}` : ''; };
+const lsGet = (k) => { try { return k ? JSON.parse(localStorage.getItem(k) || 'null') : null; } catch { return null; } };
+const lsSet = (k, v) => { try { if (k) v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const getDraft = (pid) => lsGet(dKey(pid));
+let draftT = 0, BASE = '';
+const formSig = () => JSON.stringify([state, TEXTS.map((id) => $(id).value.trim())]);
+function saveDraft() {
+  clearTimeout(draftT);
+  draftT = setTimeout(() => {
+    const pid = $('product').value;
+    if (!pid || !dKey(pid)) return;
+    if (formSig() === BASE) { clearDraft(pid); showDraftNote(null); return; } // 저장된 내용과 같으면 임시저장 안 함
+    const d = { ...structuredClone(state), at: Date.now() };
+    TEXTS.forEach((id) => (d[id] = $(id).value));
+    lsSet(dKey(pid), d);
+    lsSet('draftOpen', { store: $('staff').value.trim(), pid });
+    showDraftNote(d);
+  }, 300);
+}
+function clearDraft(pid) { lsSet(dKey(pid), null); const o = lsGet('draftOpen'); if (o && o.pid === pid) lsSet('draftOpen', null); }
+function showDraftNote(d) {
+  $('draftNote').hidden = !d;
+  if (d) $('draftNote').querySelector('span').textContent = `✏️ 임시저장됨 (${new Date(d.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}) — 아래 저장 버튼을 눌러야 제출돼요.`;
+}
+function saveZDraft() {
+  clearTimeout(saveZDraft.t);
+  saveZDraft.t = setTimeout(() => lsSet(zKey(), { ...zstate, good: $('zGood').value, bad: $('zBad').value, suggestion: $('zSuggest').value, at: Date.now() }), 300);
+}
 function fillForm(e) {
   const src = e || FIELDS;
   Object.keys(FIELDS).forEach((k) => (state[k] = structuredClone(src[k] ?? FIELDS[k])));
@@ -662,7 +717,7 @@ function selectProduct(id) {
   $('picked').hidden = !p;
   if (!p) $('gallery').hidden = true;
   $('survey').hidden = !p;
-  if (!p) { renderGrid(); return; }
+  if (!p) { $('draftNote').hidden = true; lsSet('draftOpen', null); renderGrid(); return; }
 
   const info = document.createElement('div');
   info.innerHTML = '<div class="pname"></div><div class="hint pcode"></div><div class="hint pdone"></div>';
@@ -692,7 +747,11 @@ function selectProduct(id) {
   const aspects = OPTS.aspectsByCategory[p.category] || OPTS.defaultAspects;
   chips('pros', aspects.map((x) => [x, x]), { multi: true });
   chips('cons', aspects.map((x) => [x, x]), { multi: true });
+  const draft = getDraft(p.id);
   fillForm(MINE[p.id]);
+  BASE = formSig();
+  if (draft) fillForm(draft);
+  showDraftNote(draft);
   Object.keys(FIELDS).forEach(paint);
   syncReasons();
   openExtra = { pros: false, cons: false };
@@ -721,6 +780,7 @@ $('form').onsubmit = async (e) => {
       const d0 = await res0.json().catch(() => ({}));
       if (!res0.ok) throw new Error(d0.error || '저장에 실패했어요.');
       try { localStorage.setItem('staff', $('staff').value.trim()); } catch {}
+      clearDraft($('product').value);
       await loadMine();
       selectProduct('');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -738,6 +798,7 @@ $('form').onsubmit = async (e) => {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || '저장에 실패했어요.');
     try { localStorage.setItem('staff', body.staff.trim()); } catch {}
+    clearDraft(body.productId);
     await loadMine();
     selectProduct('');
     window.scrollTo({ top: 0, behavior: 'smooth' });
