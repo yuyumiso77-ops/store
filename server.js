@@ -898,7 +898,7 @@ function stockAnalysis() {
 
 // ---------- 🧮 적정 진열·재고 (판매 · 재고 · 평수 기준) + 매장 조사 비교 ----------
 // 기준값: 여기만 바꾸면 계산이 바뀜
-const OPT = { density: null, skuBuffer: 1.1, coreMultiplier: 1.5, coverDays: 56, minStockPerSku: 4, lowActive: 60, highActive: 80 }; // 재고: 8주치·SKU당 최소 4개(사이즈) — 화면에서 바꿔 볼 수 있음
+const OPT = { tiered: true, safetyDays: 14, density: null, skuBuffer: 1.1, coreMultiplier: 1.5, coverDays: 56, minStockPerSku: 4, lowActive: 60, highActive: 80 }; // 재고: 8주치·SKU당 최소 4개(사이즈) — 화면에서 바꿔 볼 수 있음
 function importSizes(b) {
   const mp = erpMapper(b.names && typeof b.names === 'object' ? b.names : {});
   const sizes = {};
@@ -914,6 +914,35 @@ function importSizes(b) {
   db.storeSizes = { sizes, fileName: cleanText(b.fileName, 120), uploadedAt: new Date().toISOString() };
   saveDb();
   return { ok: true, stores: Object.keys(sizes).length, unmatched: unmatched.length };
+}
+// RT(매장 간 재고 이동) 추천: 같은 SKU에서 남는 매장 → 모자라는 매장. 받는 쪽은 상위 등급·권장 SKU 우선, 보내는 쪽은 하위 등급·권장 밖 SKU 우선
+function buildRt(rows, skuInfo) {
+  const TR = { A: 0, B: 1, C: 2 };
+  const bySku = new Map();
+  rows.forEach((r) => { if (!bySku.has(r.sku)) bySku.set(r.sku, []); bySku.get(r.sku).push(r); });
+  const moves = [];
+  let need = 0, covered = 0;
+  bySku.forEach((list, sk) => {
+    const short = list.filter((r) => r.rec && r.gap < 0).map((r) => ({ ...r, want: -r.gap })).sort((a, b) => TR[a.tier] - TR[b.tier] || b.fcWeek - a.fcWeek || b.want - a.want);
+    const extra = list.filter((r) => r.gap > 0).map((r) => ({ ...r, left: r.gap })).sort((a, b) => Number(a.rec) - Number(b.rec) || b.left - a.left || TR[b.tier] - TR[a.tier]); // 권장 밖 재고 → 많이 남는 곳 → 하위 등급 순
+    short.forEach((r) => { need += r.want; });
+    for (const to of short) {
+      for (const from of extra) {
+        if (!to.want) break;
+        if (!from.left || from.store === to.store) continue;
+        const q = Math.min(from.left, to.want);
+        if (q < 2 && to.stock > 0) continue; // 1개 이동은 받는 매장이 품절(0개)일 때만
+        from.left -= q; to.want -= q; covered += q;
+        moves.push({ ...skuInfo(sk), from: from.store, fromTier: from.tier, fromStatus: from.status, to: to.store, toTier: to.tier, qty: q, toForecastWeek: to.fcWeek });
+      }
+    }
+  });
+  moves.sort((a, b) => TR[a.toTier] - TR[b.toTier] || b.toForecastWeek - a.toForecastWeek || b.qty - a.qty);
+  // 매장 간 묶음 (보내는 매장 → 받는 매장): 이동 단위로 보기
+  const pm = new Map();
+  moves.forEach((x) => { const k = x.from + '→' + x.to; const a = pm.get(k) || { from: x.from, fromTier: x.fromTier, to: x.to, toTier: x.toTier, lines: 0, qty: 0 }; a.lines++; a.qty += x.qty; pm.set(k, a); });
+  const pairs = [...pm.values()].sort((a, b) => b.qty - a.qty);
+  return { lines: moves.length, qty: covered, need, coveredPct: need ? Math.round((covered / need) * 100) : null, remaining: need - covered, pairs: pairs.slice(0, 300), pairCount: pairs.length, moves: moves.slice(0, 6000) };
 }
 function optimalDisplay(over = {}) {
   const OPT_ = { ...OPT, ...over };
@@ -973,7 +1002,22 @@ function optimalDisplay(over = {}) {
   const storeNames = db.stores.length ? db.stores.map((s) => s.name) : [...byStore.keys()];
   const evalByStore = new Map();
   db.evaluations.filter((e) => isDone(e) && e.sales).forEach((e) => { const k = (matchStore(e.staff) || { name: e.staff }).name; if (!evalByStore.has(k)) evalByStore.set(k, []); evalByStore.get(k).push(e); });
+  // ── 매장 등급 (평당 매출 상·중·하 1/3, 평수 없으면 매출 기준) ── 등급별 재고 깊이
+  const amtOf = new Map();
+  sl.items.forEach((x) => amtOf.set(x.store, (amtOf.get(x.store) || 0) + Math.max(0, x.amount)));
+  const tierOf = new Map();
+  const rankTier = (list) => list.forEach((n, i) => tierOf.set(n, i < list.length / 3 ? 'A' : i < (list.length * 2) / 3 ? 'B' : 'C'));
+  rankTier(storeNames.filter((n) => sizes[n] && amtOf.get(n)).sort((a, b) => amtOf.get(b) / sizes[b] - amtOf.get(a) / sizes[a]));
+  rankTier(storeNames.filter((n) => !sizes[n] && amtOf.get(n)).sort((a, b) => amtOf.get(b) - amtOf.get(a)));
+  const TIER = {
+    A: { label: '상위', min: OPT_.minStockPerSku + 2, cover: OPT_.coverDays, safety: OPT_.safetyDays },
+    B: { label: '중위', min: OPT_.minStockPerSku, cover: OPT_.coverDays, safety: 0 },
+    C: { label: '하위', min: Math.max(2, OPT_.minStockPerSku - 1), cover: Math.round(OPT_.coverDays * 0.75), safety: 0 },
+  };
+  const ruleOf = (n) => (OPT_.tiered ? TIER[tierOf.get(n) || 'B'] : { label: '공통', min: OPT_.minStockPerSku, cover: OPT_.coverDays, safety: 0 });
+  const allRows = []; // RT 계산용 (매장 × SKU 재고 과부족)
   const stores = storeNames.map((name) => {
+    const rule = ruleOf(name);
     const items = (byStore.get(name) || []).map((x) => ({ ...x, qty: Math.max(0, x.qty), amount: Math.max(0, x.amount) }));
     const amount = items.reduce((a, x) => a + x.amount, 0), qty = items.reduce((a, x) => a + x.qty, 0);
     const price = (x) => (x.qty > 0 ? x.amount / x.qty : 0);
@@ -993,15 +1037,18 @@ function optimalDisplay(over = {}) {
     const rec = sold.slice(0, recCount).map((x) => x.sku);
     for (const s of netRank) { if (rec.length >= recCount) break; if (!rec.includes(s)) rec.push(s); }
     const recSet = new Set(rec);
+    const coreSet = new Set(sold.slice(0, core).map((x) => x.sku)); // 매출 80%를 만드는 핵심 SKU → 상위 매장은 안전재고 추가
     const qtyOf = new Map(items.map((x) => [x.sku, x]));
     // SKU별 권장 재고 = 하루 판매 × 기간(최소 n개), 권장 목록 밖이면 0
     const skuRows = [...new Set([...rec, ...held, ...[...idx.keys()].filter((s) => disp.has(name + '|' + s))])].map((s) => {
       const it = qtyOf.get(s) || { qty: 0, amount: 0, fc: 0 };
       const stock = stockMap.get(name + '|' + s) || 0;
-      const recStock = recSet.has(s) ? Math.max(OPT_.minStockPerSku, Math.ceil((it.fc || 0) * OPT_.coverDays)) : 0;
+      const offSeason = hasWeeks && (season.get(typeKeyOf(s)) || { factor: 1 }).factor <= 0.6 && (it.fc || 0) * 7 < 0.5; // 비시즌·지금 안 팔림 → 최소 수량 적용 안 함
+      const recStock = recSet.has(s) ? Math.max(offSeason ? 0 : rule.min, Math.ceil((it.fc || 0) * (rule.cover + (coreSet.has(s) ? rule.safety : 0)))) : 0;
       const sf = season.get(typeKeyOf(s));
       return { ...sku(s), qty: it.qty, amount: it.amount, recent: recentQty(it), forecastPerWeek: Math.round((it.fc || 0) * 7 * 10) / 10, season: sf ? sf.factor : 1, stock, recStock, gap: stock - recStock, rec: recSet.has(s), status: disp.get(name + '|' + s) || '' };
     });
+    skuRows.forEach((x) => allRows.push({ store: name, tier: tierOf.get(name) || 'B', sku: x.sku, stock: x.stock, recStock: x.recStock, gap: x.gap, rec: x.rec, fcWeek: x.forecastPerWeek, status: x.status }));
     const stockQty = skuRows.reduce((a, x) => a + x.stock, 0), recStockQty = skuRows.reduce((a, x) => a + x.recStock, 0);
     const offSeasonStock = hasWeeks ? skuRows.filter((x) => x.season <= 0.6).reduce((a, x) => a + x.stock, 0) : 0;
     // 매장 조사 비교: 진열 체크
@@ -1025,7 +1072,7 @@ function optimalDisplay(over = {}) {
     const active = held.length ? Math.round((held.filter((s) => (qtyOf.get(s) || {}).qty > 0).length / held.length) * 100) : null;
     const py = sizes[name] || null;
     return {
-      name, manager: (db.stores.find((s) => s.name === name) || {}).manager || '', py, amount, qty, perPy: py ? Math.round(amount / py) : null,
+      name, tier: tierOf.get(name) || '', rule: { min: rule.min, coverWeeks: Math.round(rule.cover / 7), safetyWeeks: Math.round(rule.safety / 7) }, manager: (db.stores.find((s) => s.name === name) || {}).manager || '', py, amount, qty, perPy: py ? Math.round(amount / py) : null,
       held: held.length, sold: sold.length, activeNow: activeNow.length, core, active, recSku: recCount, salesBased, spaceMin, filled: Math.max(0, recCount - Math.min(recCount, sold.length)), recPerPy: py ? Math.round((recCount / py) * 10) / 10 : null,
       cutSku: Math.max(0, held.length - recCount),
       judge: active == null ? '' : active < OPT_.lowActive ? 'over' : active >= OPT_.highActive ? 'room' : 'ok',
@@ -1039,6 +1086,7 @@ function optimalDisplay(over = {}) {
         stockGap: skuRows.filter((x) => x.gap !== 0).sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap)).slice(0, 40) },
     };
   }).filter((s) => s.amount > 0 || s.held > 0);
+  const rt = buildRt(allRows, sku);
   const sum = (f) => stores.reduce((a, s) => a + (f(s) || 0), 0);
   return {
     ready: true, opt: OPT_, density: { value: density, bench: bench.value, source: OPT_.density ? '직접 선택' : bench.source }, days, salesInfo: { from: sl.from, to: sl.to, fileName: sl.fileName }, stockInfo,
@@ -1049,6 +1097,8 @@ function optimalDisplay(over = {}) {
       cutSku: sum((s) => s.cutSku), offSeasonStock: sum((s) => s.offSeasonStock), overStock: sum((s) => s.overStock), shortStock: sum((s) => s.shortStock), stockQty: sum((s) => s.stockQty), recStockQty: sum((s) => s.recStockQty),
       toHang: sum((s) => s.survey.toHang), toRemove: sum((s) => s.survey.toRemove), checkedStores: stores.filter((s) => s.survey.checked).length,
       agreePct: (() => { const n = sum((s) => s.survey.evals); return n ? Math.round((stores.reduce((a, s) => a + (s.survey.agreePct || 0) * s.survey.evals, 0) / n)) : null; })() },
+    tiers: OPT_.tiered ? Object.fromEntries(Object.entries(TIER).map(([k, v]) => [k, { label: v.label, min: v.min, coverWeeks: Math.round(v.cover / 7), safetyWeeks: Math.round(v.safety / 7), stores: [...tierOf.values()].filter((t) => t === k).length }])) : null,
+    rt,
     stores: stores.sort((a, b) => (b.perPy ?? -1) - (a.perPy ?? -1) || b.amount - a.amount),
   };
 }
@@ -1352,14 +1402,23 @@ async function handle(req, res) {
       const r = importSizes(await readBody(req, 256 * 1024));
       return send(res, r.error ? 400 : 200, r);
     }
-    const optQ = () => { const c = Number(url.searchParams.get('cover')), mn = Number(url.searchParams.get('min')); const o = {}; if (c >= 7 && c <= 180) o.coverDays = Math.round(c); if (mn >= 0 && mn <= 20) o.minStockPerSku = Math.round(mn); const dn = Number(url.searchParams.get('density')); if (dn > 0 && dn <= 40) o.density = dn; return o; };
+    const optQ = () => { const q = (k) => (url.searchParams.has(k) && url.searchParams.get(k) !== '' ? Number(url.searchParams.get(k)) : NaN); const c = q('cover'), mn = q('min'); const o = {}; if (c >= 7 && c <= 180) o.coverDays = Math.round(c); if (mn >= 0 && mn <= 20) o.minStockPerSku = Math.round(mn); const dn = q('density'); if (dn > 0 && dn <= 40) o.density = dn; if (url.searchParams.get('tiered') === '0') o.tiered = false; return o; };
     if (m === 'GET' && p === '/api/admin/optimal-display') return send(res, 200, optimalDisplay(optQ()));
+    if (m === 'GET' && p === '/api/admin/rt.csv') {
+      const o = optimalDisplay(optQ());
+      if (!o.ready) return send(res, 400, { error: '판매 자료를 먼저 올려 주세요.' });
+      const T = { A: '상위', B: '중위', C: '하위' };
+      const rows = [['품번', '컬러', '상품명', '복종', '보내는 매장', '보내는 매장 등급', '받는 매장', '받는 매장 등급', '이동 수량', '받는 매장 예상 주간 판매']];
+      o.rt.moves.forEach((x) => rows.push([x.code, x.color, x.name, `${x.line} ${x.type}`, x.from, T[x.fromTier] || '', x.to, T[x.toTier] || '', x.qty, x.toForecastWeek]));
+      const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+      return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="rt-recommend.csv"' });
+    }
     if (m === 'GET' && p === '/api/admin/optimal-display.csv') {
       const o = optimalDisplay(optQ());
       if (!o.ready) return send(res, 400, { error: '판매 자료를 먼저 올려 주세요.' });
       const J = { over: '구색 과다 (축소 검토)', ok: '적정', room: '구색 효율 높음 (확대 여지)' };
-      const rows = [['매장', '담당자', '평수', `26FW 매출(${o.salesInfo.from}~${o.salesInfo.to})`, '평당 매출', '보유 SKU', '판매된 SKU', 'SKU 활성률(%)', '매출 80% SKU', '권장 진열 SKU', '줄일 SKU', '진열 SKU(조사)', '권장 중 진열됨', '걸기 후보(권장·재고 있음·미진열)', '빼기 후보(진열·권장 밖)', '배분 필요(권장·재고 없음)', '현재 재고', '권장 재고', '과잉 재고', '부족 재고', '평가 일치율(%)', '판정']];
-      o.stores.forEach((s) => rows.push([s.name, s.manager, s.py ?? '', s.amount, s.perPy ?? '', s.held, s.sold, s.active ?? '', s.core, s.recSku, s.cutSku, s.survey.checked ? s.survey.shown : '', s.survey.checked ? s.survey.recShown : '', s.survey.toHang, s.survey.toRemove, s.survey.toAllocate, s.stockQty, s.recStockQty, s.overStock, s.shortStock, s.survey.agreePct ?? '', J[s.judge] || '']));
+      const rows = [['매장', '등급', '담당자', '평수', `26FW 매출(${o.salesInfo.from}~${o.salesInfo.to})`, '평당 매출', '보유 SKU', '판매된 SKU', 'SKU 활성률(%)', '매출 80% SKU', '권장 진열 SKU', '줄일 SKU', '진열 SKU(조사)', '권장 중 진열됨', '걸기 후보(권장·재고 있음·미진열)', '빼기 후보(진열·권장 밖)', '배분 필요(권장·재고 없음)', '현재 재고', '권장 재고', '과잉 재고', '부족 재고', '평가 일치율(%)', '판정']];
+      o.stores.forEach((s) => rows.push([s.name, { A: '상위', B: '중위', C: '하위' }[s.tier] || '', s.manager, s.py ?? '', s.amount, s.perPy ?? '', s.held, s.sold, s.active ?? '', s.core, s.recSku, s.cutSku, s.survey.checked ? s.survey.shown : '', s.survey.checked ? s.survey.recShown : '', s.survey.toHang, s.survey.toRemove, s.survey.toAllocate, s.stockQty, s.recStockQty, s.overStock, s.shortStock, s.survey.agreePct ?? '', J[s.judge] || '']));
       const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
       return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="optimal-display.csv"' });
     }

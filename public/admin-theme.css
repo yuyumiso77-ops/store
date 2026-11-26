@@ -110,3 +110,6 @@ body.admin .card:has(> .stats:first-child) > .stats + * { margin-top: 12px; }
 .spark i.r { background: var(--accent); }
 .season-table td { padding: 7px 10px; }
 body.admin p.hint:empty { display: none; }
+.tier { display: inline-block; font-size: .68rem; font-weight: 700; padding: 1px 6px; border-radius: 5px; background: #f3f4f6; color: #4b5563; }
+.tier.tA { background: #e8effc; color: #2b5fcf; } .tier.tC { background: #f5f5f4; color: #78716c; }
+body.admin .actions select.opt-sel { width: auto; max-width: 220px; padding: 7px 10px; font-size: .88rem; }
