@@ -163,6 +163,7 @@ function aiBox(x, heading, titles) {
     el('div', { class: 'ai-grid' }, list(titles[0], x.strengths), list(titles[1], x.weaknesses), list(titles[2], x.requests), list(titles[3], x.actions)),
     el('p', { class: 'hint', style: 'margin:0' }, `${new Date(x.at).toLocaleString('ko-KR')} 요약` + (x.stale ? ' · ⚠️ 그 뒤 새 데이터가 있어요 (관리자 화면에서 다시 요약하면 반영돼요)' : '') + ' · AI 요약은 틀릴 수 있어요'));
 }
+const wonS = (v) => (v == null ? '-' : v >= 1e8 ? (v / 1e8).toFixed(2) + '억' : Math.round(v / 1e4).toLocaleString() + '만');
 // 사진 누르면 크게
 function zoom(src, caption) {
   const z = el('div', { class: 'zoom', onclick: () => z.remove() }, el('figure', {}, el('img', { src, alt: caption || '' }), caption ? el('figcaption', {}, caption) : null));
@@ -203,6 +204,8 @@ const RK_SORTS = [
   ['reactionAsc', '👎 반응 낮은 순', (a, b) => a.avgReaction - b.avgReaction || b.poorPct - a.poorPct || b.count - a.count],
   ['goodDesc', '💰 잘 팔림 많은 순', (a, b) => b.goodPct - a.goodPct || b.avgReaction - a.avgReaction || b.count - a.count],
   ['poorDesc', '📉 안 팔림 많은 순', (a, b) => b.poorPct - a.poorPct || a.avgReaction - b.avgReaction || b.count - a.count],
+  ['amountDesc', '💵 매출 많은 순', (a, b) => (b.salesAmount ?? -1) - (a.salesAmount ?? -1) || b.salesQty - a.salesQty],
+  ['qtyDesc', '🧾 판매수량 많은 순', (a, b) => (b.salesQty ?? -1) - (a.salesQty ?? -1) || b.salesAmount - a.salesAmount],
   ['displayAsc', '📦 진열률 낮은 순', (a, b) => (a.displayRate ?? 999) - (b.displayRate ?? 999) || b.goodPct - a.goodPct],
   ['displayDesc', '📦 진열률 높은 순', (a, b) => (b.displayRate ?? -1) - (a.displayRate ?? -1) || b.goodPct - a.goodPct],
 ];
@@ -211,11 +214,12 @@ try { Object.assign(RK, JSON.parse(localStorage.getItem('reportRank') || '{}'));
 // 순위표: 줄을 누르면 그 상품의 종합 평가가 바로 아래에 펼쳐짐
 const OPEN = new Set();
 function rankTable(shown, typeKey) {
-  const head = ['순위', '상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', '평가'], nums = [0, 3, 4, 5, 6, 7];
+  const hasSales = shown.some((p) => p.salesQty != null);
+  const head = ['순위', '상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', ...(hasSales ? ['실판매', '매출'] : []), '평가'], nums = [0, 3, 4, 5, 6, 7, 8, 9, 10];
   const tb = el('table', { class: 'rank-table' }, el('tr', {}, head.map((h, i) => el('th', { class: nums.includes(i) ? 'n' : '' }, h))));
   shown.forEach((p, i) => {
     const cells = [i + 1, el('span', {}, thumb(p.imageUrl, `${p.code || ''} ${p.name || ''}`.trim()), el('b', {}, p.code || p.name), el('span', { class: 'caret no-print' }, '▾')), typeKey(p),
-      el('span', {}, bar(p.avgReaction, 5), fmt1(p.avgReaction)), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), p.count];
+      el('span', {}, bar(p.avgReaction, 5), fmt1(p.avgReaction)), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), ...(hasSales ? [(p.salesQty ?? 0).toLocaleString() + '개', wonS(p.salesAmount)] : []), p.count];
     const tr = el('tr', { class: 'rk-row' }, cells.map((c, j) => el('td', { class: nums.includes(j) ? 'n' : '' }, c)));
     const detail = el('tr', { class: 'rk-detail' }, el('td', { colspan: String(head.length) }));
     detail.hidden = !OPEN.has(p.id);
@@ -297,7 +301,8 @@ function rankingBlock(products) {
   if (RK.type !== 'all' && !types.includes(RK.type)) RK.type = 'all';
   const draw = () => {
     try { localStorage.setItem('reportRank', JSON.stringify(RK)); } catch {}
-    const base = products.filter((p) => p.count >= RK.min);
+    const bySales = RK.sort === 'amountDesc' || RK.sort === 'qtyDesc';
+    const base = products.filter((p) => (bySales ? p.salesQty != null : p.count >= RK.min)); // 매출·판매수량 순은 평가 없는 상품도 포함
     const list = base.filter((p) => RK.type === 'all' || typeKey(p) === RK.type).sort(RK_SORTS.find(([k]) => k === RK.sort)[2]);
     const shown = RK.n ? list.slice(0, RK.n) : list;
     const chip = (on, label, fn) => el('button', { type: 'button', class: on ? 'on' : '', onclick: () => { fn(); draw(); } }, label);
@@ -314,7 +319,7 @@ function rankingBlock(products) {
         el('div', { class: 'rank-row' }, el('span', { class: 'rank-lbl' }, '기준'),
           el('div', { class: 'chips small' }, [1, 3, 5].map((m) => chip(RK.min === m, `평가 ${m}건 이상`, () => (RK.min = m)))))),
       el('h3', {}, `${RK.type === 'all' ? '전체 복종' : RK.type} · ${sortName.replace(/^\S+\s/, '')} · ${RK.n ? `1~${Math.min(RK.n, list.length)}위` : `전체 ${list.length}개`}`,
-        el('small', { class: 'hint', style: 'font-weight:400;margin-left:6px' }, `(평가 ${RK.min}건 이상 ${list.length}개 중)`)),
+        el('small', { class: 'hint', style: 'font-weight:400;margin-left:6px' }, bySales ? `(판매 자료 ${list.length}개 상품 중)` : `(평가 ${RK.min}건 이상 ${list.length}개 중)`)),
       shown.length ? el('div', {}, el('p', { class: 'hint no-print', style: 'margin:-4px 0 8px' }, '👆 상품 줄을 누르면 고객 반응 종합 평가가 펼쳐져요.'), rankTable(shown, typeKey))
         : el('p', { class: 'empty' }, '조건에 맞는 상품이 없어요. 기준(평가 건수)을 낮춰 보세요.'));
   };

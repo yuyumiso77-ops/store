@@ -1123,11 +1123,10 @@ function spaceSkuCard(sp) {
 // ---- 📦 재고 대조: ERP 매장 재고(재고·판매수량) × 진열 체크 ----
 const ST_L = { shown: '진열', stock: '창고만', none: '없음', notReceived: '미입고', unchecked: '미체크' };
 const num = (v) => (v == null ? '-' : Number(v).toLocaleString());
-function stockUploadCard(sa) {
+// 엑셀(ERP) 올리기 공용: 열 이름으로 찾아 매장코드×품번×색상으로 합쳐서 보냄
+function erpUploader({ label, need, valueCols, url, extra, done }) {
   const file = el('input', { type: 'file', accept: '.xlsx', hidden: '' });
-  const d = new Date(Date.now() - 864e5);
-  const asOf = el('input', { type: 'date', value: sa.asOf || `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, style: 'width:auto' });
-  const result = el('p', { class: 'hint', style: 'margin:8px 0 0' });
+  const result = el('p', { class: 'hint', style: 'margin:6px 0 0' });
   file.onchange = async () => {
     const f = file.files[0]; file.value = '';
     if (!f) return;
@@ -1135,34 +1134,51 @@ function stockUploadCard(sa) {
       result.textContent = '엑셀 읽는 중… (몇 초 걸려요)';
       const rows = await readXlsx(f);
       const head = (rows[0] || []).map((x) => String(x || '').trim());
-      const col = (n) => head.indexOf(n);
-      const c = { code: col('매장코드'), name: col('매장명'), prod: col('상품코드'), color: col('색상명'), stock: col('재고수량'), sales: col('판매수량') };
-      const miss = Object.entries({ 매장코드: c.code, 상품코드: c.prod, 색상명: c.color, 재고수량: c.stock, 판매수량: c.sales }).filter(([, i]) => i < 0).map(([k]) => k);
-      if (miss.length) throw new Error(`첫 줄에 ${miss.join('·')} 열이 필요해요. (ERP 매장시점재고현황 엑셀을 그대로 올려 주세요)`);
+      const col = Object.fromEntries(['매장코드', '매장명', '상품코드', '색상명', ...valueCols, ...(need || [])].map((n) => [n, head.indexOf(n)]));
+      const miss = ['매장코드', '상품코드', '색상명', ...valueCols].filter((n) => col[n] < 0);
+      if (miss.length) throw new Error(`첫 줄에 ${miss.join('·')} 열이 필요해요. ERP에서 받은 엑셀을 그대로 올려 주세요.`);
       const agg = new Map(), stores = {};
+      let from = '', to = '';
       rows.slice(1).forEach((r) => {
-        const code = r[c.code];
-        if (!code || !r[c.prod]) return; // 합계 줄 등
-        stores[code] = r[c.name];
-        const k = `${code}\t${r[c.prod]}\t${r[c.color]}`;
-        const a = agg.get(k) || [0, 0];
-        a[0] += Number(r[c.stock]) || 0; a[1] += Number(r[c.sales]) || 0;
+        const code = r[col['매장코드']];
+        if (!code || !r[col['상품코드']]) return; // 합계 줄 등
+        stores[code] = r[col['매장명']];
+        if (col['판매일자'] >= 0 && r[col['판매일자']]) { const d = String(r[col['판매일자']]).slice(0, 10); if (!from || d < from) from = d; if (!to || d > to) to = d; }
+        const k = `${code}\t${r[col['상품코드']]}\t${r[col['색상명']]}`;
+        const a = agg.get(k) || valueCols.map(() => 0);
+        valueCols.forEach((n, i) => (a[i] += Number(r[col[n]]) || 0));
         agg.set(k, a);
       });
       result.textContent = `${rows.length.toLocaleString()}줄 → 매장·품번·컬러 ${agg.size.toLocaleString()}개로 합쳐서 올리는 중…`;
-      const body = { asOf: asOf.value, fileName: f.name, stores, rows: [...agg.entries()].map(([k, v]) => [...k.split('\t'), v[0], v[1]]) };
-      const r = await api('/api/admin/stock/import', { method: 'POST', body: JSON.stringify(body) });
-      result.textContent = `✅ ${r.stores}매장 · ${r.skus} SKU 재고를 연결했어요.` + (r.unmatchedStores.length ? ` (명단에 없는 매장 ${r.unmatchedStores.length}곳은 제외: ${r.unmatchedStores.slice(0, 5).join(', ')})` : '');
+      const body = { ...extra(), from, to, fileName: f.name, stores, rows: [...agg.entries()].map(([k, v]) => [...k.split('\t'), ...v]) };
+      const r = await api(url, { method: 'POST', body: JSON.stringify(body) });
+      result.textContent = done(r, body) + (r.unmatchedStores.length ? ` (명단에 없는 매장 ${r.unmatchedStores.length}곳 제외: ${r.unmatchedStores.slice(0, 4).join(', ')})` : '');
       loadStock();
     } catch (ex) { result.textContent = '❌ ' + ex.message; }
   };
-  return el('div', { class: 'card' },
-    el('div', { class: 'product-head' },
-      el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '📦 매장 재고 연결'),
-        el('p', { class: 'hint', style: 'margin:0' }, sa.loaded ? `현재: ${sa.asOf || '-'} 기준 재고 (${sa.fileName || ''}) · ${new Date(sa.uploadedAt).toLocaleString('ko-KR')} 올림` : 'ERP "매장시점재고현황" 엑셀(.xlsx)을 그대로 올리면 진열 체크와 연결해요. 품번+색상명, 매장코드로 맞춰요.')),
-      el('div', { class: 'actions' }, el('label', { class: 'hint' }, '재고 기준일 ', asOf), el('label', { class: 'btn accent', style: 'cursor:pointer' }, file, sa.loaded ? '📁 새 재고 파일 올리기' : '📁 재고 엑셀 올리기'))),
-    result);
+  return { btn: el('label', { class: 'btn accent', style: 'cursor:pointer' }, file, label), result };
 }
+function stockUploadCard(sa) {
+  const d = new Date(Date.now() - 864e5);
+  const asOf = el('input', { type: 'date', value: sa.asOf || `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, style: 'width:auto' });
+  const stock = erpUploader({ label: sa.hasStock ? '📁 새 재고 파일' : '📁 재고 엑셀 올리기', valueCols: ['재고수량', '판매수량'], url: '/api/admin/stock/import', extra: () => ({ asOf: asOf.value }),
+    done: (r) => `✅ 재고: ${r.stores}매장 · ${r.skus} SKU 연결했어요.` });
+  const sales = erpUploader({ label: sa.salesInfo ? '📁 새 판매 자료' : '📁 판매 자료 올리기', valueCols: ['판매수량', '판매금액'], need: ['판매일자'], url: '/api/admin/sales/import', extra: () => ({}),
+    done: (r, b) => `✅ 판매: ${b.from}~${b.to} · ${r.stores}매장 · ${r.skus} SKU · ${r.qty.toLocaleString()}개 · ${won(r.amount)} 연결했어요.` });
+  const info = (t, x) => el('div', { class: 'erp-file' }, el('b', {}, t), el('span', { class: 'hint' }, x));
+  return el('div', { class: 'card' },
+    el('h2', { style: 'margin:0 0 4px' }, '📦 ERP 자료 연결'),
+    el('p', { class: 'hint', style: 'margin:0 0 12px' }, 'ERP에서 받은 엑셀(.xlsx)을 그대로 올리면 매장코드 · 품번 + 색상명으로 진열 체크와 연결해요. 새 파일을 올리면 바뀌어요.'),
+    el('div', { class: 'erp-row' },
+      info('매장 재고', sa.hasStock ? `${sa.asOf || '-'} 기준 · ${sa.fileName || ''}` : '아직 없어요 (매장시점재고현황)'),
+      el('div', { class: 'actions' }, el('label', { class: 'hint' }, '기준일 ', asOf), stock.btn)),
+    stock.result,
+    el('div', { class: 'erp-row', style: 'margin-top:10px' },
+      info('판매 자료', sa.salesInfo ? `${sa.salesInfo.from} ~ ${sa.salesInfo.to} · ${sa.salesInfo.fileName || ''}` : '아직 없어요 (판매 내역 엑셀)'),
+      el('div', { class: 'actions' }, sales.btn)),
+    sales.result);
+}
+const won = (v) => (v == null ? '-' : v >= 1e8 ? (Math.round(v / 1e6) / 100).toFixed(2) + '억원' : v >= 1e4 ? Math.round(v / 1e4).toLocaleString() + '만원' : Math.round(v).toLocaleString() + '원');
 async function loadStock() {
   $('dStock').replaceChildren(el('p', { class: 'hint' }, '불러오는 중…'));
   const sa = await api('/api/admin/stock-analysis');
@@ -1174,18 +1190,19 @@ async function loadStock() {
     stockUploadCard(sa),
     el('div', { class: 'card' },
       el('h2', { style: 'margin:0 0 6px' }, '🎯 진열하면 실제로 더 팔리나요?'),
-      el('p', { class: 'hint', style: 'margin:0 0 12px;line-height:1.6' }, `같은 매장·같은 SKU 기준으로, 진열 체크 상태별 실제 판매수량(ERP)을 비교했어요. 판매율 = 판매 ÷ (판매 + 남은 재고).`),
+      el('p', { class: 'hint', style: 'margin:0 0 12px;line-height:1.6' }, `같은 매장·같은 SKU 기준으로, 진열 체크 상태별 실제 판매를 비교했어요. ` + (sa.salesInfo ? `판매 = ${sa.salesInfo.from}~${sa.salesInfo.to} 판매 자료.` : '판매 = 재고 파일의 판매수량.') + ` 판매율 = 판매 ÷ (판매 + 남은 재고).`),
       el('div', { class: 'stats' },
         stat(sa.lift == null ? '-' : sa.lift + '배', '진열한 SKU가 창고에만 둔 SKU보다 더 팔린 정도 (평균 판매수량)'),
         stat(pctS(bs.shown.sellThrough), `진열 SKU 판매율 (판매 ${num(bs.shown.sales)}개)`),
         stat(pctS(bs.stock.sellThrough), `창고만 SKU 판매율 (판매 ${num(bs.stock.sales)}개)`),
+        sa.useAmount ? stat(won(bs.shown.avgAmount), '진열 SKU 평균 매출 (매장×SKU당)') : null,
         stat(num(t.idleQty) + '개', '창고에만 있는 재고 수량'),
         stat(num(t.mismatches) + '건', '진열 체크와 재고가 안 맞는 곳')),
       el('div', { class: 'tw', style: 'margin-top:14px' }, el('table', { class: 'stock-table' },
-        el('tr', {}, ['진열 체크', '매장×SKU', '평균 판매수량', '', '판매율', '남은 재고', '판매 0'].map((h, i) => el('th', { class: i && i !== 3 ? 'n' : '' }, h))),
+        el('tr', {}, ['진열 체크', '매장×SKU', '평균 판매수량', '', '평균 매출', '판매율', '남은 재고', '판매 0'].map((h, i) => el('th', { class: i && i !== 3 ? 'n' : '' }, h))),
         rows.map((k) => el('tr', {}, el('td', {}, el('b', {}, ST_L[k])), el('td', { class: 'n' }, num(bs[k].pairs)), el('td', { class: 'n' }, bs[k].avgSales ?? '-'),
           el('td', {}, el('span', { class: 'minibar' }, el('i', { style: `width:${((bs[k].avgSales || 0) / maxAvg) * 100}%` }))),
-          el('td', { class: 'n' }, pctS(bs[k].sellThrough)), el('td', { class: 'n' }, num(bs[k].stock)), el('td', { class: 'n' }, pctOf(bs[k].zeroSales, bs[k].pairs))))))),
+          el('td', { class: 'n' }, sa.useAmount ? won(bs[k].avgAmount) : '-'), el('td', { class: 'n' }, sa.hasStock ? pctS(bs[k].sellThrough) : '-'), el('td', { class: 'n' }, sa.hasStock ? num(bs[k].stock) : '-'), el('td', { class: 'n' }, pctOf(bs[k].zeroSales, bs[k].pairs))))))),
     stockTypeCard(sa), stockStoreCard(sa), stockSkuCard(sa), stockMismatchCard(sa),
     el('p', { class: 'hint' }, '※ 판매수량·재고수량은 올린 ERP 파일(조회 기간·기준일) 그대로이고, 진열 상태는 매장이 마지막으로 체크한 상태예요. 진열을 바꾼 시점과 판매 기간이 다를 수 있으니 방향을 보는 용도로 써 주세요.'));
 }
@@ -1193,11 +1210,11 @@ const pctOf = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '-');
 function stockTypeCard(sa) {
   const max = Math.max(1, ...sa.byType.map((x) => Math.max(x.spacePct, x.salesPct)));
   return el('div', { class: 'card' },
-    el('h2', { style: 'margin:0 0 4px' }, '👕 복종별: 진열 공간 대비 실제 판매'),
-    el('p', { class: 'hint', style: 'margin:0 0 6px;line-height:1.6' }, '공간 = 전체 진열 자리 중 이 복종 비율 · 실판매 = 진열된 자리에서 팔린 수량 중 이 복종 비율. 효율 1 이상이면 공간보다 더 팔리는 복종이에요.'),
-    el('div', { class: 'legend', style: 'margin-bottom:8px' }, el('span', {}, el('i', { style: 'background:var(--s1)' }), '공간'), el('span', {}, el('i', { style: 'background:var(--s2)' }), '실판매')),
+    el('h2', { style: 'margin:0 0 4px' }, sa.useAmount ? '👕 복종별: 진열 공간 대비 실제 매출' : '👕 복종별: 진열 공간 대비 실제 판매'),
+    el('p', { class: 'hint', style: 'margin:0 0 6px;line-height:1.6' }, `공간 = 전체 진열 자리 중 이 복종 비율 · ${sa.useAmount ? '매출' : '실판매'} = 진열된 자리에서 나온 ${sa.useAmount ? '매출액' : '판매수량'} 중 이 복종 비율. 효율 1 이상이면 차지한 공간보다 더 많이 파는 복종이에요.`),
+    el('div', { class: 'legend', style: 'margin-bottom:8px' }, el('span', {}, el('i', { style: 'background:var(--s1)' }), '공간'), el('span', {}, el('i', { style: 'background:var(--s2)' }), sa.useAmount ? '매출' : '실판매')),
     ...sa.byType.map((x) => el('div', { class: 'eff-row' },
-      el('div', { class: 'eff-name' }, el('b', {}, `${x.line} ${x.type}`), el('small', { class: 'hint' }, `자리 ${x.slots} · 판매 ${num(x.sales)}개 · 자리당 ${x.perSlot}개`)),
+      el('div', { class: 'eff-name' }, el('b', {}, `${x.line} ${x.type}`), el('small', { class: 'hint' }, `자리 ${x.slots} · 판매 ${num(x.sales)}개` + (sa.useAmount ? ` · 자리당 ${won(x.perSlotAmount)}` : ` · 자리당 ${x.perSlot}개`))),
       el('div', { class: 'eff-bars' },
         el('div', { class: 'bar gbar' }, el('span', { class: 'track' }, el('span', { class: 'fill', style: `width:${(x.spacePct / max) * 100}%;background:var(--s1)` })), el('small', {}, x.spacePct + '%')),
         el('div', { class: 'bar gbar' }, el('span', { class: 'track' }, el('span', { class: 'fill', style: `width:${(x.salesPct / max) * 100}%;background:var(--s2)` })), el('small', {}, x.salesPct + '%'))),
@@ -1209,9 +1226,9 @@ function stockStoreCard(sa) {
     el('h2', { style: 'margin:0 0 4px' }, '🏬 매장별: 진열 자리당 판매와 창고 재고'),
     el('p', { class: 'hint', style: 'margin:0 0 8px' }, '자리당 판매가 낮은 매장부터 보여요. 창고 재고가 많고 자리당 판매가 낮으면 진열 구성을 바꿀 여지가 커요.'),
     el('div', { class: 'tw' }, el('table', { class: 'stock-table' },
-      el('tr', {}, ['매장', '진열 자리', '자리당 판매', '진열에서 판매', '창고만 재고', '총 재고', '불일치'].map((h, i) => el('th', { class: i ? 'n' : '' }, h))),
+      el('tr', {}, ['매장', '진열 자리', '자리당 판매', '자리당 매출', '진열에서 판매', '창고만 재고', '총 재고', '불일치'].map((h, i) => el('th', { class: i ? 'n' : '' }, h))),
       sa.byStore.map((s) => el('tr', {}, el('td', {}, el('b', {}, s.name), s.checked ? null : el('small', { class: 'hint' }, ' (진열 체크 안 함)')),
-        el('td', { class: 'n' }, num(s.slots)), el('td', { class: 'n' }, s.perSlot ?? '-'), el('td', { class: 'n' }, num(s.shownSales)),
+        el('td', { class: 'n' }, num(s.slots)), el('td', { class: 'n' }, s.perSlot ?? '-'), el('td', { class: 'n' }, sa.useAmount ? won(s.perSlotAmount) : '-'), el('td', { class: 'n' }, num(s.shownSales)),
         el('td', { class: 'n' }, `${num(s.idleQty)}개 (${s.idleSkus})`), el('td', { class: 'n' }, num(s.stockQty)), el('td', { class: 'n' }, s.mismatch ? el('span', { class: 'tag gap' }, s.mismatch) : '-'))))));
 }
 function stockSkuCard(sa) {

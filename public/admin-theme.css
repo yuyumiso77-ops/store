@@ -86,3 +86,5 @@ body.admin .card:has(> .stats:first-child) > .stats + * { margin-top: 12px; }
 .stock-table .minibar { display: inline-block; width: 120px; height: 8px; background: #eef1f6; border-radius: 2px; overflow: hidden; vertical-align: middle; }
 .stock-table .minibar i { display: block; height: 100%; background: var(--accent); }
 .tw { overflow-x: auto; }
+.erp-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; background: #f8f9fb; border-radius: 12px; }
+.erp-file { display: flex; flex-direction: column; gap: 2px; }

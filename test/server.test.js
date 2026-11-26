@@ -636,6 +636,14 @@ test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체
   assert.deepStrictEqual([sa.byStatus.shown.avgSales, sa.byStatus.stock.avgSales, sa.lift, sa.totals.idleQty], [6, 2, 3, 10]);
   assert.strictEqual(sa.mismatches.counts.hasStockButNone, 1); // 잠실: 재고 3인데 '없음'
   assert.strictEqual(sa.byStore.find((x) => x.name === '롯데중동').perSlot, 6);
+  // 판매 자료: 시즌 판매수량·금액으로 바꿔 계산
+  const sr = await (await fetch(base + '/api/admin/sales/import', { method: 'POST', headers: admin, body: JSON.stringify({ from: '2026-07-01', to: '2026-11-25', fileName: 's.xlsx', stores: { CBA0017: 'FJ 롯데백화점 중동점' }, rows: [['CBA0017', 'STKA1', '', 8, 800000], ['CBA0017', 'STKB1', '', 1, 100000], ['CBA0017', 'NOPE', '', 5, 5]] }) })).json();
+  assert.deepStrictEqual([sr.stores, sr.skus, sr.qty, sr.amount], [1, 2, 9, 900000]);
+  const sa2 = await (await fetch(base + '/api/admin/stock-analysis', { headers: admin })).json();
+  assert.deepStrictEqual([sa2.useAmount, sa2.byStatus.shown.avgSales, sa2.byStatus.shown.avgAmount, sa2.lift, sa2.salesInfo.from], [true, 8, 800000, 8, '2026-07-01']);
+  const rep = await (await fetch(base + '/api/admin/report', { headers: admin })).json();
+  assert.strictEqual(rep.reaction.products.find((x) => x.code === 'STKA1').salesAmount, 800000);
+  await fetch(base + '/api/admin/sales', { method: 'DELETE', headers: admin });
   await fetch(base + '/api/admin/stock', { method: 'DELETE', headers: admin });
   for (const st of ['롯데중동', '롯데잠실']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });
   for (const id of [a, b]) await fetch(base + `/api/admin/products/${id}`, { method: 'DELETE', headers: admin });

@@ -68,7 +68,7 @@ const OPTIONS = {
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], giftItems: d.giftItems, summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [], stock: d.stock || null };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], giftItems: d.giftItems, summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [], stock: d.stock || null, sales: d.sales || null };
   } catch {
     return { products: [], evaluations: [], ztec: [], gifts: [], summaries: {}, displays: [], stores: [] };
   }
@@ -690,8 +690,9 @@ function spaceEfficiency() {
 function buildReport() {
   const sm = summary();
   const prods = sm.products.filter((p) => p.active && p.count);
-  const pick = (p) => ({ id: p.id, code: p.code, name: p.name, line: lineOf(p), type: typeOf(p), imageUrl: p.imageUrl, count: p.count, avgReaction: p.avgReaction,
-    goodPct: Math.round((p.sales.good / p.count) * 100), poorPct: Math.round((p.sales.poor / p.count) * 100), displayRate: p.displayRate,
+  const psales = productSales();
+  const pick = (p) => ({ id: p.id, salesQty: psales ? (psales.get(p.id) || { qty: 0 }).qty : null, salesAmount: psales ? (psales.get(p.id) || { amount: 0 }).amount : null, code: p.code, name: p.name, line: lineOf(p), type: typeOf(p), imageUrl: p.imageUrl, count: p.count, avgReaction: p.avgReaction,
+    goodPct: p.count ? Math.round((p.sales.good / p.count) * 100) : null, poorPct: p.count ? Math.round((p.sales.poor / p.count) * 100) : null, displayRate: p.displayRate,
     pros: p.pros.slice(0, 3).map((x) => x.name), cons: p.cons.slice(0, 3).map((x) => x.name) });
   const enough = prods.filter((p) => p.count >= 3);
   const rank = (dir) => enough.slice().sort((a, b) => dir * (a.avgReaction - b.avgReaction) || b.count - a.count).slice(0, 10).map(pick);
@@ -730,7 +731,8 @@ function buildReport() {
       }),
       flagged: pr.stores.filter((x) => x.flags.length).map((x) => ({ name: x.name, flags: x.flags.map((f) => f.label) })),
     },
-    reaction: { top: rank(-1), bottom: rank(1), products: prods.map(pick), byType, sellReasons: reasons('sellReasons'), noBuyReasons: reasons('noBuyReasons'), pros: countBy(allDone.map((e) => e.pros || [])).slice(0, 8), cons: countBy(allDone.map((e) => e.cons || [])).slice(0, 8) },
+    salesInfo: db.sales ? { from: db.sales.from, to: db.sales.to } : null,
+    reaction: { top: rank(-1), bottom: rank(1), products: sm.products.filter((p) => p.active && (p.count || (psales && psales.has(p.id)))).map(pick), byType, sellReasons: reasons('sellReasons'), noBuyReasons: reasons('noBuyReasons'), pros: countBy(allDone.map((e) => e.pros || [])).slice(0, 8), cons: countBy(allDone.map((e) => e.cons || [])).slice(0, 8) },
     display: {
       totals: da.totals, byType: da.byType.map((t) => ({ line: t.line, type: t.type, rate: t.rate, shown: t.shown, stock: t.stock, none: t.none, notReceived: t.notReceived })),
       groups: ['expand', 'star', 'review'].map((k) => ({ key: k, items: da.products.filter((p) => p.group === k).map((p) => ({ code: p.code, name: p.name, type: p.type, displayRate: p.displayRate, avgReaction: p.avgReaction, goodPct: p.goodPct })) })),
@@ -749,6 +751,50 @@ function buildReport() {
 // ---------- 📦 매장 재고 (ERP 매장시점재고현황) × 진열 체크 ----------
 // 재고 파일: 매장코드 × 품번 × 색상별 재고수량·판매수량 합계. SKU는 품번 + 색상명으로 맞춤
 const normColor = (c) => String(c || '').toUpperCase().replace(/\s+/g, '');
+function erpMapper(names) {
+  const idx = skuIndex();
+  const byCodeColor = new Map();
+  idx.forEach((k) => byCodeColor.set(`${k.product.code}|${normColor(k.color)}`, k.sku));
+  const storeByCode = new Map(db.stores.filter((s) => s.code).map((s) => [String(s.code).trim(), s.name]));
+  const cleanName = (n) => String(n || '').replace(/^FJ\s*/, '').replace(/백화점\s*/, '').replace(/\s+/g, '');
+  return {
+    sku: (prod, color) => byCodeColor.get(`${String(prod).trim()}|${normColor(color)}`),
+    store: (code) => storeByCode.get(String(code).trim()) || (matchStore(cleanName(names[code])) || {}).name || null,
+  };
+}
+// 판매 자료 (ERP 판매 내역): 매장코드 × 품번 × 색상별 판매수량·판매금액 합계 (반품 차감)
+function importSales(b) {
+  const names = b.stores && typeof b.stores === 'object' ? b.stores : {};
+  const mp = erpMapper(names);
+  const items = new Map();
+  const unmatchedStores = new Set();
+  let skipped = 0;
+  for (const r of Array.isArray(b.rows) ? b.rows : []) {
+    if (!Array.isArray(r) || r.length < 5) { skipped++; continue; }
+    const [code, prod, color, qty, amount] = r;
+    const sku = mp.sku(prod, color);
+    if (!sku) { skipped++; continue; }
+    const store = mp.store(code);
+    if (!store) { unmatchedStores.add(names[code] || String(code)); continue; }
+    const k = store + '|' + sku;
+    const it = items.get(k) || { store, sku, qty: 0, amount: 0 };
+    it.qty += Number(qty) || 0; it.amount += Number(amount) || 0;
+    items.set(k, it);
+  }
+  if (!items.size) return { error: '조사 대상 상품(품번·색상)이나 매장(매장코드)과 맞는 판매 자료가 없어요. 파일을 확인해 주세요.' };
+  db.sales = { from: cleanText(b.from, 20), to: cleanText(b.to, 20), fileName: cleanText(b.fileName, 120), uploadedAt: new Date().toISOString(), items: [...items.values()], unmatchedStores: [...unmatchedStores].slice(0, 50) };
+  saveDb();
+  const qty = db.sales.items.reduce((a, x) => a + x.qty, 0), amount = db.sales.items.reduce((a, x) => a + x.amount, 0);
+  return { ok: true, items: items.size, stores: new Set(db.sales.items.map((x) => x.store)).size, skus: new Set(db.sales.items.map((x) => x.sku)).size, qty, amount, unmatchedStores: db.sales.unmatchedStores, skipped };
+}
+// 상품별 실판매 합계 (판매 자료가 있을 때)
+function productSales() {
+  if (!db.sales) return null;
+  const idx = skuIndex();
+  const m = new Map();
+  db.sales.items.forEach((x) => { const k = idx.get(x.sku); if (!k) return; const a = m.get(k.product.id) || { qty: 0, amount: 0 }; a.qty += x.qty; a.amount += x.amount; m.set(k.product.id, a); });
+  return m;
+}
 function importStock(b) {
   const idx = skuIndex();
   const byCodeColor = new Map();
@@ -781,45 +827,56 @@ function importStock(b) {
   return { ok: true, items: db.stock.items.length, stores: new Set(db.stock.items.map((x) => x.store)).size, skus: new Set(db.stock.items.map((x) => x.sku)).size, unmatchedStores: db.stock.unmatchedStores, skipped };
 }
 function stockAnalysis() {
-  const st = db.stock;
-  if (!st) return { loaded: false };
+  const st = db.stock || { items: [] };
+  const sl = db.sales;
+  if (!db.stock && !sl) return { loaded: false };
   const idx = skuIndex();
   const disp = new Map(db.displays.map((d) => [d.store + '|' + d.sku, d.status]));
   const checkedStores = new Set(db.displays.map((d) => d.store));
   const sku = (s) => { const k = idx.get(s); return k ? { sku: s, code: k.product.code || k.product.name, name: k.product.name, color: k.color, line: lineOf(k.product), type: typeOf(k.product), imageUrl: imageUrl(k.product) } : null; };
-  const pairs = st.items.filter((x) => idx.has(x.sku)).map((x) => ({ ...x, stock: Math.max(0, x.stock), status: disp.get(x.store + '|' + x.sku) || '' }));
+  // 판매 자료(시즌 판매)가 있으면 그 판매수량·금액을 쓰고, 없으면 재고 파일의 판매수량
+  const salesMap = new Map((sl ? sl.items : []).map((x) => [x.store + '|' + x.sku, x]));
+  const stockMap = new Map(st.items.map((x) => [x.store + '|' + x.sku, x]));
+  const keys = new Set([...stockMap.keys(), ...salesMap.keys()]);
+  const pairs = [...keys].map((k) => {
+    const s = stockMap.get(k), v = salesMap.get(k);
+    const [store, skuId] = [k.slice(0, k.lastIndexOf('|')), k.slice(k.lastIndexOf('|') + 1)];
+    return { store, sku: skuId, stock: Math.max(0, s ? s.stock : 0), sales: sl ? (v ? v.qty : 0) : (s ? s.sales : 0), amount: v ? v.amount : 0, status: disp.get(k) || '' };
+  }).filter((x) => idx.has(x.sku));
   // 상태별 실제 판매 (진열 효과)
   const G = {};
-  ['shown', 'stock', 'none', 'notReceived', ''].forEach((s) => (G[s] = { pairs: 0, sales: 0, stock: 0, zeroSales: 0 }));
-  pairs.forEach((p) => { const g = G[p.status]; g.pairs++; g.sales += p.sales; g.stock += p.stock; if (p.sales <= 0) g.zeroSales++; });
-  const grp = (s) => ({ ...G[s], avgSales: G[s].pairs ? Math.round((G[s].sales / G[s].pairs) * 10) / 10 : null, sellThrough: G[s].sales + G[s].stock ? Math.round((G[s].sales / (G[s].sales + G[s].stock)) * 100) : null });
+  ['shown', 'stock', 'none', 'notReceived', ''].forEach((s) => (G[s] = { pairs: 0, sales: 0, stock: 0, zeroSales: 0, amount: 0 }));
+  pairs.forEach((p) => { const g = G[p.status]; g.pairs++; g.sales += p.sales; g.stock += p.stock; g.amount += p.amount; if (p.sales <= 0) g.zeroSales++; });
+  const grp = (s) => ({ ...G[s], avgSales: G[s].pairs ? Math.round((G[s].sales / G[s].pairs) * 10) / 10 : null, avgAmount: G[s].pairs ? Math.round(G[s].amount / G[s].pairs) : null, sellThrough: G[s].sales + G[s].stock ? Math.round((G[s].sales / (G[s].sales + G[s].stock)) * 100) : null });
   const byStatus = { shown: grp('shown'), stock: grp('stock'), none: grp('none'), notReceived: grp('notReceived'), unchecked: grp('') };
   const lift = byStatus.shown.avgSales && byStatus.stock.avgSales ? Math.round((byStatus.shown.avgSales / byStatus.stock.avgSales) * 10) / 10 : null;
   // 복종별: 진열 자리 비율 vs 실제 판매 비율 (진열된 자리 기준)
   const shown = pairs.filter((p) => p.status === 'shown');
-  const totSlots = shown.length, totSales = shown.reduce((a, p) => a + Math.max(0, p.sales), 0);
+  const useAmt = !!sl; // 판매 자료가 있으면 매출액 기준으로 기여도 계산
+  const val = (p) => Math.max(0, useAmt ? p.amount : p.sales);
+  const totSlots = shown.length, totSales = shown.reduce((a, p) => a + val(p), 0);
   const tmap = new Map();
-  shown.forEach((p) => { const s = sku(p.sku); const k = `${s.line}|${s.type}`; const t = tmap.get(k) || { line: s.line, type: s.type, slots: 0, sales: 0, stock: 0 }; t.slots++; t.sales += Math.max(0, p.sales); t.stock += p.stock; tmap.set(k, t); });
+  shown.forEach((p) => { const s = sku(p.sku); const k = `${s.line}|${s.type}`; const t = tmap.get(k) || { line: s.line, type: s.type, slots: 0, sales: 0, amount: 0, val: 0, stock: 0 }; t.slots++; t.sales += Math.max(0, p.sales); t.amount += Math.max(0, p.amount); t.val += val(p); t.stock += p.stock; tmap.set(k, t); });
   const byType = [...tmap.values()].map((t) => {
-    const space = totSlots ? t.slots / totSlots : 0, contrib = totSales ? t.sales / totSales : 0;
-    return { ...t, spacePct: Math.round(space * 1000) / 10, salesPct: Math.round(contrib * 1000) / 10, perSlot: Math.round((t.sales / t.slots) * 10) / 10, efficiency: space ? Math.round((contrib / space) * 100) / 100 : null };
+    const space = totSlots ? t.slots / totSlots : 0, contrib = totSales ? t.val / totSales : 0;
+    return { ...t, spacePct: Math.round(space * 1000) / 10, salesPct: Math.round(contrib * 1000) / 10, perSlot: Math.round((t.sales / t.slots) * 10) / 10, perSlotAmount: Math.round(t.amount / t.slots), efficiency: space ? Math.round((contrib / space) * 100) / 100 : null };
   }).sort((a, b) => b.efficiency - a.efficiency);
   // 매장별
   const smap = new Map();
   pairs.forEach((p) => {
-    const s = smap.get(p.store) || { name: p.store, checked: checkedStores.has(p.store), slots: 0, shownSales: 0, idleQty: 0, idleSkus: 0, stockQty: 0, sales: 0, mismatch: 0 };
-    s.stockQty += p.stock; s.sales += Math.max(0, p.sales);
-    if (p.status === 'shown') { s.slots++; s.shownSales += Math.max(0, p.sales); }
+    const s = smap.get(p.store) || { name: p.store, checked: checkedStores.has(p.store), slots: 0, shownSales: 0, shownAmount: 0, idleQty: 0, idleSkus: 0, stockQty: 0, sales: 0, amount: 0, mismatch: 0 };
+    s.stockQty += p.stock; s.sales += Math.max(0, p.sales); s.amount += Math.max(0, p.amount);
+    if (p.status === 'shown') { s.slots++; s.shownSales += Math.max(0, p.sales); s.shownAmount += Math.max(0, p.amount); }
     if (p.status === 'stock' && p.stock > 0) { s.idleQty += p.stock; s.idleSkus++; }
-    if (((p.status === 'none' || p.status === 'notReceived') && p.stock > 0) || (p.status === 'shown' && p.stock <= 0)) s.mismatch++;
+    if (db.stock && (((p.status === 'none' || p.status === 'notReceived') && p.stock > 0) || (p.status === 'shown' && p.stock <= 0))) s.mismatch++;
     smap.set(p.store, s);
   });
-  const byStore = [...smap.values()].map((s) => ({ ...s, perSlot: s.slots ? Math.round((s.shownSales / s.slots) * 10) / 10 : null }))
+  const byStore = [...smap.values()].map((s) => ({ ...s, perSlot: s.slots ? Math.round((s.shownSales / s.slots) * 10) / 10 : null, perSlotAmount: s.slots ? Math.round(s.shownAmount / s.slots) : null }))
     .sort((a, b) => (a.perSlot ?? 999) - (b.perSlot ?? 999));
   // 불일치 (체크 정확도)
   const mm = (pred, label) => pairs.filter(pred).map((p) => ({ store: p.store, ...sku(p.sku), stock: p.stock, sales: p.sales, status: p.status, label }));
   const hasStockButNone = mm((p) => (p.status === 'none' || p.status === 'notReceived') && p.stock > 0, '재고 있는데 없음·미입고로 체크');
-  const shownNoStock = mm((p) => p.status === 'shown' && p.stock <= 0, '재고 0인데 진열로 체크');
+  const shownNoStock = db.stock ? mm((p) => p.status === 'shown' && p.stock <= 0, '재고 0인데 진열로 체크') : [];
   // SKU 단위 집계
   const agg = (list, valueOf) => {
     const m = new Map();
@@ -829,8 +886,9 @@ function stockAnalysis() {
   const idleTop = agg(pairs.filter((p) => p.status === 'stock' && p.stock > 0), (p) => p.stock);
   const deadShown = agg(pairs.filter((p) => p.status === 'shown' && p.sales <= 0 && p.stock > 0), (p) => p.stock);
   return {
-    loaded: true, asOf: st.asOf, fileName: st.fileName, uploadedAt: st.uploadedAt, unmatchedStores: st.unmatchedStores,
-    totals: { stores: smap.size, checkedStores: [...smap.values()].filter((s) => s.checked).length, pairs: pairs.length, stockQty: pairs.reduce((a, p) => a + p.stock, 0), sales: pairs.reduce((a, p) => a + Math.max(0, p.sales), 0),
+    loaded: true, hasStock: !!db.stock, asOf: st.asOf, fileName: st.fileName, uploadedAt: st.uploadedAt, unmatchedStores: st.unmatchedStores,
+    salesInfo: sl ? { from: sl.from, to: sl.to, fileName: sl.fileName, uploadedAt: sl.uploadedAt } : null, useAmount: useAmt,
+    totals: { stores: smap.size, checkedStores: [...smap.values()].filter((s) => s.checked).length, pairs: pairs.length, stockQty: pairs.reduce((a, p) => a + p.stock, 0), sales: pairs.reduce((a, p) => a + Math.max(0, p.sales), 0), amount: pairs.reduce((a, p) => a + Math.max(0, p.amount), 0),
       idleQty: byStatus.stock.stock, mismatches: hasStockButNone.length + shownNoStock.length },
     byStatus, lift, byType, byStore, idleTop, deadShown,
     mismatches: { hasStockButNone: hasStockButNone.slice(0, 3000), shownNoStock: shownNoStock.slice(0, 3000), counts: { hasStockButNone: hasStockButNone.length, shownNoStock: shownNoStock.length } },
@@ -1134,6 +1192,13 @@ async function handle(req, res) {
       return send(res, r.error ? 400 : 200, r);
     }
     if (m === 'DELETE' && p === '/api/admin/stock') { db.stock = null; saveDb(); return send(res, 200, { ok: true }); }
+    if (m === 'POST' && p === '/api/admin/sales/import') {
+      let b;
+      try { b = JSON.parse((await readRaw(req, 8 * 1024 * 1024)).toString('utf8')); } catch { return send(res, 400, { error: '판매 데이터를 읽지 못했어요 (너무 크거나 형식 오류).' }); }
+      const r = importSales(b);
+      return send(res, r.error ? 400 : 200, r);
+    }
+    if (m === 'DELETE' && p === '/api/admin/sales') { db.sales = null; saveDb(); return send(res, 200, { ok: true }); }
     if (m === 'GET' && p === '/api/admin/space-swaps.csv') {
       const sp = spaceEfficiency();
       const cell = (x) => (x ? `${x.code} ${x.color}`.trim() : '');
