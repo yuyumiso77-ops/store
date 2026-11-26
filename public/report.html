@@ -144,7 +144,7 @@ const $ = (id) => document.getElementById(id);
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
   Object.entries(attrs).forEach(([k, v]) => (k === 'class' ? (n.className = v) : k.startsWith('on') ? (n[k] = v) : n.setAttribute(k, v)));
-  kids.flat().forEach((c) => c !== '' && c != null && c !== false && n.append(c instanceof Node ? c : document.createTextNode(String(c))));
+  kids.flat(Infinity).forEach((c) => c !== '' && c != null && c !== false && n.append(c instanceof Node ? c : document.createTextNode(String(c))));
   return n;
 };
 const num = (v) => (v == null ? '-' : Number(v).toLocaleString());
@@ -205,6 +205,8 @@ const RK_SORTS = [
   ['reactionAsc', '👎 반응 낮은 순', (a, b) => a.avgReaction - b.avgReaction || b.poorPct - a.poorPct || b.count - a.count],
   ['goodDesc', '💰 잘 팔림 많은 순', (a, b) => b.goodPct - a.goodPct || b.avgReaction - a.avgReaction || b.count - a.count],
   ['poorDesc', '📉 안 팔림 많은 순', (a, b) => b.poorPct - a.poorPct || a.avgReaction - b.avgReaction || b.count - a.count],
+  ['stDesc', '📈 판매율 높은 순', (a, b) => (b.sellThrough ?? -1) - (a.sellThrough ?? -1) || (b.avgReaction ?? 0) - (a.avgReaction ?? 0)],
+  ['stAsc', '📉 판매율 낮은 순', (a, b) => (a.sellThrough ?? 999) - (b.sellThrough ?? 999) || (a.avgReaction ?? 0) - (b.avgReaction ?? 0)],
   ['amountDesc', '💵 매출 많은 순', (a, b) => (b.salesAmount ?? -1) - (a.salesAmount ?? -1) || b.salesQty - a.salesQty],
   ['qtyDesc', '🧾 판매수량 많은 순', (a, b) => (b.salesQty ?? -1) - (a.salesQty ?? -1) || b.salesAmount - a.salesAmount],
   ['displayAsc', '📦 진열률 낮은 순', (a, b) => (a.displayRate ?? 999) - (b.displayRate ?? 999) || b.goodPct - a.goodPct],
@@ -215,12 +217,12 @@ try { Object.assign(RK, JSON.parse(localStorage.getItem('reportRank') || '{}'));
 // 순위표: 줄을 누르면 그 상품의 종합 평가가 바로 아래에 펼쳐짐
 const OPEN = new Set();
 function rankTable(shown, typeKey) {
-  const hasSales = shown.some((p) => p.salesQty != null);
-  const head = ['순위', '상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', ...(hasSales ? ['실판매', '매출'] : []), '평가'], nums = [0, 3, 4, 5, 6, 7, 8, 9, 10];
+  const hasSales = shown.some((p) => p.salesQty != null), hasSt = shown.some((p) => p.sellThrough != null);
+  const head = ['순위', '상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', ...(hasSt ? ['판매율'] : []), ...(hasSales ? ['매장 판매', '매출'] : []), '평가'], nums = head.map((_, i) => i).filter((i) => i !== 1 && i !== 2);
   const tb = el('table', { class: 'rank-table' }, el('tr', {}, head.map((h, i) => el('th', { class: nums.includes(i) ? 'n' : '' }, h))));
   shown.forEach((p, i) => {
     const cells = [i + 1, el('span', {}, thumb(p.imageUrl, `${p.code || ''} ${p.name || ''}`.trim()), el('b', {}, p.code || p.name), el('span', { class: 'caret no-print' }, '▾')), typeKey(p),
-      el('span', {}, bar(p.avgReaction, 5), fmt1(p.avgReaction)), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), ...(hasSales ? [(p.salesQty ?? 0).toLocaleString() + '개', wonS(p.salesAmount)] : []), p.count];
+      el('span', {}, bar(p.avgReaction, 5), fmt1(p.avgReaction)), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), ...(hasSt ? [p.sellThrough == null ? '-' : el('b', {}, p.sellThrough + '%')] : []), ...(hasSales ? [(p.salesQty ?? 0).toLocaleString() + '개', wonS(p.salesAmount)] : []), p.count];
     const tr = el('tr', { class: 'rk-row' }, cells.map((c, j) => el('td', { class: nums.includes(j) ? 'n' : '' }, c)));
     const detail = el('tr', { class: 'rk-detail' }, el('td', { colspan: String(head.length) }));
     detail.hidden = !OPEN.has(p.id);
@@ -281,6 +283,8 @@ function productDetail(d, reload) {
       el('div', { class: 'kpi' }, el('span', {}, '판매 반응'), el('div', { class: 'pd-sales' },
         el('div', { class: 'pd-sbar' }, el('i', { class: 'g', style: `width:${w(sb.good)}%` }), el('i', { class: 'n', style: `width:${w(sb.normal)}%` }), el('i', { class: 'p', style: `width:${w(sb.poor)}%` })),
         el('div', { class: 'hint' }, `잘 팔림 ${sb.good} · 보통 ${sb.normal} · 안 팔림 ${sb.poor}`))),
+      p.prodQty ? el('div', { class: 'kpi' }, el('span', {}, '판매율 (판매 ÷ 기획)'), el('b', {}, p.sellThrough == null ? '-' : p.sellThrough + '%'),
+        el('div', { class: 'hint' }, `기획 ${p.prodQty.toLocaleString()} · 판매 ${(p.salesQty || 0).toLocaleString()}` + (p.colorSt && p.colorSt.length > 1 ? ' · ' + p.colorSt.map((c) => `${c.color} ${c.st}%`).join(' · ') : ''))) : null,
       el('div', { class: 'kpi' }, el('span', {}, '진열률'), el('b', {}, pct(p.displayRate)), el('div', { class: 'hint' }, `진열 ${p.display.shown} · 창고만 ${p.display.stock} · 없음 ${p.display.none}` + (p.display.notReceived ? ` · 미입고 ${p.display.notReceived}` : '')))),
     ai,
     el('div', { class: 'pd-grid' },
@@ -302,8 +306,8 @@ function rankingBlock(products) {
   if (RK.type !== 'all' && !types.includes(RK.type)) RK.type = 'all';
   const draw = () => {
     try { localStorage.setItem('reportRank', JSON.stringify(RK)); } catch {}
-    const bySales = RK.sort === 'amountDesc' || RK.sort === 'qtyDesc';
-    const base = products.filter((p) => (bySales ? p.salesQty != null : p.count >= RK.min)); // 매출·판매수량 순은 평가 없는 상품도 포함
+    const bySales = RK.sort === 'amountDesc' || RK.sort === 'qtyDesc', bySt = RK.sort === 'stDesc' || RK.sort === 'stAsc';
+    const base = products.filter((p) => (bySt ? p.sellThrough != null : bySales ? p.salesQty != null : p.count >= RK.min)); // 판매율·매출·판매수량 순은 평가 없는 상품도 포함
     const list = base.filter((p) => RK.type === 'all' || typeKey(p) === RK.type).sort(RK_SORTS.find(([k]) => k === RK.sort)[2]);
     const shown = RK.n ? list.slice(0, RK.n) : list;
     const chip = (on, label, fn) => el('button', { type: 'button', class: on ? 'on' : '', onclick: () => { fn(); draw(); } }, label);
@@ -320,7 +324,7 @@ function rankingBlock(products) {
         el('div', { class: 'rank-row' }, el('span', { class: 'rank-lbl' }, '기준'),
           el('div', { class: 'chips small' }, [1, 3, 5].map((m) => chip(RK.min === m, `평가 ${m}건 이상`, () => (RK.min = m)))))),
       el('h3', {}, `${RK.type === 'all' ? '전체 복종' : RK.type} · ${sortName.replace(/^\S+\s/, '')} · ${RK.n ? `1~${Math.min(RK.n, list.length)}위` : `전체 ${list.length}개`}`,
-        el('small', { class: 'hint', style: 'font-weight:400;margin-left:6px' }, bySales ? `(판매 자료 ${list.length}개 상품 중)` : `(평가 ${RK.min}건 이상 ${list.length}개 중)`)),
+        el('small', { class: 'hint', style: 'font-weight:400;margin-left:6px' }, bySt ? `(판매율 있는 ${list.length}개 상품 중)` : bySales ? `(판매 자료 ${list.length}개 상품 중)` : `(평가 ${RK.min}건 이상 ${list.length}개 중)`)),
       shown.length ? el('div', {}, el('p', { class: 'hint no-print', style: 'margin:-4px 0 8px' }, '👆 상품 줄을 누르면 고객 반응 종합 평가가 펼쳐져요.'), rankTable(shown, typeKey))
         : el('p', { class: 'empty' }, '조건에 맞는 상품이 없어요. 기준(평가 건수)을 낮춰 보세요.'));
   };
@@ -349,6 +353,7 @@ function render(r) {
       kpi(`${o.evaluatedProducts} / ${o.products}`, '평가된 상품'),
       kpi(fmt1(o.avgReaction), '평균 고객 반응 (5점)'),
       kpi(pctOf(s.good, sn), '잘 팔림 응답 비율'),
+      o.sellThrough != null ? kpi(o.sellThrough + '%', '판매율 (판매 ÷ 기획)') : null,
       kpi(pct(o.displayRate), `진열률 (체크 ${o.displayChecks.toLocaleString()}건)`),
       kpi(`${o.ztec} · ${o.gifts}`, 'Z-TEC · 사은품 응답 매장'))), { className: 'keep' }));
 
@@ -365,32 +370,39 @@ function render(r) {
   out.push(sec('3', '상품별 고객 반응', '매장 직원이 판매하면서 느낀 고객 반응(5점)과 판매 반응이에요. 복종·순위 범위·정렬을 골라 보세요. 고른 그대로 인쇄돼요.',
     rankingBlock(rc.products),
     el('h3', {}, '복종별 반응'),
-    table(['복종', '상품', '평가', '평균 반응', '잘 팔림', '안 팔림'], rc.byType.map((t) => [`${t.line} ${t.type}`, t.products, t.evals, el('span', {}, bar(t.avgReaction, 5), fmt1(t.avgReaction)), pct(t.goodPct), pct(t.poorPct)]), [1, 2, 3, 4, 5]),
+    table(['복종', '상품', '평가', '평균 반응', '잘 팔림', '안 팔림', '판매율'], rc.byType.map((t) => [`${t.line} ${t.type}`, t.products, t.evals, el('span', {}, bar(t.avgReaction, 5), fmt1(t.avgReaction)), pct(t.goodPct), pct(t.poorPct), t.sellThrough == null ? '-' : t.sellThrough + '%']), [1, 2, 3, 4, 5, 6]),
     el('div', { class: 'two' },
       el('div', {}, el('h3', {}, '고객이 좋아한 점'), el('p', { class: 'tags wr' }, chipsOf(rc.pros)), el('h3', {}, '판매를 도운 요인'), el('p', { class: 'tags wr' }, chipsOf(rc.sellReasons))),
       el('div', {}, el('h3', {}, '고객이 아쉬워한 점'), el('p', { class: 'tags wr' }, chipsOf(rc.cons)), el('h3', {}, '판매를 막은 요인'), el('p', { class: 'tags wr' }, chipsOf(rc.noBuyReasons))))));
 
-  // 4. 진열 현황
-  const dt = r.display;
-  const G = { expand: '진열 확대 후보 (반응·판매 좋은데 진열 적음)', star: '효자 상품 (진열·반응·판매 모두 좋음)', review: '진열 재검토 (진열 많은데 부진)' };
+  // 4. 진열 현황 — 판매율 진단(판매현황표) + 매장 진열 체크
+  const dt = r.display, sl = r.sell;
   const tot = dt.totals;
-  out.push(sec('4', '진열 현황', '매장이 SKU(품번 × 컬러)별로 체크한 진열 상태예요. 진열률은 미입고를 뺀 기준이에요.',
-    el('div', { class: 'kpis' },
-      kpi(pct(o.displayRate), '전체 진열률 (미입고 제외)'),
-      kpi(num(tot.checks) + '건', '진열 체크'),
-      kpi(num(tot.shown), '진열'),
-      kpi(num(tot.stock), '창고만'),
-      kpi(num(tot.none), '매장에 없음'),
-      kpi(num(tot.notReceived), '미입고')),
-    el('h3', {}, '복종별 진열률'),
+  const wk = (v) => (v == null ? '-' : v > 99 ? '99주+' : Math.round(v) + '주');
+  const skuCell = (x) => el('span', {}, thumb(x.imageUrl, `${x.code} ${x.color}`), el('b', {}, `${x.code} ${x.color}`));
+  const skuTable = (list) => table(['SKU', '복종', '판매율', '남은 재고', '주간 판매', '소진까지', '진열률'],
+    list.map((x) => [skuCell(x), x.group, x.st == null ? '-' : x.st + '%', num(x.rem), Math.round(x.rec * 10) / 10, wk(x.cover), pct(x.displayRate)]), [2, 3, 4, 5, 6]);
+  out.push(sec('4', '진열 현황 · 판매율 진단', sl
+    ? `${sl.basis} 대비 판매율과 최근 3주 판매 속도로 남은 재고를 시즌 끝(${sl.seasonEndLabel})까지 팔 수 있는지 보고, 매장 진열 체크와 합쳐 진열 액션을 정리했어요. ${String(sl.lastWeek).split('~').pop()}까지 판매 반영 · 남은 시즌 약 ${sl.weeksLeft}주.`
+    : '매장이 SKU(품번 × 컬러)별로 체크한 진열 상태예요. 판매현황표를 올리면 판매율 진단이 함께 나와요.',
+    sl ? [
+      el('div', { class: 'kpis' },
+        kpi(sl.totals.st + '%', `판매율 (판매 ${num(sl.totals.sold)} ÷ ${sl.basis} ${num(sl.totals.plan)})`),
+        kpi(num(sl.totals.rem) + '장', '남은 재고'),
+        kpi(num(Math.round(sl.totals.rec)) + '장', '최근 주간 판매'),
+        kpi(num(sl.totals.leftover) + '장', '지금 속도면 시즌 끝 잔량'),
+        kpi(pct(o.displayRate), '전체 진열률 (미입고 제외)'),
+        kpi(`${sl.counts.hot} · ${sl.counts.ok} · ${sl.counts.slow} · ${sl.counts.stall}`, 'SKU: 품절 임박 · 적정 · 소진 어려움 · 정체')),
+      el('h3', {}, '복종별 판매율 · 소진 전망 · 진열률'),
+      table(['복종', '판매율', '남은 재고', '주간 판매', '소진까지', '시즌 끝 잔량', '진열률'],
+        sl.groups.map((g) => [g.group, el('span', {}, bar(g.st || 0), (g.st ?? '-') + '%'), num(g.rem), num(Math.round(g.rec)), wk(g.cover), num(g.leftover), pct(g.displayRate)]), [1, 2, 3, 4, 5, 6]),
+      sl.hot.length ? [el('h3', {}, `🔥 품절 임박 · ${sl.hot.length}개 — 진열 유지, 잘 팔리는 매장에 재고 몰아주기`), skuTable(sl.hot)] : null,
+      sl.expand.length ? [el('h3', {}, `📈 진열 늘릴 SKU — 팔리고 있는데 진열률 70% 미만 (최근 판매 많은 순)`), skuTable(sl.expand)] : null,
+      sl.cut.length ? [el('h3', {}, `🌙 진열 뺄 SKU — 최근 판매 거의 없음 (그 자리에 위 SKU를)`), skuTable(sl.cut)] : null,
+    ] : el('div', { class: 'kpis' },
+      kpi(pct(o.displayRate), '전체 진열률 (미입고 제외)'), kpi(num(tot.checks) + '건', '진열 체크'), kpi(num(tot.shown), '진열'), kpi(num(tot.stock), '창고만'), kpi(num(tot.none), '매장에 없음'), kpi(num(tot.notReceived), '미입고')),
+    el('h3', {}, '복종별 진열 체크'),
     table(['복종', '진열률', '진열', '창고만', '없음', '미입고'], dt.byType.map((t) => [`${t.line} ${t.type}`, el('span', {}, bar(t.rate || 0), pct(t.rate)), t.shown, t.stock, t.none, t.notReceived]), [1, 2, 3, 4, 5]),
-    ...dt.groups.filter((g) => g.items.length).map((g) => {
-      const order = g.key === 'expand' ? (a, b) => a.displayRate - b.displayRate : g.key === 'review' ? (a, b) => a.goodPct - b.goodPct : (a, b) => b.goodPct - a.goodPct;
-      const list = g.items.slice().sort(order);
-      return [el('h3', {}, `${G[g.key]} · ${g.items.length}개`),
-        table(['상품', '복종', '진열률', '고객 반응', '잘 팔림'], list.slice(0, 10).map((p) => [el('b', {}, p.code || p.name), p.type, pct(p.displayRate), fmt1(p.avgReaction), pct(p.goodPct)]), [2, 3, 4]),
-        list.length > 10 ? el('p', { class: 'tags wr' }, `그 밖에 ${list.length - 10}개: ` + list.slice(10).map((p) => p.code || p.name).join(', ')) : null];
-    }),
     dt.notReceived.length ? [el('h3', {}, '🚚 미입고 매장이 많은 SKU (배분 검토)'), el('p', { class: 'tags wr' }, dt.notReceived.map((k) => `${k.code} ${k.color} ${k.n}매장`).join(' · '))] : null,
     aiBox(r.ai.display, 'AI 진열 분석 요약', ['👍 잘 되고 있는 점', '⚠️ 문제점', '🔍 추가로 확인할 점', '✅ 바로 할 조치'])));
 
@@ -421,6 +433,7 @@ function render(r) {
   out.push(sec('·', '데이터 기준', '',
     el('ul', { class: 'notes hint' },
       el('li', {}, '고객 반응·판매 반응은 매장 직원이 판매하면서 느낀 내용을 평가한 것으로, 실제 매출 수치가 아니에요.'),
+      el('li', {}, '판매율 = 판매현황표의 전체 판매량 ÷ 기획수량. 매장 판매·매출 = ERP 판매 자료(조사 매장 합계). 소진 전망은 최근 3주 판매 속도 기준이라 다운 등 겨울 성수기 상품은 실제로 더 빨리 팔릴 수 있어요.'),
       el('li', {}, "'판매 경험 없음'·'미입고'로 표시한 평가는 평균·비율에서 빠져요."),
       el('li', {}, '진열률은 미입고를 뺀 기준이에요. SKU = 품번 × 컬러.'),
       el('li', {}, 'AI 요약은 관리자 화면에서 마지막으로 만든 요약이에요. 틀릴 수 있으니 숫자와 함께 봐 주세요.'))));
@@ -430,7 +443,7 @@ function render(r) {
   applyTab();
 }
 // ---- 주제별 탭: 고른 항목만 보이고, 인쇄·PDF도 그 항목만 ----
-const TABS = [['all', '전체 리포트'], ['summary', '한눈에 보기'], ['stores', '매장 참여 현황'], ['reaction', '상품별 고객 반응'], ['display', '진열 현황'], ['ztec', 'Z-TEC 매장 의견'], ['gift', '사은품 니즈']];
+const TABS = [['all', '전체 리포트'], ['summary', '한눈에 보기'], ['stores', '매장 참여 현황'], ['reaction', '상품별 고객 반응'], ['display', '진열 · 판매율'], ['ztec', 'Z-TEC 매장 의견'], ['gift', '사은품 니즈']];
 let TAB = (location.hash.slice(1) && TABS.some(([k]) => k === location.hash.slice(1))) ? location.hash.slice(1) : 'all';
 let BASE_TITLE = '';
 function drawTabs() {

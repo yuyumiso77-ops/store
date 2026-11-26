@@ -621,93 +621,12 @@ function displayAnalysis() {
   return { thresholds: DA, totals: rep.totals, storeCount: rep.stores.length, totalSkus: rep.totalSkus, byType, byStore, products, stockOnly: topBy('stock'), missing: topBy('none'), notReceived: topBy('notReceived') };
 }
 
-// ---------- 🧩 공간 효율 (좁은 매장 공간에 잘 팔리는 상품이 걸려 있는가) ----------
-// 진열 자리 = 진열(shown) 중인 SKU 하나. 그 자리의 판매 점수 = 그 매장의 상품 평가(잘 팔림 100·보통 50·안 팔림 0),
-// 그 매장 평가가 없으면 전체 매장 평균으로 대신함
-const SELL = { good: 100, normal: 50, poor: 0 };
-const sellClass = (s) => (s == null ? 'unknown' : s >= 67 ? 'good' : s <= 33 ? 'poor' : 'normal');
-function spaceEfficiency() {
-  const idx = skuIndex();
-  const own = new Map(); // storeKey|productId -> 점수
-  const all = new Map(); // productId -> {sum, n}
-  db.evaluations.filter((e) => isDone(e) && e.sales in SELL).forEach((e) => {
-    own.set(storeKey(e.staff) + '|' + e.productId, SELL[e.sales]);
-    const a = all.get(e.productId) || { sum: 0, n: 0 };
-    a.sum += SELL[e.sales]; a.n++; all.set(e.productId, a);
-  });
-  const scoreOf = (store, pid) => {
-    const s = own.get(storeKey(store) + '|' + pid);
-    if (s != null) return { score: s, src: 'store' };
-    const a = all.get(pid);
-    return a ? { score: Math.round(a.sum / a.n), src: 'all' } : { score: null, src: '' };
-  };
-  const item = (k, sc) => ({ sku: k.sku, code: k.product.code || k.product.name, name: k.product.name, color: k.color, line: lineOf(k.product), type: typeOf(k.product), imageUrl: imageUrl(k.product), score: sc.score, src: sc.src });
-  const byStoreMap = new Map();
-  db.displays.forEach((d) => {
-    const k = idx.get(d.sku);
-    if (!k || d.status === 'notReceived') return;
-    if (!byStoreMap.has(d.store)) byStoreMap.set(d.store, []);
-    byStoreMap.get(d.store).push({ d, k, sc: scoreOf(d.store, k.product.id) });
-  });
-  const typeKey = (x) => `${x.line}|${x.type}`;
-  const types = new Map();
-  const skuAgg = new Map(); // 여러 매장 공통 패턴
-  const stores = [...byStoreMap.entries()].map(([name, rows]) => {
-    const shown = rows.filter((r) => r.d.status === 'shown');
-    const known = shown.filter((r) => r.sc.score != null);
-    const cnt = { good: 0, normal: 0, poor: 0, unknown: 0 };
-    shown.forEach((r) => cnt[sellClass(r.sc.score)]++);
-    shown.forEach((r) => {
-      const it = item(r.k, r.sc);
-      const t = types.get(typeKey(it)) || { line: it.line, type: it.type, slots: 0, known: 0, scoreSum: 0, good: 0, poor: 0 };
-      t.slots++; if (r.sc.score != null) { t.known++; t.scoreSum += r.sc.score; } if (sellClass(r.sc.score) === 'good') t.good++; if (sellClass(r.sc.score) === 'poor') t.poor++;
-      types.set(typeKey(it), t);
-    });
-    const poorShown = shown.filter((r) => sellClass(r.sc.score) === 'poor').map((r) => item(r.k, r.sc)).sort((a, b) => a.score - b.score);
-    const goodStock = rows.filter((r) => r.d.status === 'stock' && sellClass(r.sc.score) === 'good').map((r) => item(r.k, r.sc)).sort((a, b) => b.score - a.score);
-    const goodNone = rows.filter((r) => r.d.status === 'none' && sellClass(r.sc.score) === 'good').map((r) => item(r.k, r.sc)).sort((a, b) => b.score - a.score);
-    poorShown.forEach((x) => { const a = skuAgg.get(x.sku) || { ...x, poorShown: [], goodStock: [] }; a.poorShown.push(name); skuAgg.set(x.sku, a); });
-    goodStock.forEach((x) => { const a = skuAgg.get(x.sku) || { ...x, poorShown: [], goodStock: [] }; a.goodStock.push(name); skuAgg.set(x.sku, a); });
-    // 교체 추천: 안 팔리는 진열 → 창고의 잘 팔리는 상품 (같은 복종 우선)
-    const pool = goodStock.slice();
-    const swaps = poorShown.map((out) => {
-      let i = pool.findIndex((x) => typeKey(x) === typeKey(out));
-      if (i < 0) i = pool.findIndex((x) => x.line === out.line);
-      if (i < 0) i = 0;
-      return pool.length ? { out, in: pool.splice(i, 1)[0] } : null;
-    }).filter(Boolean);
-    const score = known.length ? Math.round(known.reduce((a, r) => a + r.sc.score, 0) / known.length) : null;
-    return {
-      name, slots: shown.length, score, ...cnt, ownPct: shown.length ? Math.round((shown.filter((r) => r.sc.src === 'store').length / shown.length) * 100) : 0,
-      poorShown, goodStock, goodNone, swaps,
-    };
-  }).sort((a, b) => (a.score ?? 999) - (b.score ?? 999) || b.poorShown.length - a.poorShown.length);
-  const totSlots = stores.reduce((a, s) => a + s.slots, 0);
-  const tot = { good: 0, normal: 0, poor: 0, unknown: 0 };
-  stores.forEach((s) => Object.keys(tot).forEach((k) => (tot[k] += s[k])));
-  const knownSlots = [...types.values()].reduce((a, t) => a + t.known, 0);
-  const scoreTotal = [...types.values()].reduce((a, t) => a + t.scoreSum, 0);
-  const byType = [...types.values()].map((t) => {
-    const space = knownSlots ? t.known / knownSlots : 0;
-    const contrib = scoreTotal ? t.scoreSum / scoreTotal : 0;
-    return { ...t, spacePct: Math.round(space * 1000) / 10, contribPct: Math.round(contrib * 1000) / 10, score: t.known ? Math.round(t.scoreSum / t.known) : null, efficiency: space ? Math.round((contrib / space) * 100) / 100 : null };
-  }).sort((a, b) => (a.line + a.type).localeCompare(b.line + b.type));
-  const top = (field) => [...skuAgg.values()].filter((x) => x[field].length).sort((a, b) => b[field].length - a[field].length || a.code.localeCompare(b.code)).slice(0, 15)
-    .map((x) => ({ sku: x.sku, code: x.code, name: x.name, color: x.color, type: x.type, line: x.line, imageUrl: x.imageUrl, score: x.score, stores: x[field] }));
-  return {
-    totals: { slots: totSlots, ...tot, goodStock: stores.reduce((a, s) => a + s.goodStock.length, 0), goodNone: stores.reduce((a, s) => a + s.goodNone.length, 0), swaps: stores.reduce((a, s) => a + s.swaps.length, 0),
-      score: knownSlots ? Math.round(scoreTotal / knownSlots) : null, evalCount: db.evaluations.filter(isDone).length },
-    byType, stores, wasted: top('poorShown'), idle: top('goodStock'),
-  };
-}
-
-// ---------- 📄 조사 리포트 (인쇄·PDF용, 지금 데이터로 한 번에) ----------
 function buildReport() {
   const sm = summary();
   const prods = sm.products.filter((p) => p.active && p.count);
   const psales = productSales();
   const pick = (p) => ({ id: p.id, salesQty: psales ? (psales.get(p.id) || { qty: 0 }).qty : null, salesAmount: psales ? (psales.get(p.id) || { amount: 0 }).amount : null, code: p.code, name: p.name, line: lineOf(p), type: typeOf(p), imageUrl: p.imageUrl, count: p.count, avgReaction: p.avgReaction,
-    goodPct: p.count ? Math.round((p.sales.good / p.count) * 100) : null, poorPct: p.count ? Math.round((p.sales.poor / p.count) * 100) : null, displayRate: p.displayRate,
+    goodPct: p.count ? Math.round((p.sales.good / p.count) * 100) : null, poorPct: p.count ? Math.round((p.sales.poor / p.count) * 100) : null, displayRate: p.displayRate, prodQty: p.prodQty, sellThrough: p.sellThrough,
     pros: p.pros.slice(0, 3).map((x) => x.name), cons: p.cons.slice(0, 3).map((x) => x.name) });
   const enough = prods.filter((p) => p.count >= 3);
   const rank = (dir) => enough.slice().sort((a, b) => dir * (a.avgReaction - b.avgReaction) || b.count - a.count).slice(0, 10).map(pick);
@@ -718,11 +637,12 @@ function buildReport() {
     t.n += p.count; t.rsum += p.avgReaction * p.count; t.good += p.sales.good; t.poor += p.sales.poor; t.products++;
     typeMap.set(k, t);
   });
-  const byType = [...typeMap.values()].map((t) => ({ line: t.line, type: t.type, products: t.products, evals: t.n, avgReaction: Math.round((t.rsum / t.n) * 10) / 10, goodPct: Math.round((t.good / t.n) * 100), poorPct: Math.round((t.poor / t.n) * 100) }))
+  const stOf = (line, type) => { const xs = sm.products.filter((p) => p.active && p.prodQty && lineOf(p) === line && typeOf(p) === type); const pl = xs.reduce((a, p) => a + p.prodQty, 0); return pl ? Math.round((xs.reduce((a, p) => a + (p.salesQty || 0), 0) / pl) * 1000) / 10 : null; };
+  const byType = [...typeMap.values()].map((t) => ({ line: t.line, type: t.type, products: t.products, evals: t.n, avgReaction: Math.round((t.rsum / t.n) * 10) / 10, goodPct: Math.round((t.good / t.n) * 100), poorPct: Math.round((t.poor / t.n) * 100), sellThrough: stOf(t.line, t.type) }))
     .sort((a, b) => (a.line + a.type).localeCompare(b.line + b.type));
   const reasons = (field) => countBy(db.evaluations.filter(isDone).map((e) => e[field] || [])).slice(0, 8);
   const da = displayAnalysis();
-  const sp = spaceEfficiency();
+  const sr = sellReview();
   const pr = storeProgress();
   const z = ztecSummary();
   const g = giftSummary();
@@ -736,7 +656,7 @@ function buildReport() {
       avgReaction: allDone.length ? Math.round((allDone.reduce((a, e) => a + e.reaction, 0) / allDone.length) * 10) / 10 : null,
       sales: { good: allDone.filter((e) => e.sales === 'good').length, normal: allDone.filter((e) => e.sales === 'normal').length, poor: allDone.filter((e) => e.sales === 'poor').length },
       displayChecks: da.totals.checks, displayRate: da.totals.checks - da.totals.notReceived ? Math.round((da.totals.shown / (da.totals.checks - da.totals.notReceived)) * 100) : null,
-      spaceScore: sp.totals.score, ztec: z.count, gifts: g.count,
+      sellThrough: sr.ready ? sr.totals.st : null, ztec: z.count, gifts: g.count,
     },
     progress: {
       totalProducts: pr.totalProducts, totalSkus: pr.totalSkus,
@@ -750,11 +670,20 @@ function buildReport() {
     reaction: { top: rank(-1), bottom: rank(1), products: sm.products.filter((p) => p.active && (p.count || (psales && psales.has(p.id)))).map(pick), byType, sellReasons: reasons('sellReasons'), noBuyReasons: reasons('noBuyReasons'), pros: countBy(allDone.map((e) => e.pros || [])).slice(0, 8), cons: countBy(allDone.map((e) => e.cons || [])).slice(0, 8) },
     display: {
       totals: da.totals, byType: da.byType.map((t) => ({ line: t.line, type: t.type, rate: t.rate, shown: t.shown, stock: t.stock, none: t.none, notReceived: t.notReceived })),
-      groups: ['expand', 'star', 'review'].map((k) => ({ key: k, items: da.products.filter((p) => p.group === k).map((p) => ({ code: p.code, name: p.name, type: p.type, displayRate: p.displayRate, avgReaction: p.avgReaction, goodPct: p.goodPct })) })),
       notReceived: da.notReceived.slice(0, 10).map((k) => ({ code: k.code, color: k.color, n: k.notReceived })),
     },
-    space: { totals: sp.totals, byType: sp.byType.filter((t) => t.known), lowStores: sp.stores.filter((x) => x.score != null).slice(0, 10).map((x) => ({ name: x.name, score: x.score, slots: x.slots, poor: x.poor, goodStock: x.goodStock.length, swaps: x.swaps.length })),
-      wasted: sp.wasted.slice(0, 10).map((k) => ({ code: k.code, color: k.color, n: k.stores.length })), idle: sp.idle.slice(0, 10).map((k) => ({ code: k.code, color: k.color, n: k.stores.length })) },
+    // 🎯 판매율 진단 (판매현황표 기준): 기획 대비 판매율 · 소진 전망 · 진열 액션
+    sell: sr.ready ? (() => {
+      const sk = (x) => ({ code: x.code, color: x.color, name: x.name, imageUrl: x.imageUrl, group: `${x.gender} ${x.type}`.trim(), st: x.st, rem: x.rem, rec: x.rec, cover: x.cover, leftover: x.leftover, displayRate: x.displayRate });
+      return {
+        basis: sr.basis, lastWeek: sr.lastWeek, weeksLeft: sr.weeksLeft, seasonEndLabel: sr.seasonEndLabel, totals: sr.totals, counts: sr.counts, groups: sr.groups,
+        hot: sr.skus.filter((x) => x.status === 'hot').sort((a, b) => a.cover - b.cover).map(sk),
+        // 진열 늘릴 SKU: 팔리고 있는데(정체 아님) 진열률 70% 미만 → 최근 판매 많은 순
+        expand: sr.skus.filter((x) => (x.status === 'ok' || x.status === 'slow') && x.displayRate != null && x.displayRate < 70).sort((a, b) => b.rec - a.rec).slice(0, 15).map(sk),
+        // 진열 뺄 SKU: 최근 판매 거의 없음 → 진열률 높은 순 (공간을 많이 차지)
+        cut: sr.skus.filter((x) => x.status === 'stall').sort((a, b) => (b.displayRate ?? -1) - (a.displayRate ?? -1) || b.rem - a.rem).slice(0, 15).map(sk),
+      };
+    })() : null,
     ztec: { count: z.count, avgReaction: z.avgReaction, ease: z.ease, reactionDist: z.reactionDist },
     gift: { count: g.count, freq: g.freq, delay: g.delay, impact: g.impact, threshold: g.threshold, items: g.items, avgReaction: g.avgReaction,
       giftItems: g.giftItems.filter((x) => x.answered).map((x) => ({ name: x.name, photo: x.photos[0], avg: x.avg, count: x.count, na: x.na, nr: x.nr })).sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1)) },
@@ -1495,7 +1424,6 @@ async function handle(req, res) {
     // ---- 진열 현황 ----
     if (m === 'GET' && p === '/api/admin/display') return send(res, 200, displayReport());
     if (m === 'GET' && p === '/api/admin/display-analysis') return send(res, 200, displayAnalysis());
-    if (m === 'GET' && p === '/api/admin/space-efficiency') return send(res, 200, spaceEfficiency());
     if (m === 'GET' && p === '/api/admin/stock-analysis') return send(res, 200, stockAnalysis());
     if (m === 'GET' && p === '/api/admin/sell-review') return send(res, 200, sellReview());
     if (m === 'POST' && p === '/api/admin/stock/import') {
@@ -1532,14 +1460,6 @@ async function handle(req, res) {
       o.stores.forEach((s) => rows.push([s.name, { A: '상위', B: '중위', C: '하위' }[s.tier] || '', s.manager, s.py ?? '', s.amount, s.perPy ?? '', s.held, s.sold, s.active ?? '', s.core, s.recSku, s.cutSku, s.survey.checked ? s.survey.shown : '', s.survey.checked ? s.survey.recShown : '', s.survey.toHang, s.survey.toRemove, s.survey.toAllocate, s.stockQty, s.recStockQty, s.overStock, s.shortStock, s.survey.agreePct ?? '', J[s.judge] || '']));
       const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
       return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="optimal-display.csv"' });
-    }
-    if (m === 'GET' && p === '/api/admin/space-swaps.csv') {
-      const sp = spaceEfficiency();
-      const cell = (x) => (x ? `${x.code} ${x.color}`.trim() : '');
-      const rows = [['매장명', '공간 효율 점수', '빼기 (안 팔리는 진열)', '빼기 판매 점수', '걸기 (창고의 잘 팔리는 상품)', '걸기 판매 점수', '복종']];
-      sp.stores.forEach((st) => st.swaps.forEach((w) => rows.push([st.name, st.score ?? '', cell(w.out), w.out.score, cell(w.in), w.in.score, `${w.out.line} ${w.out.type}`])));
-      const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
-      return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="space-swaps.csv"' });
     }
     if (m === 'GET' && (p === '/api/admin/display-matrix.csv' || p === '/api/admin/display-summary.csv')) {
       const rep = displayReport();

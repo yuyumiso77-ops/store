@@ -1170,7 +1170,7 @@ async function loadSell() {
     el('div', { class: 'product-head' },
       el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '🎯 판매율 진단 — 남은 재고를 시즌 안에 팔 수 있나?'),
         el('p', { class: 'hint', style: 'margin:0;line-height:1.6' }, o.ready
-          ? `${o.fileName || ''} · 판매 반영 ~${o.lastWeek} · 최근 주간 판매 = ${o.lastFullWeek || ''} 주까지 최근 ${o.recentWeeks}주 평균 · 시즌 끝(${o.seasonEndLabel})까지 약 ${o.weeksLeft}주`
+          ? `${o.fileName || ''} · ${String(o.lastWeek).split('~').pop()}까지 판매 반영 · 최근 주간 판매 = ${o.lastFullWeek || ''} 주까지 최근 ${o.recentWeeks}주 평균 · 시즌 끝(${o.seasonEndLabel})까지 약 ${o.weeksLeft}주`
           : 'ERP 26FW 판매현황표(Style NO. · Color · 기획수량 · 입고수량 · 전체 판매량 · 주별 판매)를 그대로 올려 주세요. 이미 올렸다면 주별 판매까지 읽도록 한 번 더 올려 주세요.')),
       el('div', { class: 'actions' }, upl.btn)), upl.result);
   if (!o.ready) { $('dSell').replaceChildren(dataCard); return; }
