@@ -645,12 +645,15 @@ test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체
   const rep = await (await fetch(base + '/api/admin/report', { headers: admin })).json();
   assert.strictEqual(rep.reaction.products.find((x) => x.code === 'STKA1').salesAmount, 800000);
   // 적정 진열·재고 + 평수 + 매장 조사 비교
+  // 주별 판매가 있으면 계절 지수 계산 (STKA1: 최근에 몰림 → 수요 상승)
+  await fetch(base + '/api/admin/sales/import', { method: 'POST', headers: admin, body: JSON.stringify({ from: '2026-07-01', to: '2026-11-25', fileName: 's.xlsx', stores: { CBA0017: 'FJ 롯데백화점 중동점' }, rows: [['CBA0017', 'STKA1', '', 8, 800000, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8]], ['CBA0017', 'STKB1', '', 1, 100000, [1]]] }) });
   const sz = await (await fetch(base + '/api/admin/sizes/import', { method: 'POST', headers: admin, body: JSON.stringify({ fileName: 'size.xlsx', names: { CBA0017: 'FJ 롯데백화점 중동점' }, rows: [['CBA0017', '22.39PY'], ['ZZZ', '10PY']] }) })).json();
   assert.deepStrictEqual([sz.stores, sz.unmatched], [1, 1]);
   const od = await (await fetch(base + '/api/admin/optimal-display?cover=28&min=2', { headers: admin })).json();
   const jd = od.stores.find((x) => x.name === '롯데중동');
   assert.deepStrictEqual([od.ready, od.opt.coverDays, jd.py, jd.sold, jd.recSku, jd.survey.checked, jd.survey.shown], [true, 28, 22.39, 2, 2, true, 1]);
   assert.strictEqual(jd.survey.toHang, 1); // 권장(B, 판매 있음)인데 '창고만' · 재고 있음 → 걸기 후보
+  assert.ok(od.seasonal && od.seasonal.types[0].factor > 1);
   assert.ok((await (await fetch(base + '/api/admin/optimal-display.csv', { headers: admin })).text()).includes('롯데중동'));
   await fetch(base + '/api/admin/sales', { method: 'DELETE', headers: admin });
   await fetch(base + '/api/admin/stock', { method: 'DELETE', headers: admin });

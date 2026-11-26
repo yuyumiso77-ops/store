@@ -771,7 +771,7 @@ function importSales(b) {
   let skipped = 0;
   for (const r of Array.isArray(b.rows) ? b.rows : []) {
     if (!Array.isArray(r) || r.length < 5) { skipped++; continue; }
-    const [code, prod, color, qty, amount] = r;
+    const [code, prod, color, qty, amount, weeks] = r;
     const sku = mp.sku(prod, color);
     if (!sku) { skipped++; continue; }
     const store = mp.store(code);
@@ -779,6 +779,7 @@ function importSales(b) {
     const k = store + '|' + sku;
     const it = items.get(k) || { store, sku, qty: 0, amount: 0 };
     it.qty += Number(qty) || 0; it.amount += Number(amount) || 0;
+    if (Array.isArray(weeks)) { it.w = it.w || []; weeks.slice(0, 60).forEach((v, i) => (it.w[i] = (it.w[i] || 0) + (Number(v) || 0))); } // 주별 판매수량
     items.set(k, it);
   }
   if (!items.size) return { error: '조사 대상 상품(품번·색상)이나 매장(매장코드)과 맞는 판매 자료가 없어요. 파일을 확인해 주세요.' };
@@ -920,6 +921,23 @@ function optimalDisplay(over = {}) {
   if (!sl) return { ready: false, need: ['판매 자료'] };
   const idx = skuIndex();
   const days = Math.max(1, Math.round((Date.parse(sl.to) - Date.parse(sl.from)) / 864e5) + 1) || 1;
+  // ── 기온·계절 반영: 최근 4주 판매 흐름 (주별 판매가 있을 때) ──
+  const hasWeeks = sl.items.some((x) => Array.isArray(x.w));
+  const nW = Math.ceil(days / 7), recentFrom = Math.max(0, nW - 4);
+  const recentDays = Math.max(1, days - recentFrom * 7);
+  const recentQty = (x) => (Array.isArray(x.w) ? x.w.slice(recentFrom).reduce((a, v) => a + Math.max(0, v || 0), 0) : 0);
+  // 복종별 계절 지수 = 최근 4주 하루 판매 ÷ 시즌 평균 하루 판매 (판매 적은 복종은 1 쪽으로 당김)
+  const typeAgg = new Map();
+  sl.items.forEach((x) => { const k = idx.get(x.sku); if (!k) return; const t = `${lineOf(k.product)}|${typeOf(k.product)}`; const a = typeAgg.get(t) || { line: lineOf(k.product), type: typeOf(k.product), qty: 0, recent: 0, weeks: [] }; a.qty += Math.max(0, x.qty); a.recent += recentQty(x); (x.w || []).forEach((v, i) => (a.weeks[i] = (a.weeks[i] || 0) + Math.max(0, v || 0))); typeAgg.set(t, a); });
+  const season = new Map([...typeAgg.entries()].map(([t, a]) => {
+    const base = a.qty / days, rec = a.recent / recentDays;
+    const raw = base > 0 ? rec / base : 1;
+    const w = Math.min(1, a.qty / 60); // 판매 60개 미만이면 덜 믿음
+    return [t, { ...a, factor: hasWeeks ? Math.round((1 + (raw - 1) * w) * 100) / 100 : 1, weeks: Array.from(a.weeks, (v) => v || 0) }];
+  }));
+  const typeKeyOf = (s) => { const k = idx.get(s); return `${lineOf(k.product)}|${typeOf(k.product)}`; };
+  // 예상 하루 판매 = 최근 4주 60% + 시즌 평균 × 계절 지수 40%
+  const forecast = (x, s) => (hasWeeks ? 0.6 * (recentQty(x) / recentDays) + 0.4 * (Math.max(0, x.qty) / days) * season.get(typeKeyOf(s)).factor : Math.max(0, x.qty) / days);
   const sizes = (db.storeSizes && db.storeSizes.sizes) || {};
   const stockMap = new Map((db.stock ? db.stock.items : []).map((x) => [x.store + '|' + x.sku, Math.max(0, x.stock)]));
   const disp = new Map(db.displays.map((d) => [d.store + '|' + d.sku, d.status]));
@@ -936,24 +954,31 @@ function optimalDisplay(over = {}) {
   const stores = storeNames.map((name) => {
     const items = (byStore.get(name) || []).map((x) => ({ ...x, qty: Math.max(0, x.qty), amount: Math.max(0, x.amount) }));
     const amount = items.reduce((a, x) => a + x.amount, 0), qty = items.reduce((a, x) => a + x.qty, 0);
-    const sold = items.filter((x) => x.qty > 0).sort((a, b) => b.amount - a.amount || b.qty - a.qty);
+    const price = (x) => (x.qty > 0 ? x.amount / x.qty : 0);
+    items.forEach((x) => { x.fc = forecast(x, x.sku); x.fcAmount = x.fc * price(x); });
+    const sold = items.filter((x) => x.qty > 0).sort((a, b) => b.fcAmount - a.fcAmount || b.amount - a.amount); // 지금 시점 예상 매출 순
     let acc = 0, core = 0;
-    for (const x of sold) { acc += x.amount; core++; if (acc >= amount * 0.8) break; }
+    const fcTotal = sold.reduce((a, x) => a + x.fcAmount, 0) || 1;
+    for (const x of sold) { acc += hasWeeks ? x.fcAmount : x.amount; core++; if (acc >= (hasWeeks ? fcTotal : amount) * 0.8) break; }
     const held = [...idx.keys()].filter((s) => (stockMap.get(name + '|' + s) || 0) > 0);
     const heldSet = new Set(held);
-    const recCount = Math.min(idx.size, Math.max(Math.round(sold.length * OPT_.skuBuffer), Math.round(core * OPT_.coreMultiplier)));
+    // 지금 시점에 팔리는 SKU: 비시즌 복종(계절 지수 0.6 이하)이면서 최근에 안 팔린 SKU만 뺌
+    const activeNow = hasWeeks ? sold.filter((x) => recentQty(x) > 0 || season.get(typeKeyOf(x.sku)).factor > 0.6) : sold;
+    const recCount = Math.min(idx.size, Math.max(Math.round(activeNow.length * OPT_.skuBuffer), Math.round(core * OPT_.coreMultiplier)));
     const rec = sold.slice(0, recCount).map((x) => x.sku);
     for (const s of netRank) { if (rec.length >= recCount) break; if (!rec.includes(s)) rec.push(s); }
     const recSet = new Set(rec);
     const qtyOf = new Map(items.map((x) => [x.sku, x]));
     // SKU별 권장 재고 = 하루 판매 × 기간(최소 n개), 권장 목록 밖이면 0
     const skuRows = [...new Set([...rec, ...held, ...[...idx.keys()].filter((s) => disp.has(name + '|' + s))])].map((s) => {
-      const it = qtyOf.get(s) || { qty: 0, amount: 0 };
+      const it = qtyOf.get(s) || { qty: 0, amount: 0, fc: 0 };
       const stock = stockMap.get(name + '|' + s) || 0;
-      const recStock = recSet.has(s) ? Math.max(OPT_.minStockPerSku, Math.ceil((it.qty / days) * OPT_.coverDays)) : 0;
-      return { ...sku(s), qty: it.qty, amount: it.amount, stock, recStock, gap: stock - recStock, rec: recSet.has(s), status: disp.get(name + '|' + s) || '' };
+      const recStock = recSet.has(s) ? Math.max(OPT_.minStockPerSku, Math.ceil((it.fc || 0) * OPT_.coverDays)) : 0;
+      const sf = season.get(typeKeyOf(s));
+      return { ...sku(s), qty: it.qty, amount: it.amount, recent: recentQty(it), forecastPerWeek: Math.round((it.fc || 0) * 7 * 10) / 10, season: sf ? sf.factor : 1, stock, recStock, gap: stock - recStock, rec: recSet.has(s), status: disp.get(name + '|' + s) || '' };
     });
     const stockQty = skuRows.reduce((a, x) => a + x.stock, 0), recStockQty = skuRows.reduce((a, x) => a + x.recStock, 0);
+    const offSeasonStock = hasWeeks ? skuRows.filter((x) => x.season <= 0.6).reduce((a, x) => a + x.stock, 0) : 0;
     // 매장 조사 비교: 진열 체크
     const checked = [...idx.keys()].some((s) => disp.has(name + '|' + s));
     const shown = skuRows.filter((x) => x.status === 'shown');
@@ -976,10 +1001,10 @@ function optimalDisplay(over = {}) {
     const py = sizes[name] || null;
     return {
       name, manager: (db.stores.find((s) => s.name === name) || {}).manager || '', py, amount, qty, perPy: py ? Math.round(amount / py) : null,
-      held: held.length, sold: sold.length, core, active, recSku: recCount, recPerPy: py ? Math.round((recCount / py) * 10) / 10 : null,
+      held: held.length, sold: sold.length, activeNow: activeNow.length, core, active, recSku: recCount, recPerPy: py ? Math.round((recCount / py) * 10) / 10 : null,
       cutSku: Math.max(0, held.length - recCount),
       judge: active == null ? '' : active < OPT_.lowActive ? 'over' : active >= OPT_.highActive ? 'room' : 'ok',
-      stockQty, recStockQty, overStock: skuRows.reduce((a, x) => a + Math.max(0, x.gap), 0), shortStock: skuRows.reduce((a, x) => a + Math.max(0, -x.gap), 0),
+      stockQty, recStockQty, offSeasonStock, overStock: skuRows.reduce((a, x) => a + Math.max(0, x.gap), 0), shortStock: skuRows.reduce((a, x) => a + Math.max(0, -x.gap), 0),
       survey: {
         checked, shown: shown.length, shownPerPy: py && checked ? Math.round((shown.length / py) * 10) / 10 : null,
         recShown: shown.filter((x) => x.rec).length, toHang: toHang.length, toAllocate: toAllocate.length, toRemove: toRemove.length,
@@ -991,10 +1016,12 @@ function optimalDisplay(over = {}) {
   }).filter((s) => s.amount > 0 || s.held > 0);
   const sum = (f) => stores.reduce((a, s) => a + (f(s) || 0), 0);
   return {
-    ready: true, opt: OPT_, days, salesInfo: { from: sl.from, to: sl.to }, hasStock: !!db.stock, hasSizes: !!db.storeSizes,
+    ready: true, opt: OPT_, days, salesInfo: { from: sl.from, to: sl.to },
+    seasonal: hasWeeks ? { fullWeeks: Math.floor(days / 7), recentDays, recentFrom: new Date(Date.parse(sl.from) + recentFrom * 7 * 864e5).toISOString().slice(0, 10), weekStarts: Array.from({ length: nW }, (_, i) => new Date(Date.parse(sl.from) + i * 7 * 864e5).toISOString().slice(5, 10)),
+      types: [...season.values()].filter((t) => t.qty > 0).sort((a, b) => b.factor - a.factor).map((t) => ({ line: t.line, type: t.type, factor: t.factor, qty: t.qty, recent: t.recent, weeks: t.weeks })) } : null, hasStock: !!db.stock, hasSizes: !!db.storeSizes,
     sizesInfo: db.storeSizes ? { fileName: db.storeSizes.fileName, uploadedAt: db.storeSizes.uploadedAt, stores: Object.keys(db.storeSizes.sizes).length } : null,
     totals: { stores: stores.length, over: stores.filter((s) => s.judge === 'over').length, ok: stores.filter((s) => s.judge === 'ok').length, room: stores.filter((s) => s.judge === 'room').length,
-      cutSku: sum((s) => s.cutSku), overStock: sum((s) => s.overStock), shortStock: sum((s) => s.shortStock), stockQty: sum((s) => s.stockQty), recStockQty: sum((s) => s.recStockQty),
+      cutSku: sum((s) => s.cutSku), offSeasonStock: sum((s) => s.offSeasonStock), overStock: sum((s) => s.overStock), shortStock: sum((s) => s.shortStock), stockQty: sum((s) => s.stockQty), recStockQty: sum((s) => s.recStockQty),
       toHang: sum((s) => s.survey.toHang), toRemove: sum((s) => s.survey.toRemove), checkedStores: stores.filter((s) => s.survey.checked).length,
       agreePct: (() => { const n = sum((s) => s.survey.evals); return n ? Math.round((stores.reduce((a, s) => a + (s.survey.agreePct || 0) * s.survey.evals, 0) / n)) : null; })() },
     stores: stores.sort((a, b) => (b.perPy ?? -1) - (a.perPy ?? -1) || b.amount - a.amount),

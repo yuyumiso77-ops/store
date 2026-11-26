@@ -1141,18 +1141,24 @@ function erpUploader({ label, need, valueCols, url, extra, done }) {
       if (miss.length) throw new Error(`첫 줄에 ${miss.join('·')} 열이 필요해요. ERP에서 받은 엑셀을 그대로 올려 주세요.`);
       const agg = new Map(), stores = {};
       let from = '', to = '';
+      // 판매일자가 있으면 주 단위 판매수량도 모음 (기온·계절 흐름 반영용)
+      const dateOf = (v) => (typeof v === 'number' ? new Date(Math.round((v - 25569) * 864e5)).toISOString().slice(0, 10) : String(v || '').slice(0, 10));
+      const hasDate = col['판매일자'] >= 0;
+      if (hasDate) rows.slice(1).forEach((r) => { if (!r[col['매장코드']] || !r[col['판매일자']]) return; const d = dateOf(r[col['판매일자']]); if (!from || d < from) from = d; if (!to || d > to) to = d; });
+      const t0 = from ? Date.parse(from) : 0;
+      const qi = valueCols.indexOf('판매수량');
       rows.slice(1).forEach((r) => {
         const code = r[col['매장코드']];
         if (!code || !r[col['상품코드']]) return; // 합계 줄 등
         stores[code] = r[col['매장명']];
-        if (col['판매일자'] >= 0 && r[col['판매일자']]) { const d = String(r[col['판매일자']]).slice(0, 10); if (!from || d < from) from = d; if (!to || d > to) to = d; }
         const k = `${code}\t${r[col['상품코드']]}\t${r[col['색상명']]}`;
-        const a = agg.get(k) || valueCols.map(() => 0);
-        valueCols.forEach((n, i) => (a[i] += Number(r[col[n]]) || 0));
+        const a = agg.get(k) || { v: valueCols.map(() => 0), w: [] };
+        valueCols.forEach((n, i) => (a.v[i] += Number(r[col[n]]) || 0));
+        if (hasDate && qi >= 0 && r[col['판매일자']]) { const wk = Math.floor((Date.parse(dateOf(r[col['판매일자']])) - t0) / (7 * 864e5)); if (wk >= 0) a.w[wk] = (a.w[wk] || 0) + (Number(r[col['판매수량']]) || 0); }
         agg.set(k, a);
       });
       result.textContent = `${rows.length.toLocaleString()}줄 → 매장·품번·컬러 ${agg.size.toLocaleString()}개로 합쳐서 올리는 중…`;
-      const body = { ...extra(), from, to, fileName: f.name, stores, rows: [...agg.entries()].map(([k, v]) => [...k.split('\t'), ...v]) };
+      const body = { ...extra(), from, to, fileName: f.name, stores, rows: [...agg.entries()].map(([k, a]) => [...k.split('\t'), ...a.v, ...(hasDate ? [Array.from(a.w, (x) => x || 0)] : [])]) };
       const r = await api(url, { method: 'POST', body: JSON.stringify(body) });
       result.textContent = done(r, body) + (r.unmatchedStores.length ? ` (명단에 없는 매장 ${r.unmatchedStores.length}곳 제외: ${r.unmatchedStores.slice(0, 4).join(', ')})` : '');
       loadStock();
@@ -1299,9 +1305,10 @@ async function loadOptimal() {
   const t = o.totals, O = o.opt;
   const method = el('details', { class: 'card' }, el('summary', { class: 'q', style: 'cursor:pointer;margin:0' }, '📐 계산 방법 보기'),
     el('ul', { class: 'hint', style: 'line-height:1.8;margin:10px 0 0' },
-      el('li', {}, `권장 진열 SKU 수 = 그 매장에서 팔린 SKU × ${O.skuBuffer} (단, 매출 80%를 만든 SKU × ${O.coreMultiplier}보다 적지 않게). 매장 크기보다 실제 팔리는 구색이 기준이에요.`),
-      el('li', {}, '권장 진열 목록 = 그 매장에서 매출이 큰 SKU부터, 모자라면 전체 매장에서 잘 팔린 SKU로 채움.'),
-      el('li', {}, `권장 재고 = SKU별 하루 평균 판매 × ${O.coverDays}일 (최소 ${O.minStockPerSku}개). 권장 목록 밖 SKU의 권장 재고는 0. 판매 기간 ${o.days}일.`),
+      el('li', {}, `권장 진열 SKU 수 = 지금 시점에 팔리는 SKU(시즌 중 팔렸고, 비시즌 복종이면 최근에도 팔린 SKU) × ${O.skuBuffer} (단, 예상 매출 80%를 만드는 SKU × ${O.coreMultiplier}보다 적지 않게). 매장 크기보다 실제 팔리는 구색이 기준이에요.`),
+      el('li', {}, '권장 진열 목록 = 그 매장의 지금 시점 예상 매출이 큰 SKU부터, 모자라면 전체 매장에서 잘 팔린 SKU로 채움. 비시즌 상품은 자연스럽게 뒤로 밀려 빼기 후보가 돼요.'),
+      el('li', {}, `예상 판매 = 최근 약 3~4주 하루 판매 × 60% + 시즌 평균 하루 판매 × 복종 계절 지수 × 40% (주별 판매 자료가 있을 때). 기온 변화가 판매 흐름에 반영된 값이에요.`),
+      el('li', {}, `권장 재고 = SKU별 예상 하루 판매 × ${O.coverDays}일 (최소 ${O.minStockPerSku}개). 권장 목록 밖 SKU의 권장 재고는 0. 판매 기간 ${o.days}일.`),
       el('li', {}, `SKU 활성률 = 보유(재고>0) SKU 중 판매가 있었던 비율. ${O.lowActive}% 미만 = 구색 과다, ${O.highActive}% 이상 = 확대 여지.`),
       el('li', {}, '매장 조사 비교: 걸기 후보 = 권장인데 진열 안 됨(재고 있음) · 빼기 후보 = 진열 중인데 권장 밖 · 배분 필요 = 권장인데 재고 없음 · 평가 일치율 = 매장의 판매 반응 평가(잘 팔림/보통/안 팔림)가 실제 판매 순위(상·중·하)와 맞은 비율.')));
   const rowsBox = el('div');
@@ -1339,10 +1346,26 @@ async function loadOptimal() {
         stat(`${t.over} · ${t.ok} · ${t.room}`, '구색 과다 · 적정 · 확대 여지 (매장 수)'),
         stat(num(t.cutSku) + '개', '줄여도 되는 SKU (보유 − 권장, 합계)'),
         o.hasStock ? stat(`+${num(t.overStock)} / −${num(t.shortStock)}`, '과잉 재고 / 부족 재고 (수량)') : null,
+        o.hasStock && o.seasonal ? stat(num(t.offSeasonStock) + '개', '비시즌 복종 재고 (계절 지수 0.6 이하: 반팔 등) — 정리·이동 후보') : null,
         stat(`${num(t.toHang)} · ${num(t.toRemove)}`, `걸기 후보 · 빼기 후보 (진열 체크한 ${t.checkedStores}매장)`),
         stat(t.agreePct == null ? '-' : t.agreePct + '%', '매장 평가와 실제 판매 일치율')),
       rowsBox),
-    method);
+    seasonCard(o), method);
+}
+// 🌡️ 기온·계절 반영 카드: 복종별 계절 지수 + 주별 판매 흐름
+function seasonCard(o) {
+  if (!o.seasonal) return el('div', { class: 'card' }, el('h2', { style: 'margin:0 0 4px' }, '🌡️ 기온·계절 반영'),
+    el('p', { class: 'hint', style: 'margin:0' }, '지금 올라간 판매 자료에는 주별 정보가 없어요. 📦 재고 대조 화면에서 판매 자료 엑셀을 한 번 더 올리면, 최근 4주 판매 흐름(기온 변화)을 반영해 권장 진열·재고를 다시 계산해요.'));
+  const se = o.seasonal;
+  const spark = (all) => { const weeks = Array.from({ length: se.fullWeeks || all.length }, (_, i) => all[i] || 0); const mx = Math.max(1, ...weeks); // 7일 안 된 마지막 주는 그래프에서 뺌 return el('span', { class: 'spark', title: se.weekStarts.map((d, i) => `${d}~ ${weeks[i] || 0}개`).join('\n') }, weeks.map((v, i) => el('i', { class: i >= weeks.length - 4 ? 'r' : '', style: `height:${Math.max(4, (v / mx) * 100)}%` }))); };
+  return el('div', { class: 'card' },
+    el('h2', { style: 'margin:0 0 4px' }, '🌡️ 기온·계절 반영 — 지금 무엇이 팔리고 있나'),
+    el('p', { class: 'hint', style: 'margin:0 0 10px;line-height:1.6' }, `최근 ${se.recentDays}일(${se.recentFrom}~${o.salesInfo.to}) 하루 판매를 시즌 평균과 비교한 계절 지수예요. 날이 추워지며 수요가 오르는 복종은 1보다 크고, 시즌이 끝나가는 복종은 1보다 작아요. 권장 진열 순서와 권장 재고는 "최근 ${se.recentDays}일 판매 60% + 시즌 평균×계절 지수 40%"의 예상 판매로 계산해요.`),
+    el('div', { class: 'tw' }, el('table', { class: 'stock-table season-table' },
+      el('tr', {}, ['복종', '계절 지수', '', '주별 판매 흐름 (파랑 = 최근 4주)', '시즌 판매', `최근 ${se.recentDays}일`].map((h, i) => el('th', { class: i === 1 || i >= 4 ? 'n' : '' }, h))),
+      se.types.map((t) => el('tr', {}, el('td', {}, el('b', {}, `${t.line} ${t.type}`)), el('td', { class: 'n' }, el('b', {}, `×${t.factor.toFixed(2)}`)),
+        el('td', {}, el('span', { class: 'tag ' + (t.factor >= 1.3 ? 'good' : t.factor <= 0.6 ? 'gap' : '') }, t.factor >= 1.3 ? '▲ 수요 상승' : t.factor <= 0.6 ? '▼ 비시즌' : '보통')),
+        el('td', {}, spark(t.weeks)), el('td', { class: 'n' }, num(t.qty) + '개'), el('td', { class: 'n' }, num(t.recent) + '개'))))));
 }
 function optControls() {
   const cover = el('select', { class: 'opt-sel', title: '권장 재고 = 하루 판매 × 이 기간' }, [[28, '4주치'], [42, '6주치'], [56, '8주치'], [84, '12주치']].map(([v, l]) => el('option', { value: v }, l)));
@@ -1352,6 +1375,7 @@ function optControls() {
   cover.onchange = apply; min.onchange = apply;
   return el('span', { class: 'opt-ctl' }, el('span', { class: 'hint' }, '권장 재고 기준'), cover, min);
 }
+const seasonTag = (x) => (x.season >= 1.3 ? ' · ▲수요 상승' : x.season <= 0.6 ? ' · ▼비시즌' : '');
 function optDetail(s, o) {
   const it = (x, extra) => el('li', { class: 'opt-it' }, x.imageUrl ? el('img', { src: x.imageUrl, alt: x.code, class: 'opt-img' }) : null,
     el('div', {}, el('b', {}, `${x.code} ${x.color}`), el('div', { class: 'hint' }, extra(x))));
@@ -1364,10 +1388,10 @@ function optDetail(s, o) {
       `권장 진열 ${s.recSku} SKU` + (s.py ? ` (평당 ${s.recPerPy})` : '') + ` · 매장 조사: ${sv.checked ? `진열 ${sv.shown} SKU` + (sv.shownPerPy ? ` (평당 ${sv.shownPerPy})` : '') + `, 그중 권장 ${sv.recShown}` : '진열 체크 안 함'}` +
       (sv.evals ? ` · 상품 평가 ${sv.evals}건 중 실제 판매와 일치 ${sv.agreePct}%` : '')),
     el('div', { class: 'opt-grid' },
-      box('🟢 걸기 후보', '잘 팔리는(권장) SKU인데 진열 안 됨 · 매장에 재고 있음', d.toHang, (x) => `판매 ${x.qty}개 · ${won(x.amount)} · 재고 ${x.stock} · 체크 '${ST[x.status]}'`, 'g'),
-      box('🔴 빼기 후보', '진열 중인데 권장 목록 밖 (판매 적은 순)', d.toRemove, (x) => `판매 ${x.qty}개 · ${won(x.amount)} · 재고 ${x.stock}`, 'r'),
+      box('🟢 걸기 후보', '지금 잘 팔릴(권장) SKU인데 진열 안 됨 · 매장에 재고 있음', d.toHang, (x) => `최근 ${x.recent}개 · 예상 주 ${x.forecastPerWeek}개 · 재고 ${x.stock} · 체크 '${ST[x.status]}'` + seasonTag(x), 'g'),
+      box('🔴 빼기 후보', '진열 중인데 권장 목록 밖 (지금 예상 판매 적은 순)', d.toRemove, (x) => `시즌 ${x.qty}개 · 최근 ${x.recent}개 · 재고 ${x.stock}` + seasonTag(x), 'r'),
       box('📮 배분 필요', '권장 SKU인데 매장 재고 없음', d.toAllocate, (x) => `판매 ${x.qty}개 · ${won(x.amount)} · 체크 '${ST[x.status]}'`, ''),
-      o.hasStock ? box('📦 재고 과부족', `현재 재고 − 권장 재고 (하루 판매 × ${o.opt.coverDays}일)`, d.stockGap, (x) => `현재 ${x.stock} · 권장 ${x.recStock} → ${x.gap > 0 ? '+' : ''}${x.gap} · 판매 ${x.qty}개`, '') : null,
+      o.hasStock ? box('📦 재고 과부족', `현재 재고 − 권장 재고 (예상 하루 판매 × ${o.opt.coverDays}일)`, d.stockGap, (x) => `현재 ${x.stock} · 권장 ${x.recStock} → ${x.gap > 0 ? '+' : ''}${x.gap} · 예상 주 ${x.forecastPerWeek}개` + seasonTag(x), '') : null,
       d.evalMiss.length ? el('div', { class: 'opt-box' }, el('h4', {}, `🧐 매장 평가와 실제 판매가 반대인 상품 (${d.evalMiss.length})`),
         el('ul', { class: 'opt-list' }, d.evalMiss.map((x) => el('li', {}, el('b', {}, x.code), ` — 매장 평가 '${{ good: '잘 팔림', normal: '보통', poor: '안 팔림' }[x.said]}' · 실제 판매 ${x.qty}개 (${{ good: '상위', normal: '중위', poor: '하위' }[x.actual]})`)))) : null));
 }
