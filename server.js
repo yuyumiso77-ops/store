@@ -1151,7 +1151,7 @@ async function handle(req, res) {
   if (m === 'POST' && p === '/api/display') {
     const b = await readBody(req, 256 * 1024);
     const store = cleanText(b.store, 30);
-    if (!store) return send(res, 400, { error: '매장명을 먼저 입력해 주세요.' });
+    if (!store) return send(res, 400, { error: '매장을 먼저 선택해 주세요.' });
     const items = Array.isArray(b.items) ? b.items.slice(0, 1000) : [{ sku: b.sku, status: b.status }];
     const idx = skuIndex();
     for (const it of items) {
@@ -1179,7 +1179,7 @@ async function handle(req, res) {
   if (m === 'POST' && p === '/api/ztec') {
     const b = await readBody(req);
     const store = cleanText(b.store, 30);
-    if (!store) return send(res, 400, { error: '매장명을 먼저 입력해 주세요.' });
+    if (!store) return send(res, 400, { error: '매장을 먼저 선택해 주세요.' });
     if (!intIn(b.reaction, 1, 5)) return send(res, 400, { error: 'Z-TEC 고객 반응을 선택해 주세요.' });
     if (!(b.ease in OPTIONS.ztecEase)) return send(res, 400, { error: '설명 난이도를 선택해 주세요.' });
     const data = { store, reaction: b.reaction, ease: b.ease, good: cleanText(b.good, 500), bad: cleanText(b.bad, 500), suggestion: cleanText(b.suggestion, 500), updatedAt: new Date().toISOString() };
@@ -1198,7 +1198,7 @@ async function handle(req, res) {
   if (m === 'POST' && p === '/api/gifts') {
     const b = await readBody(req);
     const store = cleanText(b.store, 30);
-    if (!store) return send(res, 400, { error: '매장명을 먼저 입력해 주세요.' });
+    if (!store) return send(res, 400, { error: '매장을 먼저 선택해 주세요.' });
     if (!(b.freq in OPTIONS.giftFreq)) return send(res, 400, { error: '1. 사은품 문의 빈도를 골라 주세요.' });
     if (!(b.delay in OPTIONS.giftDelay)) return send(res, 400, { error: '2. 사은품 때문에 구매를 미룬 경우를 골라 주세요.' });
     if (!(b.impact in OPTIONS.giftImpact)) return send(res, 400, { error: '3. 현재 사은품이 구매에 준 영향을 골라 주세요.' });

@@ -35,7 +35,7 @@
       <div class="ztec-head">
         <div>
           <span class="q" style="margin:0">⚡ Z-TEC 매장 의견 <span class="hint">(매장당 1회)</span></span>
-          <div class="hint" id="ztecStatus">매장명을 입력하면 작성할 수 있어요.</div>
+          <div class="hint" id="ztecStatus">매장을 선택하면 작성할 수 있어요.</div>
         </div>
         <button type="button" class="btn" id="ztecToggle" disabled>작성하기</button>
       </div>
@@ -150,7 +150,7 @@
     </div>
     <div class="mode-gift">
       <div class="card">
-        <div class="hint" id="gStatus">매장명을 입력하면 작성할 수 있어요.</div>
+        <div class="hint" id="gStatus">매장을 선택하면 작성할 수 있어요.</div>
         <div id="gDraftNote" class="draft-note" hidden>✏️ 작성하던 내용을 불러왔어요. 저장을 눌러야 제출돼요.</div>
       </div>
       <fieldset id="gBody" class="gift" disabled>
@@ -331,9 +331,31 @@ async function init() {
   // 조사 대상 매장 명단: 자동완성 + 공식 매장명으로 맞춤
   let STORES = [];
   try { STORES = await (await fetch('/api/stores')).json(); } catch {}
-  $('storeList').replaceChildren(...STORES.map((n) => Object.assign(document.createElement('option'), { value: n })));
   const sKey = (n) => String(n || '').toLowerCase().replace(/\s+/g, '').replace(/백화점$/, '').replace(/점$/, '');
+  let legacy = '';
+  try { legacy = localStorage.getItem('staff') || ''; } catch {}
+  if (STORES.length) {
+    // 명단이 있으면 직접 입력 대신 목록에서 선택 (백화점별로 묶음)
+    const chain = (n) => /^(롯데)/.test(n) ? '롯데백화점' : /^(현대|더현대)/.test(n) ? '현대백화점' : /^신세계/.test(n) ? '신세계백화점' : /^갤/.test(n) ? '갤러리아' : /^ak/i.test(n) ? 'AK플라자' : '기타';
+    const sel = document.createElement('select');
+    sel.id = 'staff';
+    sel.className = 'store-select';
+    const first = new Option('매장을 선택해 주세요', '');
+    first.disabled = true;
+    sel.append(first);
+    const groups = new Map();
+    STORES.forEach((n) => { const g = chain(n); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(n); });
+    groups.forEach((names, g) => { const og = document.createElement('optgroup'); og.label = `${g} (${names.length})`; names.forEach((n) => og.append(new Option(n, n))); sel.append(og); });
+    $('staff').replaceWith(sel);
+    $('storeList').remove();
+    document.querySelector('label[for="staff"]').textContent = '매장 선택';
+  } else $('storeList').replaceChildren(...STORES.map((n) => Object.assign(document.createElement('option'), { value: n })));
   const normStore = () => {
+    if ($('staff').tagName === 'SELECT') {
+      try { localStorage.setItem('staff', $('staff').value); } catch {}
+      $('storeWarn').hidden = true;
+      return;
+    }
     const v = $('staff').value.trim();
     const hit = v && STORES.find((n) => sKey(n) === sKey(v));
     if (hit && hit !== v) $('staff').value = hit;
@@ -359,8 +381,17 @@ async function init() {
   Object.values(G_TEXTS).forEach((id) => $(id).addEventListener('input', () => { G_TOUCH++; saveGDraft(); }));
   $('gSave').onclick = saveGift;
   setupZtec(); // 상태는 저장된 매장명을 불러온 뒤 loadZtec()에서 갱신
-  try { $('staff').value = localStorage.getItem('staff') || ''; } catch {}
-  normStore();
+  if ($('staff').tagName === 'SELECT') {
+    // 예전에 직접 입력한 이름(예: 롯데잠실점)도 목록의 공식 이름으로 맞춰 선택
+    const hit = legacy && STORES.find((n) => sKey(n) === sKey(legacy));
+    $('staff').value = hit || '';
+    if (legacy && !hit) { $('storeWarn').hidden = false; $('storeWarn').textContent = `⚠️ 예전에 입력한 "${legacy}" 매장은 목록에 없어요. 매장을 다시 선택해 주세요.`; }
+    else try { localStorage.setItem('staff', hit || ''); } catch {}
+  } else {
+    $('staff').value = legacy;
+    normStore();
+  }
+  $('ztecToggle').disabled = !$('staff').value; $('gBody').disabled = !$('staff').value;
   try { const l = localStorage.getItem('line') || ''; if (l === '__none' ? OPTS.products.some((p) => !p.line) : OPTS.products.some((p) => p.line === l)) LINE = l; } catch {}
   renderLineFilter();
   renderCatFilter();
@@ -486,7 +517,7 @@ async function loadGift(force) {
   G_LOADED = gKey();
   const t0 = G_TOUCH;
   $('gBody').disabled = !store;
-  if (!store) { $('gStatus').textContent = '⬆️ 매장명을 먼저 입력해 주세요.'; fillGift(null); $('gDraftNote').hidden = true; return; }
+  if (!store) { $('gStatus').textContent = '⬆️ 위에서 매장을 먼저 선택해 주세요.'; fillGift(null); $('gDraftNote').hidden = true; return; }
   const e = await (await fetch('/api/gifts/mine?store=' + encodeURIComponent(store))).json();
   if (G_LOADED !== gKey()) return; // 그사이 매장명이 바뀜
   const d = lsGet(gKey());
@@ -548,7 +579,7 @@ function dProgress() {
   const store = $('staff').value.trim();
   const total = OPTS.products.reduce((a, p) => a + skusOfP(p).length, 0);
   const done = OPTS.products.reduce((a, p) => a + skusOfP(p).filter((k) => DISP[k.sku]).length, 0);
-  $('dispProgress').textContent = store ? `${done} / ${total} SKU 체크` : '⬆️ 매장명을 먼저 입력해 주세요';
+  $('dispProgress').textContent = store ? `${done} / ${total} SKU 체크` : '⬆️ 위에서 매장을 먼저 선택해 주세요';
 }
 function dChips(boxId, items, cur, onPick) {
   const box = $(boxId);
@@ -643,7 +674,7 @@ function paintSku(sku) {
 }
 async function setDisp(skus, status) {
   const store = $('staff').value.trim();
-  if (!store) { toast('⬆️ 매장명을 먼저 입력해 주세요'); $('staff').focus(); return; }
+  if (!store) { toast('⬆️ 위에서 매장을 먼저 선택해 주세요'); $('staff').focus(); return; }
   const prev = skus.map((s) => DISP[s]);
   skus.forEach((s) => (status ? (DISP[s] = status) : delete DISP[s]));
   skus.forEach(paintSku);
@@ -716,7 +747,7 @@ function setupZtec() {
 async function loadZtec() {
   const store = $('staff').value.trim();
   $('ztecToggle').disabled = !store;
-  if (!store) { $('ztecStatus').textContent = '매장명을 입력하면 작성할 수 있어요.'; $('ztecBody').hidden = true; return; }
+  if (!store) { $('ztecStatus').textContent = '매장을 선택하면 작성할 수 있어요.'; $('ztecBody').hidden = true; return; }
   const e = await (await fetch('/api/ztec/mine?store=' + encodeURIComponent(store))).json();
   zstate.reaction = e ? e.reaction : 0;
   zstate.ease = e ? e.ease : '';
