@@ -672,7 +672,9 @@ async function uploadMany(files) {
 }
 
 // 📦 생산·판매 자료: 생산수량 엑셀(품번·생산수량[·색상·판매수량])을 올리면 상품별 판매율 = 판매 ÷ 생산
-const PROD_COLS = { code: ['품번', '상품코드', '스타일', 'STYLE', 'Style', '스타일코드'], color: ['색상명', '색상', '컬러', 'COLOR'], prod: ['생산수량', '생산량', '입고수량', '총입고수량', '발주수량', '생산'], sales: ['판매수량', '총판매수량', '전체판매수량', '판매량'] };
+// 열 이름은 띄어쓰기·줄바꿈·대소문자 무시하고 찾음 (ERP 판매현황표의 'Style NO.', 'Color', '입고수량', '전체 판매량'도 그대로)
+const PROD_COLS = { code: ['품번', '상품코드', '스타일', 'style', 'styleno.', 'styleno', '스타일코드'], color: ['색상명', '색상', '컬러', 'color'], prod: ['생산수량', '생산량', '입고수량', '총입고수량', '발주수량', '생산'], sales: ['판매수량', '총판매수량', '전체판매수량', '전체판매량', '판매량'] };
+const normHead = (x) => String(x == null ? '' : x).replace(/\s+/g, '').toLowerCase();
 function prodBox(data) {
   const file = el('input', { type: 'file', accept: '.xlsx,.csv', hidden: '' });
   const result = el('p', { class: 'hint', style: 'margin:6px 0 0' });
@@ -684,10 +686,10 @@ function prodBox(data) {
       let rows;
       if (/\.csv$/i.test(f.name)) { const buf = await f.arrayBuffer(); let text = new TextDecoder('utf-8').decode(buf); if (text.includes('\uFFFD')) text = new TextDecoder('euc-kr').decode(buf); rows = parseCsv(text); }
       else rows = await readXlsx(f);
-      const hi = rows.findIndex((r) => (r || []).some((c) => PROD_COLS.prod.includes(String(c || '').trim())));
+      const hi = rows.findIndex((r) => (r || []).some((c) => PROD_COLS.prod.includes(normHead(c))));
       if (hi < 0) throw new Error('첫 줄에 생산수량(또는 입고수량) 열이 필요해요.');
-      const head = rows[hi].map((x) => String(x || '').trim());
-      const find = (names) => head.findIndex((h) => names.includes(h));
+      const head = rows[hi].map(normHead);
+      const find = (names) => { for (const n of names) { const i = head.indexOf(n); if (i >= 0) return i; } return -1; }; // 앞에 적힌 이름 우선 (생산수량 > 입고수량 > …)
       const c = { code: find(PROD_COLS.code), color: find(PROD_COLS.color), prod: find(PROD_COLS.prod), sales: find(PROD_COLS.sales) };
       if (c.code < 0) throw new Error('첫 줄에 품번(상품코드) 열이 필요해요.');
       const out = rows.slice(hi + 1).filter((r) => r && r[c.code]).map((r) => [String(r[c.code]).trim(), c.color >= 0 ? r[c.color] : '', Number(r[c.prod]) || 0, c.sales >= 0 && r[c.sales] !== '' && r[c.sales] != null ? Number(r[c.sales]) : null]);
@@ -703,7 +705,7 @@ function prodBox(data) {
     el('div', { class: 'product-head' },
       el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '📦 생산 · 판매 · 판매율'),
         el('p', { class: 'hint', style: 'margin:0;line-height:1.6' },
-          (pi ? `생산수량: ${pi.fileName || ''} (${pi.products}개 상품)` : '생산수량 자료가 아직 없어요. 품번·생산수량 열이 있는 엑셀(또는 CSV)을 올려 주세요. 색상·판매수량 열이 있으면 함께 써요.') +
+          (pi ? `생산수량: ${pi.fileName || ''} (${pi.products}개 상품)` : '생산수량 자료가 아직 없어요. 품번·생산수량(또는 입고수량) 열이 있는 엑셀을 올려 주세요. 26FW 판매현황표(Style NO.·Color·입고수량·전체 판매량)도 그대로 올리면 돼요.') +
           ` · 판매수량: ${pi && pi.hasSales ? '생산 자료의 판매수량' : si ? `판매 자료 (${si.from}~${si.to}, 조사 매장 합계)` : '판매 자료 없음'}`)),
       el('div', { class: 'actions' }, el('label', { class: 'btn accent', style: 'cursor:pointer' }, file, pi ? '📁 새 생산수량 파일' : '📁 생산수량 올리기'))),
     pi ? el('div', { class: 'stats', style: 'margin-top:12px' }, stat(prod.toLocaleString() + '장', '전체 생산수량'), stat(sales.toLocaleString() + '장', '전체 판매수량'), stat(prod ? Math.round((sales / prod) * 1000) / 10 + '%' : '-', '판매율 (판매 ÷ 생산)')) : null,
