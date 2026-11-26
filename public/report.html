@@ -11,6 +11,11 @@
   body { background: var(--bg); }
   .rp { max-width: 920px; margin: 0 auto; padding: 20px 16px 60px; }
   .rp-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .rp-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 10px; margin: -6px 0 12px; background: var(--bg); scrollbar-width: none; }
+  .rp-tabs::-webkit-scrollbar { display: none; }
+  .rp-tabs button { flex: 0 0 auto; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 8px 14px; font-size: .9rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .rp-tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .rp-cover .sub-title { display: inline-block; margin-left: 6px; color: var(--accent); }
   .rp-cover { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 26px 26px 22px; margin-bottom: 18px; }
   .rp-cover img { height: 26px; display: block; margin-bottom: 18px; }
   .rp-cover h1 { font-size: 1.7rem; margin: 0 0 6px; }
@@ -48,7 +53,8 @@
     body { background: #fff; }
     body * { visibility: visible !important; } /* 공용 style.css의 인쇄 숨김 규칙 해제 */
     .rp { max-width: none; padding: 0; }
-    .rp-bar { display: none; }
+    .rp-bar, .rp-tabs { display: none; }
+    .rp section.first { break-before: auto; }
     .rp section, .rp-cover { border: 0; padding: 0; margin: 0 0 8mm; break-inside: auto; }
     .rp section { break-before: page; }
     .rp section.keep { break-before: auto; }
@@ -69,6 +75,7 @@
     <a class="btn" href="/admin">← 관리자 화면</a>
     <div style="display:flex;gap:8px"><button type="button" class="btn" id="reload">🔄 최신 데이터로</button><button type="button" class="btn accent" id="print">🖨 인쇄 · PDF 저장</button></div>
   </div>
+  <nav class="rp-tabs" id="tabs" aria-label="리포트 항목"></nav>
   <div id="report"><p class="hint">리포트를 만드는 중…</p></div>
 </main>
 <script>
@@ -101,12 +108,12 @@ function render(r) {
   const o = r.overview;
   const L = r.labels;
   const at = new Date(r.at);
-  document.title = `매장 조사 리포트 ${at.toLocaleDateString('ko-KR')}`;
+  document.title = BASE_TITLE = `매장 조사 리포트 ${at.toLocaleDateString('ko-KR')}`;
   const out = [];
 
   out.push(el('div', { class: 'rp-cover' },
     el('img', { src: '/logo.png', alt: 'FootJoy' }),
-    el('h1', {}, '26FW 매장 반응·진열 조사 리포트'),
+    el('h1', {}, '26FW 매장 반응·진열 조사 리포트', el('span', { class: 'sub-title' })),
     el('div', { class: 'meta' }, `${at.toLocaleString('ko-KR')} 기준 · 조사 대상 ${o.targetStores}매장 · 본사 내부용`)));
 
   // 1. 한눈에
@@ -208,8 +215,37 @@ function render(r) {
       el('li', {}, '진열률은 미입고를 뺀 기준이에요. SKU = 품번 × 컬러.'),
       el('li', {}, '공간 효율: 진열 자리마다 그 매장의 판매 반응(잘 팔림 100·보통 50·안 팔림 0)으로 점수를 매기고, 그 매장이 평가하지 않은 상품은 전체 매장 평균을 썼어요. 효율 지수 = 판매 기여 ÷ 공간 점유.'),
       el('li', {}, 'AI 요약은 관리자 화면에서 마지막으로 만든 요약이에요. 틀릴 수 있으니 숫자와 함께 봐 주세요.'))));
+  const KEYS = ['summary', 'stores', 'reaction', 'display', 'ztec', 'gift', 'notes'];
+  out.slice(1).forEach((n, i) => (n.dataset.sec = KEYS[i]));
   $('report').replaceChildren(...out);
+  applyTab();
 }
+// ---- 주제별 탭: 고른 항목만 보이고, 인쇄·PDF도 그 항목만 ----
+const TABS = [['all', '전체'], ['summary', '📊 요약'], ['stores', '🏬 참여 현황'], ['reaction', '💬 상품 반응'], ['display', '📦 진열·공간 효율'], ['ztec', '⚡ Z-TEC'], ['gift', '🎁 사은품']];
+let TAB = (location.hash.slice(1) && TABS.some(([k]) => k === location.hash.slice(1))) ? location.hash.slice(1) : 'all';
+let BASE_TITLE = '';
+function drawTabs() {
+  $('tabs').replaceChildren(...TABS.map(([k, l]) => el('button', { type: 'button', class: TAB === k ? 'on' : '', onclick: () => { TAB = k; history.replaceState(null, '', k === 'all' ? location.pathname : '#' + k); applyTab(); window.scrollTo({ top: 0 }); } }, l)));
+}
+function applyTab() {
+  drawTabs();
+  const on = $('tabs').querySelector('.on');
+  if (on) $('tabs').scrollLeft = on.offsetLeft - ($('tabs').clientWidth - on.offsetWidth) / 2;
+  const secs = [...document.querySelectorAll('#report section')];
+  let first = true;
+  secs.forEach((n) => {
+    const show = TAB === 'all' || n.dataset.sec === TAB || (n.dataset.sec === 'notes' && TAB !== 'summary' && TAB !== 'stores');
+    n.hidden = !show;
+    n.classList.toggle('first', show && first);
+    if (show) first = false;
+  });
+  const label = TAB === 'all' ? '' : TABS.find(([k]) => k === TAB)[1].replace(/^\S+\s/, '');
+  const st = document.querySelector('.rp-cover .sub-title');
+  if (st) st.textContent = label ? `· ${label}` : '';
+  if (!BASE_TITLE) BASE_TITLE = document.title;
+  document.title = label ? `${BASE_TITLE} - ${label}` : BASE_TITLE; // PDF 파일 이름에 항목명
+}
+window.addEventListener('hashchange', () => { const h = location.hash.slice(1); TAB = TABS.some(([k]) => k === h) ? h : 'all'; applyTab(); });
 async function load() {
   $('report').replaceChildren(el('p', { class: 'hint' }, '리포트를 만드는 중…'));
   try {
@@ -220,6 +256,7 @@ async function load() {
 }
 $('print').onclick = () => window.print();
 $('reload').onclick = load;
+drawTabs();
 load();
 </script>
 </body>
