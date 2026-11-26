@@ -49,7 +49,15 @@
   .rp .ai-box .ai-head { margin-top: 0; }
   .rp .ai-sec { background: #fff; }
   .rp .empty { color: var(--muted); font-size: .92rem; }
-  .rp .thumb { width: 38px; height: 38px; object-fit: contain; background: #fff; border-radius: 8px; border: 1px solid var(--line); vertical-align: middle; margin-right: 10px; }
+  .rp .thumb { width: 64px; height: 64px; object-fit: contain; background: #fff; border-radius: 10px; border: 1px solid var(--line); vertical-align: middle; margin-right: 14px; cursor: zoom-in; transition: transform .12s; }
+  .rp .thumb:hover { transform: scale(1.06); border-color: #c7cdd6; }
+  .peek { position: fixed; z-index: 40; pointer-events: none; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 10px; box-shadow: 0 12px 32px rgba(17, 24, 39, .18); width: 280px; }
+  .peek img { display: block; width: 100%; height: 260px; object-fit: contain; }
+  .peek div { margin-top: 6px; font-size: .85rem; font-weight: 700; text-align: center; }
+  .zoom { position: fixed; inset: 0; z-index: 50; background: rgba(17, 24, 39, .72); display: flex; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out; }
+  .zoom figure { margin: 0; background: #fff; border-radius: 16px; padding: 18px; max-width: min(92vw, 640px); text-align: center; }
+  .zoom img { display: block; width: 100%; max-height: 74vh; object-fit: contain; }
+  .zoom figcaption { margin-top: 10px; font-weight: 700; }
   .rp .tags { font-size: .88rem; color: #4b5563; line-height: 1.7; }
   .rp .notes li { margin-bottom: 6px; }
   .rp .wr { word-break: keep-all; overflow-wrap: anywhere; }
@@ -84,6 +92,8 @@
     .rp .kpi { padding: 4mm; }
     .rp .tw { overflow: visible; } .rp .tw table { min-width: 0; }
     .rp tr:hover td { background: none; }
+    .rp .thumb { width: 40px; height: 40px; margin-right: 8px; }
+    .zoom, .peek { display: none !important; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
@@ -125,6 +135,38 @@ function aiBox(x, heading, titles) {
     el('div', { class: 'ai-grid' }, list(titles[0], x.strengths), list(titles[1], x.weaknesses), list(titles[2], x.requests), list(titles[3], x.actions)),
     el('p', { class: 'hint', style: 'margin:0' }, `${new Date(x.at).toLocaleString('ko-KR')} 요약` + (x.stale ? ' · ⚠️ 그 뒤 새 데이터가 있어요 (관리자 화면에서 다시 요약하면 반영돼요)' : '') + ' · AI 요약은 틀릴 수 있어요'));
 }
+// 사진 누르면 크게
+function zoom(src, caption) {
+  const z = el('div', { class: 'zoom', onclick: () => z.remove() }, el('figure', {}, el('img', { src, alt: caption || '' }), caption ? el('figcaption', {}, caption) : null));
+  const esc = (e) => { if (e.key === 'Escape') { z.remove(); document.removeEventListener('keydown', esc); } };
+  document.addEventListener('keydown', esc);
+  document.body.append(z);
+}
+// 마우스를 올리면 옆에 크게 (마우스가 있는 기기만), 누르면 화면 가운데 크게
+let PEEK = null;
+const canHover = matchMedia('(hover: hover)').matches;
+function peekMove(e) {
+  if (!PEEK) return;
+  const w = 302, h = PEEK.offsetHeight || 300, gap = 18;
+  let x = e.clientX + gap, y = e.clientY - h / 2;
+  if (x + w > innerWidth - 8) x = e.clientX - w - gap;
+  y = Math.max(8, Math.min(y, innerHeight - h - 8));
+  PEEK.style.left = x + 'px'; PEEK.style.top = y + 'px';
+}
+function peekShow(e, src, caption) {
+  peekHide();
+  PEEK = el('div', { class: 'peek' }, el('img', { src, alt: '' }), caption ? el('div', {}, caption) : null);
+  document.body.append(PEEK);
+  peekMove(e);
+}
+function peekHide() { if (PEEK) { PEEK.remove(); PEEK = null; } }
+addEventListener('scroll', peekHide, { passive: true });
+const thumb = (src, caption) => {
+  if (!src) return null;
+  const im = el('img', { class: 'thumb', src, alt: caption || '', loading: 'lazy', onclick: () => { peekHide(); zoom(src, caption); } });
+  if (canHover) { im.onmouseenter = (e) => peekShow(e, src, caption); im.onmousemove = peekMove; im.onmouseleave = peekHide; }
+  return im;
+};
 const chipsOf = (arr) => arr.map((x) => `${x.name} ${x.n}`).join(' · ') || '-';
 
 // ---- 상품 순위: 복종 필터 · 10/20/30/전체 · 정렬 ----
@@ -164,7 +206,7 @@ function rankingBlock(products) {
       el('h3', {}, `${RK.type === 'all' ? '전체 복종' : RK.type} · ${sortName.replace(/^\S+\s/, '')} · ${RK.n ? `1~${Math.min(RK.n, list.length)}위` : `전체 ${list.length}개`}`,
         el('small', { class: 'hint', style: 'font-weight:400;margin-left:6px' }, `(평가 ${RK.min}건 이상 ${list.length}개 중)`)),
       shown.length ? table(['순위', '상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', '평가'],
-        shown.map((p, i) => [i + 1, el('span', {}, p.imageUrl ? el('img', { class: 'thumb', src: p.imageUrl, alt: '' }) : null, el('b', {}, p.code || p.name)), typeKey(p),
+        shown.map((p, i) => [i + 1, el('span', {}, thumb(p.imageUrl, `${p.code || ''} ${p.name || ''}`.trim()), el('b', {}, p.code || p.name)), typeKey(p),
           el('span', {}, bar(p.avgReaction, 5), fmt1(p.avgReaction)), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), p.count]), [0, 3, 4, 5, 6, 7])
         : el('p', { class: 'empty' }, '조건에 맞는 상품이 없어요. 기준(평가 건수)을 낮춰 보세요.'));
   };
@@ -262,7 +304,7 @@ function render(r) {
     g.count ? el('div', { class: 'kpis' }, kpi(g.count + '매장', '응답 매장'), kpi(pctOf(g.freq.often, g.count), '사은품 문의가 자주 있음'), kpi(pctOf(g.delay.often + g.delay.sometimes, g.count), '사은품 때문에 구매를 미룬 고객 있음'),
       kpi(fmt1(g.avgReaction), '올해 사은품 고객 반응 (5점)'), kpi(g.items[0] ? g.items[0].name : '-', '가장 원하는 사은품')) : el('p', { class: 'empty' }, '아직 응답이 없어요.'),
     g.giftItems.length ? [el('h3', {}, '🎁 2026 사은품별 반응 (높은 순)'), table(['사은품', '평균 반응', '평가 매장', '미입고', '증정 안 함'],
-      g.giftItems.map((x) => [el('span', {}, x.photo ? el('img', { class: 'thumb', src: x.photo, alt: '' }) : null, x.name), x.avg == null ? '-' : el('span', {}, bar(x.avg, 5), x.avg.toFixed(1)), x.count, x.nr || '-', x.na || '-']), [1, 2, 3, 4])] : null,
+      g.giftItems.map((x) => [el('span', {}, thumb(x.photo, x.name), x.name), x.avg == null ? '-' : el('span', {}, bar(x.avg, 5), x.avg.toFixed(1)), x.count, x.nr || '-', x.na || '-']), [1, 2, 3, 4])] : null,
     g.count ? el('div', { class: 'two' },
       el('div', {}, el('h3', {}, '원하는 사은품 순위'), table(['사은품', '매장 수', ''], g.items.map((x) => [x.name, x.count, bar(x.count, g.items[0].count)]), [1])),
       el('div', {}, el('h3', {}, '구매에 가장 도움 되는 기준 금액'), dist(g.threshold, L.giftThreshold))) : null,
