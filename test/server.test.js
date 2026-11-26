@@ -655,9 +655,6 @@ test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체
   assert.strictEqual(jd.survey.toHang, 1); // 권장(B, 판매 있음)인데 '창고만' · 재고 있음 → 걸기 후보
   assert.ok(od.seasonal && od.seasonal.types[0].factor > 1);
   // 등급별 재고: 평수 있는 매장 중 평당 매출 상위 → A
-  // 진열 최적화 플랜: 롯데중동은 A(판매 큼) 진열·B(판매 작음) 창고만 → 이미 최적이라 교체 없음
-  assert.deepStrictEqual([jd.plan.checked, jd.plan.slots, jd.plan.swaps], [true, 1, 0]);
-  assert.ok(od.totals.plan && (await fetch(base + '/api/admin/display-plan.csv', { headers: admin })).status === 200);
   assert.strictEqual(jd.tier, 'A');
   assert.ok((await (await fetch(base + '/api/admin/optimal-display.csv', { headers: admin })).text()).includes('롯데중동'));
   await fetch(base + '/api/admin/sales', { method: 'DELETE', headers: admin });

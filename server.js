@@ -898,7 +898,7 @@ function stockAnalysis() {
 
 // ---------- 🧮 적정 진열·재고 (판매 · 재고 · 평수 기준) + 매장 조사 비교 ----------
 // 기준값: 여기만 바꾸면 계산이 바뀜
-const OPT = { newSkuFactor: 0.7, tiered: true, safetyDays: 14, density: null, skuBuffer: 1.1, coreMultiplier: 1.5, coverDays: 56, minStockPerSku: 4, lowActive: 60, highActive: 80 }; // 재고: 8주치·SKU당 최소 4개(사이즈) — 화면에서 바꿔 볼 수 있음
+const OPT = { tiered: true, safetyDays: 14, density: null, skuBuffer: 1.1, coreMultiplier: 1.5, coverDays: 56, minStockPerSku: 4, lowActive: 60, highActive: 80 }; // 재고: 8주치·SKU당 최소 4개(사이즈) — 화면에서 바꿔 볼 수 있음
 function importSizes(b) {
   const mp = erpMapper(b.names && typeof b.names === 'object' ? b.names : {});
   const sizes = {};
@@ -976,20 +976,6 @@ function optimalDisplay(over = {}) {
   // ── 매장 등급 (평당 매출 상·중·하 1/3, 평수 없으면 매출 기준) ── 등급별 재고 깊이
   const amtOf = new Map();
   sl.items.forEach((x) => amtOf.set(x.store, (amtOf.get(x.store) || 0) + Math.max(0, x.amount)));
-  // ── 진열 최적화용: SKU별 '취급 매장 1곳당' 예상 판매·가격, 매장별 판매 규모 ──
-  const netSku = new Map(); // sku -> { fc, stores, qty, amount }
-  const storeFcTotal = new Map();
-  sl.items.forEach((x) => {
-    if (!idx.has(x.sku)) return;
-    const f = x.qty > 0 ? forecast(x, x.sku) : 0;
-    const a = netSku.get(x.sku) || { fc: 0, stores: new Set(), qty: 0, amount: 0 };
-    a.fc += f; a.qty += Math.max(0, x.qty); a.amount += Math.max(0, x.amount); a.stores.add(x.store);
-    netSku.set(x.sku, a);
-    storeFcTotal.set(x.store, (storeFcTotal.get(x.store) || 0) + f);
-  });
-  stockMap.forEach((q, k) => { if (q > 0) { const i = k.lastIndexOf('|'); const a = netSku.get(k.slice(i + 1)); if (a) a.stores.add(k.slice(0, i)); } });
-  const fcVals = [...storeFcTotal.values()].filter((v) => v > 0);
-  const avgStoreFc = fcVals.length ? fcVals.reduce((a, b) => a + b, 0) / fcVals.length : 1;
   const tierOf = new Map();
   const rankTier = (list) => list.forEach((n, i) => tierOf.set(n, i < list.length / 3 ? 'A' : i < (list.length * 2) / 3 ? 'B' : 'C'));
   rankTier(storeNames.filter((n) => sizes[n] && amtOf.get(n)).sort((a, b) => amtOf.get(b) / sizes[b] - amtOf.get(a) / sizes[a]));
@@ -1037,36 +1023,6 @@ function optimalDisplay(over = {}) {
     // 매장 조사 비교: 진열 체크
     const checked = [...idx.keys()].some((s) => disp.has(name + '|' + s));
     const shown = skuRows.filter((x) => x.status === 'shown');
-    // ── 🚀 진열 최적화 플랜: 같은 자리 수로 예상 매출이 가장 큰 구성 ──
-    const scale = (storeFcTotal.get(name) || 0) / avgStoreFc;
-    const expOf = (sk) => {
-      const it = qtyOf.get(sk);
-      if (it && it.qty > 0) return { week: (it.fc || 0) * 7, price: it.amount / it.qty, basis: 'store' };
-      const n = netSku.get(sk);
-      if (!n || !n.qty || !n.stores.size) return { week: 0, price: 0, basis: 'none' };
-      return { week: (n.fc / n.stores.size) * 7 * scale * OPT_.newSkuFactor, price: n.amount / n.qty, basis: 'network' };
-    };
-    const cand = [...idx.keys()].map((sk) => { const e = expOf(sk); return { sku: sk, week: e.week, amt: e.week * e.price, basis: e.basis, stock: stockMap.get(name + '|' + sk) || 0, status: disp.get(name + '|' + sk) || '' }; });
-    const byAmt = (a, b) => b.amt - a.amt || b.week - a.week;
-    let plan = { checked, slots: shown.length, swaps: 0, gainWeek: 0, gainAmt: 0, nowSwaps: 0, nowGainAmt: 0, currentAmt: 0, pairs: [] };
-    if (checked && shown.length) {
-      const cur = new Set(shown.map((x) => x.sku));
-      const best = new Set(cand.slice().sort(byAmt).slice(0, shown.length).map((x) => x.sku));
-      const outs = cand.filter((x) => cur.has(x.sku) && !best.has(x.sku)).sort((a, b) => a.amt - b.amt);
-      const ins = cand.filter((x) => best.has(x.sku) && !cur.has(x.sku)).sort(byAmt);
-      // 지금 매장 재고로 바로 가능한 교체: 재고 있는 SKU만 후보
-      const bestNow = new Set(cand.filter((x) => cur.has(x.sku) || x.stock > 0).sort(byAmt).slice(0, shown.length).map((x) => x.sku));
-      const pairs = [];
-      for (let i = 0; i < Math.min(outs.length, ins.length); i++) {
-        const o = outs[i], n = ins[i];
-        if (n.amt <= o.amt) break;
-        pairs.push({ out: { ...sku(o.sku), week: Math.round(o.week * 10) / 10, amt: Math.round(o.amt), stock: o.stock }, in: { ...sku(n.sku), week: Math.round(n.week * 10) / 10, amt: Math.round(n.amt), stock: n.stock, basis: n.basis, status: n.status, now: n.stock > 0 }, gainWeek: Math.round((n.week - o.week) * 10) / 10, gainAmt: Math.round(n.amt - o.amt) });
-      }
-      const curAmt = cand.filter((x) => cur.has(x.sku)).reduce((a, x) => a + x.amt, 0);
-      const nowAmt = cand.filter((x) => bestNow.has(x.sku)).reduce((a, x) => a + x.amt, 0);
-      plan = { checked, slots: shown.length, swaps: pairs.length, gainWeek: Math.round(pairs.reduce((a, x) => a + x.gainWeek, 0) * 10) / 10, gainAmt: pairs.reduce((a, x) => a + x.gainAmt, 0),
-        nowSwaps: pairs.filter((x) => x.in.now).length, nowGainAmt: Math.max(0, Math.round(nowAmt - curAmt)), currentAmt: Math.round(curAmt), pairs: pairs.slice(0, 60) };
-    }
     const toHang = skuRows.filter((x) => x.rec && x.status && x.status !== 'shown' && x.stock > 0).sort((a, b) => b.amount - a.amount); // 권장인데 진열 안 됨 (재고 있음)
     const toAllocate = skuRows.filter((x) => x.rec && x.stock <= 0 && x.status !== 'shown' && (db.stock ? true : false)).sort((a, b) => b.amount - a.amount); // 권장인데 재고 없음
     const toRemove = shown.filter((x) => !x.rec).sort((a, b) => a.amount - b.amount); // 진열 중인데 권장 밖
@@ -1095,7 +1051,6 @@ function optimalDisplay(over = {}) {
         recShown: shown.filter((x) => x.rec).length, toHang: toHang.length, toAllocate: toAllocate.length, toRemove: toRemove.length,
         evals: evalRows.length, agreePct: evalRows.length ? Math.round((agree / evalRows.length) * 100) : null, evalMiss: evalMiss.length,
       },
-      plan,
       detail: { toHang: toHang.slice(0, 40), toAllocate: toAllocate.slice(0, 40), toRemove: toRemove.slice(0, 40), evalMiss: evalMiss.slice(0, 30),
         stockGap: skuRows.filter((x) => x.gap !== 0).sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap)).slice(0, 40) },
     };
@@ -1109,7 +1064,6 @@ function optimalDisplay(over = {}) {
     totals: { stores: stores.length, over: stores.filter((s) => s.judge === 'over').length, ok: stores.filter((s) => s.judge === 'ok').length, room: stores.filter((s) => s.judge === 'room').length,
       cutSku: sum((s) => s.cutSku), offSeasonStock: sum((s) => s.offSeasonStock), overStock: sum((s) => s.overStock), shortStock: sum((s) => s.shortStock), stockQty: sum((s) => s.stockQty), recStockQty: sum((s) => s.recStockQty),
       toHang: sum((s) => s.survey.toHang), toRemove: sum((s) => s.survey.toRemove), checkedStores: stores.filter((s) => s.survey.checked).length,
-      plan: { stores: stores.filter((s) => s.plan.swaps).length, swaps: sum((s) => s.plan.swaps), nowSwaps: sum((s) => s.plan.nowSwaps), gainAmt: sum((s) => s.plan.gainAmt), nowGainAmt: sum((s) => s.plan.nowGainAmt), gainWeek: Math.round(sum((s) => s.plan.gainWeek)), currentAmt: sum((s) => s.plan.currentAmt) },
       agreePct: (() => { const n = sum((s) => s.survey.evals); return n ? Math.round((stores.reduce((a, s) => a + (s.survey.agreePct || 0) * s.survey.evals, 0) / n)) : null; })() },
     tiers: OPT_.tiered ? Object.fromEntries(Object.entries(TIER).map(([k, v]) => [k, { label: v.label, min: v.min, coverWeeks: Math.round(v.cover / 7), safetyWeeks: Math.round(v.safety / 7), stores: [...tierOf.values()].filter((t) => t === k).length }])) : null,
     stores: stores.sort((a, b) => (b.perPy ?? -1) - (a.perPy ?? -1) || b.amount - a.amount),
@@ -1417,14 +1371,6 @@ async function handle(req, res) {
     }
     const optQ = () => { const q = (k) => (url.searchParams.has(k) && url.searchParams.get(k) !== '' ? Number(url.searchParams.get(k)) : NaN); const c = q('cover'), mn = q('min'); const o = {}; if (c >= 7 && c <= 180) o.coverDays = Math.round(c); if (mn >= 0 && mn <= 20) o.minStockPerSku = Math.round(mn); const dn = q('density'); if (dn > 0 && dn <= 40) o.density = dn; if (url.searchParams.get('tiered') === '0') o.tiered = false; return o; };
     if (m === 'GET' && p === '/api/admin/optimal-display') return send(res, 200, optimalDisplay(optQ()));
-    if (m === 'GET' && p === '/api/admin/display-plan.csv') {
-      const o = optimalDisplay(optQ());
-      if (!o.ready) return send(res, 400, { error: '판매 자료를 먼저 올려 주세요.' });
-      const rows = [['매장', '담당자', '빼기 품번', '빼기 컬러', '빼기 예상 주간 판매', '걸기 품번', '걸기 컬러', '걸기 상품명', '걸기 예상 주간 판매', '걸기 매장 재고', '바로 가능', '예상 주간 매출 증가(원)']];
-      o.stores.forEach((st) => st.plan.pairs.forEach((x) => rows.push([st.name, st.manager, x.out.code, x.out.color, x.out.week, x.in.code, x.in.color, x.in.name, x.in.week, x.in.stock, x.in.now ? '바로' : '배분 필요', x.gainAmt])));
-      const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
-      return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="display-plan.csv"' });
-    }
     if (m === 'GET' && p === '/api/admin/optimal-display.csv') {
       const o = optimalDisplay(optQ());
       if (!o.ready) return send(res, 400, { error: '판매 자료를 먼저 올려 주세요.' });
