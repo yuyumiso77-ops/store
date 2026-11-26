@@ -1117,7 +1117,7 @@ async function loadOptimal() {
     el('ul', { class: 'hint', style: 'line-height:1.8;margin:10px 0 0' },
       el('li', {}, `권장 진열 SKU 수 = 지금 시점에 팔리는 SKU(시즌 중 팔렸고, 비시즌 복종이면 최근에도 팔린 SKU) × ${O.skuBuffer} (단, 예상 매출 80%를 만드는 SKU × ${O.coreMultiplier}보다 적지 않게). 매장 크기보다 실제 팔리는 구색이 기준이에요.`),
       el('li', {}, `공간 최소 = 평수 × 평당 ${o.density.value} SKU (${o.density.source}). 판매가 적은 매장도 매장이 비어 보이지 않게 이만큼은 진열해요. 권장 진열 SKU = 판매 기준과 공간 최소 중 큰 값.`),
-      el('li', {}, '권장 진열 목록 = 그 매장의 지금 시점 예상 매출이 큰 SKU부터, 모자라면 전체 매장에서 지금 잘 팔리는(기온·계절 반영) SKU로 채움 → 매장에 재고 있으면 걸기 후보, 없으면 배분 필요. 비시즌 상품은 뒤로 밀려 빼기 후보가 돼요.'),
+      el('li', {}, `권장 진열 목록 = 모든 SKU를 "이 매장에서 지금 예상 매출" 하나로 줄 세워 위에서부터. 이 매장에서 팔아 본 상품은 이 매장 예상 판매(기온·계절 반영), 안 팔아 본 상품은 다른 매장 평균 × 이 매장 판매 규모 × ${O.newSkuFactor}. 비시즌(계절 지수 0.6 이하)이면서 최근에 안 팔린 상품은 빠져요 → 매장에 재고 있으면 걸기 후보, 없으면 배분 필요.`),
       el('li', {}, `예상 판매 = 최근 약 3~4주 하루 판매 × 60% + 시즌 평균 하루 판매 × 복종 계절 지수 × 40% (주별 판매 자료가 있을 때). 기온 변화가 판매 흐름에 반영된 값이에요.`),
       o.tiers ? el('li', {}, `권장 재고 = SKU별 예상 하루 판매 × 등급별 기간 (+핵심 SKU 안전재고), 최소 수량도 등급별. 등급 = 평당 매출 상·중·하 1/3 (평수 없으면 매출). ` +
         Object.values(o.tiers).map((t) => `${t.label} ${t.stores}매장: SKU당 최소 ${t.min}개 · ${t.coverWeeks}주치${t.safetyWeeks ? ` + 핵심 SKU 안전재고 ${t.safetyWeeks}주` : ''}`).join(' / ') + `. 권장 목록 밖 SKU의 권장 재고는 0. 판매 기간 ${o.days}일.`)
@@ -1206,9 +1206,9 @@ function optDetail(s, o) {
       `권장 진열 ${s.recSku} SKU = max(판매 기준 ${s.salesBased}, 공간 최소 ${s.spaceMin || '-'}${s.py ? ` = ${s.py}평 × ${o.density.value}` : ''})` + (s.filled ? ` · 이 매장 판매가 없던 ${s.filled}개는 다른 매장에서 지금 잘 팔리는 시즌 상품으로 채움` : '') + ` · 매장 조사: ${sv.checked ? `진열 ${sv.shown} SKU` + (sv.shownPerPy ? ` (평당 ${sv.shownPerPy})` : '') + `, 그중 권장 ${sv.recShown}` : '진열 체크 안 함'}` +
       (sv.evals ? ` · 상품 평가 ${sv.evals}건 중 실제 판매와 일치 ${sv.agreePct}%` : '')),
     el('div', { class: 'opt-grid' },
-      box('🟢 걸기 후보', '지금 잘 팔릴(권장) SKU인데 진열 안 됨 · 매장에 재고 있음', d.toHang, (x) => `최근 ${x.recent}개 · 예상 주 ${x.forecastPerWeek}개 · 재고 ${x.stock} · 체크 '${ST[x.status]}'` + seasonTag(x), 'g'),
-      box('🔴 빼기 후보', '진열 중인데 권장 목록 밖 (지금 예상 판매 적은 순)', d.toRemove, (x) => `시즌 ${x.qty}개 · 최근 ${x.recent}개 · 재고 ${x.stock}` + seasonTag(x), 'r'),
-      box('📮 배분 필요', '권장 SKU인데 매장 재고 없음', d.toAllocate, (x) => `판매 ${x.qty}개 · ${won(x.amount)} · 체크 '${ST[x.status]}'`, ''),
+      box('🟢 걸기 후보', '지금 예상 매출이 큰(권장) SKU인데 진열 안 됨 · 매장에 재고 있음', d.toHang, (x) => `예상 주 ${x.expWeek}개${x.basis === 'network' ? '(다른 매장 기준)' : ''} · 최근 ${x.recent}개 · 재고 ${x.stock} · 체크 '${ST[x.status]}'` + seasonTag(x), 'g'),
+      box('🔴 빼기 후보', '진열 중인데 권장 목록 밖 (지금 예상 매출 적은 순)', d.toRemove, (x) => `예상 주 ${x.expWeek}개 · 최근 ${x.recent}개 · 시즌 ${x.qty}개 · 재고 ${x.stock}` + seasonTag(x), 'r'),
+      box('📮 배분 필요', '권장 SKU인데 매장 재고 없음 (지금 예상 매출 큰 순, 비시즌 제외)', d.toAllocate, (x) => `예상 주 ${x.expWeek}개${x.basis === 'network' ? '(다른 매장 기준)' : ''} · 최근 ${x.recent}개 · 체크 '${ST[x.status]}'` + seasonTag(x), ''),
       o.hasStock ? box('📦 재고 과부족', `현재 재고 − 권장 재고 (예상 하루 판매 × ${o.opt.coverDays}일)`, d.stockGap, (x) => `현재 ${x.stock} · 권장 ${x.recStock} → ${x.gap > 0 ? '+' : ''}${x.gap} · 예상 주 ${x.forecastPerWeek}개` + seasonTag(x), '') : null,
       d.evalMiss.length ? el('div', { class: 'opt-box' }, el('h4', {}, `🧐 매장 평가와 실제 판매가 반대인 상품 (${d.evalMiss.length})`),
         el('ul', { class: 'opt-list' }, d.evalMiss.map((x) => el('li', {}, el('b', {}, x.code), ` — 매장 평가 '${{ good: '잘 팔림', normal: '보통', poor: '안 팔림' }[x.said]}' · 실제 판매 ${x.qty}개 (${{ good: '상위', normal: '중위', poor: '하위' }[x.actual]})`)))) : null));

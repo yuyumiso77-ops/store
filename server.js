@@ -898,7 +898,7 @@ function stockAnalysis() {
 
 // ---------- 🧮 적정 진열·재고 (판매 · 재고 · 평수 기준) + 매장 조사 비교 ----------
 // 기준값: 여기만 바꾸면 계산이 바뀜
-const OPT = { tiered: true, safetyDays: 14, density: null, skuBuffer: 1.1, coreMultiplier: 1.5, coverDays: 56, minStockPerSku: 4, lowActive: 60, highActive: 80 }; // 재고: 8주치·SKU당 최소 4개(사이즈) — 화면에서 바꿔 볼 수 있음
+const OPT = { newSkuFactor: 0.7, tiered: true, safetyDays: 14, density: null, skuBuffer: 1.1, coreMultiplier: 1.5, coverDays: 56, minStockPerSku: 4, lowActive: 60, highActive: 80 }; // 재고: 8주치·SKU당 최소 4개(사이즈) — 화면에서 바꿔 볼 수 있음
 function importSizes(b) {
   const mp = erpMapper(b.names && typeof b.names === 'object' ? b.names : {});
   const sizes = {};
@@ -976,6 +976,20 @@ function optimalDisplay(over = {}) {
   // ── 매장 등급 (평당 매출 상·중·하 1/3, 평수 없으면 매출 기준) ── 등급별 재고 깊이
   const amtOf = new Map();
   sl.items.forEach((x) => amtOf.set(x.store, (amtOf.get(x.store) || 0) + Math.max(0, x.amount)));
+  // ── 매장별 '지금 예상 매출' 순위용: SKU별 취급 매장 1곳당 예상 판매·가격, 매장 판매 규모 ──
+  const netSku = new Map();
+  const storeFcTotal = new Map();
+  sl.items.forEach((x) => {
+    if (!idx.has(x.sku)) return;
+    const f = x.qty > 0 ? forecast(x, x.sku) : 0;
+    const a = netSku.get(x.sku) || { fc: 0, stores: new Set(), qty: 0, amount: 0 };
+    a.fc += f; a.qty += Math.max(0, x.qty); a.amount += Math.max(0, x.amount); a.stores.add(x.store);
+    netSku.set(x.sku, a);
+    storeFcTotal.set(x.store, (storeFcTotal.get(x.store) || 0) + f);
+  });
+  stockMap.forEach((q, k) => { if (q > 0) { const i = k.lastIndexOf('|'); const a = netSku.get(k.slice(i + 1)); if (a) a.stores.add(k.slice(0, i)); } });
+  const fcVals = [...storeFcTotal.values()].filter((v) => v > 0);
+  const avgStoreFc = fcVals.length ? fcVals.reduce((a, b) => a + b, 0) / fcVals.length : 1;
   const tierOf = new Map();
   const rankTier = (list) => list.forEach((n, i) => tierOf.set(n, i < list.length / 3 ? 'A' : i < (list.length * 2) / 3 ? 'B' : 'C'));
   rankTier(storeNames.filter((n) => sizes[n] && amtOf.get(n)).sort((a, b) => amtOf.get(b) / sizes[b] - amtOf.get(a) / sizes[a]));
@@ -1004,8 +1018,21 @@ function optimalDisplay(over = {}) {
     const pySize = sizes[name] || 0;
     const spaceMin = pySize ? Math.round(pySize * density) : 0; // 공간 기준 최소 진열 SKU (매장이 비어 보이지 않게)
     const recCount = Math.min(idx.size, Math.max(salesBased, spaceMin));
-    const rec = sold.slice(0, recCount).map((x) => x.sku);
-    for (const s of netRank) { if (rec.length >= recCount) break; if (!rec.includes(s)) rec.push(s); }
+    // 모든 SKU를 '이 매장에서 지금 예상 매출' 하나로 줄 세움 (팔아 본 상품 = 이 매장 예상, 안 팔아 본 상품 = 다른 매장 평균 × 이 매장 규모 × 0.7)
+    const scale = (storeFcTotal.get(name) || 0) / avgStoreFc;
+    const itemOf = new Map(items.map((x) => [x.sku, x]));
+    const expOf = (sk) => {
+      const it = itemOf.get(sk);
+      if (it && it.qty > 0) return { week: (it.fc || 0) * 7, price: it.amount / it.qty, basis: 'store' };
+      const n = netSku.get(sk);
+      if (!n || !n.qty || !n.stores.size) return { week: 0, price: 0, basis: 'none' };
+      return { week: (n.fc / n.stores.size) * 7 * scale * OPT_.newSkuFactor, price: n.amount / n.qty, basis: 'network' };
+    };
+    const isOffSeason = (sk) => hasWeeks && (season.get(typeKeyOf(sk)) || { factor: 1 }).factor <= 0.6 && !(itemOf.get(sk) && recentQty(itemOf.get(sk)) > 0);
+    const exp = new Map([...idx.keys()].map((sk) => { const e = expOf(sk); return [sk, { ...e, amt: e.week * e.price, off: isOffSeason(sk) }]; }));
+    const expRanked = [...idx.keys()].filter((sk) => exp.get(sk).amt > 0 && !exp.get(sk).off).sort((a, b) => exp.get(b).amt - exp.get(a).amt);
+    const rec = expRanked.slice(0, recCount);
+    for (const s2 of netRank) { if (rec.length >= recCount) break; if (!rec.includes(s2) && !exp.get(s2).off) rec.push(s2); }
     const recSet = new Set(rec);
     const coreSet = new Set(sold.slice(0, core).map((x) => x.sku)); // 매출 80%를 만드는 핵심 SKU → 상위 매장은 안전재고 추가
     const qtyOf = new Map(items.map((x) => [x.sku, x]));
@@ -1014,18 +1041,20 @@ function optimalDisplay(over = {}) {
       const it = qtyOf.get(s) || { qty: 0, amount: 0, fc: 0 };
       const stock = stockMap.get(name + '|' + s) || 0;
       const offSeason = hasWeeks && (season.get(typeKeyOf(s)) || { factor: 1 }).factor <= 0.6 && (it.fc || 0) * 7 < 0.5; // 비시즌·지금 안 팔림 → 최소 수량 적용 안 함
-      const recStock = recSet.has(s) ? Math.max(offSeason ? 0 : rule.min, Math.ceil((it.fc || 0) * (rule.cover + (coreSet.has(s) ? rule.safety : 0)))) : 0;
+      const dayRate = ((exp.get(s) || { week: 0 }).week) / 7; // 이 매장 예상 (안 팔아 본 상품은 다른 매장 기준 추정)
+      const recStock = recSet.has(s) ? Math.max(offSeason ? 0 : rule.min, Math.ceil(dayRate * (rule.cover + (coreSet.has(s) ? rule.safety : 0)))) : 0;
       const sf = season.get(typeKeyOf(s));
-      return { ...sku(s), qty: it.qty, amount: it.amount, recent: recentQty(it), forecastPerWeek: Math.round((it.fc || 0) * 7 * 10) / 10, season: sf ? sf.factor : 1, stock, recStock, gap: stock - recStock, rec: recSet.has(s), status: disp.get(name + '|' + s) || '' };
+      const e = exp.get(s) || { week: 0, amt: 0, basis: 'none', off: false };
+      return { ...sku(s), qty: it.qty, amount: it.amount, recent: recentQty(it), forecastPerWeek: Math.round((it.fc || 0) * 7 * 10) / 10, expWeek: Math.round(e.week * 10) / 10, expAmt: Math.round(e.amt), basis: e.basis, off: e.off, season: sf ? sf.factor : 1, stock, recStock, gap: stock - recStock, rec: recSet.has(s), status: disp.get(name + '|' + s) || '' };
     });
     const stockQty = skuRows.reduce((a, x) => a + x.stock, 0), recStockQty = skuRows.reduce((a, x) => a + x.recStock, 0);
     const offSeasonStock = hasWeeks ? skuRows.filter((x) => x.season <= 0.6).reduce((a, x) => a + x.stock, 0) : 0;
     // 매장 조사 비교: 진열 체크
     const checked = [...idx.keys()].some((s) => disp.has(name + '|' + s));
     const shown = skuRows.filter((x) => x.status === 'shown');
-    const toHang = skuRows.filter((x) => x.rec && x.status && x.status !== 'shown' && x.stock > 0).sort((a, b) => b.amount - a.amount); // 권장인데 진열 안 됨 (재고 있음)
-    const toAllocate = skuRows.filter((x) => x.rec && x.stock <= 0 && x.status !== 'shown' && (db.stock ? true : false)).sort((a, b) => b.amount - a.amount); // 권장인데 재고 없음
-    const toRemove = shown.filter((x) => !x.rec).sort((a, b) => a.amount - b.amount); // 진열 중인데 권장 밖
+    const toHang = skuRows.filter((x) => x.rec && x.status && x.status !== 'shown' && x.stock > 0).sort((a, b) => b.expAmt - a.expAmt); // 권장인데 진열 안 됨 (재고 있음) · 지금 예상 매출 큰 순
+    const toAllocate = skuRows.filter((x) => x.rec && x.stock <= 0 && x.status !== 'shown' && !x.off && (db.stock ? true : false)).sort((a, b) => b.expAmt - a.expAmt); // 권장인데 재고 없음
+    const toRemove = shown.filter((x) => !x.rec).sort((a, b) => a.expAmt - b.expAmt); // 진열 중인데 권장 밖 · 지금 예상 매출 작은 순
     // 매장 조사 비교: 상품 평가(판매 반응) vs 실제 판매 (상품 단위, 매장 안 판매 순위 3등분)
     const prodQty = new Map();
     items.forEach((x) => { const k = idx.get(x.sku); prodQty.set(k.product.id, (prodQty.get(k.product.id) || 0) + x.qty); });
