@@ -11,6 +11,11 @@
   body { background: var(--bg); }
   .rp { max-width: 920px; margin: 0 auto; padding: 20px 16px 60px; }
   .rp-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .rank-ctl { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 4px; display: flex; flex-direction: column; gap: 8px; }
+  .rank-row { display: grid; grid-template-columns: 40px 1fr; gap: 8px; align-items: start; }
+  .rank-lbl { font-size: .8rem; font-weight: 700; color: var(--muted); padding-top: 6px; }
+  .rank .chips.small { gap: 5px; }
+  .rank td:first-child { color: var(--muted); font-weight: 700; width: 40px; }
   .rp-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 10px; margin: -6px 0 12px; background: var(--bg); scrollbar-width: none; }
   .rp-tabs::-webkit-scrollbar { display: none; }
   .rp-tabs button { flex: 0 0 auto; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 8px 14px; font-size: .9rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
@@ -53,7 +58,7 @@
     body { background: #fff; }
     body * { visibility: visible !important; } /* 공용 style.css의 인쇄 숨김 규칙 해제 */
     .rp { max-width: none; padding: 0; }
-    .rp-bar, .rp-tabs { display: none; }
+    .rp-bar, .rp-tabs, .no-print { display: none !important; }
     .rp section.first { break-before: auto; }
     .rp section, .rp-cover { border: 0; padding: 0; margin: 0 0 8mm; break-inside: auto; }
     .rp section { break-before: page; }
@@ -104,6 +109,50 @@ function aiBox(x, heading, titles) {
 }
 const chipsOf = (arr) => arr.map((x) => `${x.name} ${x.n}`).join(' · ') || '-';
 
+// ---- 상품 순위: 복종 필터 · 10/20/30/전체 · 정렬 ----
+const RK_SORTS = [
+  ['reactionDesc', '👍 반응 좋은 순', (a, b) => b.avgReaction - a.avgReaction || b.goodPct - a.goodPct || b.count - a.count],
+  ['reactionAsc', '👎 반응 낮은 순', (a, b) => a.avgReaction - b.avgReaction || b.poorPct - a.poorPct || b.count - a.count],
+  ['goodDesc', '💰 잘 팔림 많은 순', (a, b) => b.goodPct - a.goodPct || b.avgReaction - a.avgReaction || b.count - a.count],
+  ['poorDesc', '📉 안 팔림 많은 순', (a, b) => b.poorPct - a.poorPct || a.avgReaction - b.avgReaction || b.count - a.count],
+  ['displayAsc', '📦 진열률 낮은 순', (a, b) => (a.displayRate ?? 999) - (b.displayRate ?? 999) || b.goodPct - a.goodPct],
+  ['displayDesc', '📦 진열률 높은 순', (a, b) => (b.displayRate ?? -1) - (a.displayRate ?? -1) || b.goodPct - a.goodPct],
+];
+const RK = { type: 'all', n: 10, sort: 'reactionDesc', min: 3 };
+try { Object.assign(RK, JSON.parse(localStorage.getItem('reportRank') || '{}')); } catch {}
+function rankingBlock(products) {
+  const box = el('div', { class: 'rank' });
+  const typeKey = (p) => `${p.line} ${p.type}`;
+  const types = [...new Set(products.map(typeKey))].sort();
+  if (RK.type !== 'all' && !types.includes(RK.type)) RK.type = 'all';
+  const draw = () => {
+    try { localStorage.setItem('reportRank', JSON.stringify(RK)); } catch {}
+    const base = products.filter((p) => p.count >= RK.min);
+    const list = base.filter((p) => RK.type === 'all' || typeKey(p) === RK.type).sort(RK_SORTS.find(([k]) => k === RK.sort)[2]);
+    const shown = RK.n ? list.slice(0, RK.n) : list;
+    const chip = (on, label, fn) => el('button', { type: 'button', class: on ? 'on' : '', onclick: () => { fn(); draw(); } }, label);
+    const sortName = RK_SORTS.find(([k]) => k === RK.sort)[1];
+    box.replaceChildren(
+      el('div', { class: 'rank-ctl no-print' },
+        el('div', { class: 'rank-row' }, el('span', { class: 'rank-lbl' }, '복종'),
+          el('div', { class: 'chips small' }, chip(RK.type === 'all', `전체 ${base.length}`, () => (RK.type = 'all')),
+            types.map((t) => chip(RK.type === t, `${t} ${base.filter((p) => typeKey(p) === t).length}`, () => (RK.type = t))))),
+        el('div', { class: 'rank-row' }, el('span', { class: 'rank-lbl' }, '순위'),
+          el('div', { class: 'chips small' }, [10, 20, 30, 0].map((n) => chip(RK.n === n, n ? `1~${n}위` : '전체', () => (RK.n = n))))),
+        el('div', { class: 'rank-row' }, el('span', { class: 'rank-lbl' }, '정렬'),
+          el('div', { class: 'chips small' }, RK_SORTS.map(([k, l]) => chip(RK.sort === k, l, () => (RK.sort = k))))),
+        el('div', { class: 'rank-row' }, el('span', { class: 'rank-lbl' }, '기준'),
+          el('div', { class: 'chips small' }, [1, 3, 5].map((m) => chip(RK.min === m, `평가 ${m}건 이상`, () => (RK.min = m)))))),
+      el('h3', {}, `${RK.type === 'all' ? '전체 복종' : RK.type} · ${sortName.replace(/^\S+\s/, '')} · ${RK.n ? `1~${Math.min(RK.n, list.length)}위` : `전체 ${list.length}개`}`,
+        el('small', { class: 'hint', style: 'font-weight:400;margin-left:6px' }, `(평가 ${RK.min}건 이상 ${list.length}개 중)`)),
+      shown.length ? table(['순위', '상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', '평가'],
+        shown.map((p, i) => [i + 1, el('span', {}, p.imageUrl ? el('img', { class: 'thumb', src: p.imageUrl, alt: '' }) : null, el('b', {}, p.code || p.name)), typeKey(p),
+          el('span', {}, bar(p.avgReaction, 5), fmt1(p.avgReaction)), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), p.count]), [0, 3, 4, 5, 6, 7])
+        : el('p', { class: 'empty' }, '조건에 맞는 상품이 없어요. 기준(평가 건수)을 낮춰 보세요.'));
+  };
+  draw();
+  return box;
+}
 function render(r) {
   const o = r.overview;
   const L = r.labels;
@@ -139,12 +188,8 @@ function render(r) {
 
   // 3. 상품 반응
   const rc = r.reaction;
-  const prodRows = (list) => list.map((p) => [el('span', {}, p.imageUrl ? el('img', { class: 'thumb', src: p.imageUrl, alt: '' }) : null, el('b', {}, p.code || p.name)), `${p.line} ${p.type}`, fmt1(p.avgReaction), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), p.count]);
-  out.push(sec('3', '상품별 고객 반응', '매장 직원이 판매하면서 느낀 고객 반응(5점)과 판매 반응이에요. 평가 3건 이상인 상품만 순위에 넣었어요.',
-    el('h3', {}, '👍 반응 좋은 상품 TOP 10'),
-    rc.top.length ? table(['상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', '평가'], prodRows(rc.top), [2, 3, 4, 5, 6]) : el('p', { class: 'empty' }, '데이터가 부족해요.'),
-    el('h3', {}, '👎 반응 낮은 상품 TOP 10'),
-    rc.bottom.length ? table(['상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', '평가'], prodRows(rc.bottom), [2, 3, 4, 5, 6]) : el('p', { class: 'empty' }, '데이터가 부족해요.'),
+  out.push(sec('3', '상품별 고객 반응', '매장 직원이 판매하면서 느낀 고객 반응(5점)과 판매 반응이에요. 복종·순위 범위·정렬을 골라 보세요. 고른 그대로 인쇄돼요.',
+    rankingBlock(rc.products),
     el('h3', {}, '복종별 반응'),
     table(['복종', '상품', '평가', '평균 반응', '잘 팔림', '안 팔림'], rc.byType.map((t) => [`${t.line} ${t.type}`, t.products, t.evals, el('span', {}, bar(t.avgReaction, 5), fmt1(t.avgReaction)), pct(t.goodPct), pct(t.poorPct)]), [1, 2, 3, 4, 5]),
     el('div', { class: 'two' },

@@ -721,7 +721,7 @@ function buildReport() {
       }),
       flagged: pr.stores.filter((x) => x.flags.length).map((x) => ({ name: x.name, flags: x.flags.map((f) => f.label) })),
     },
-    reaction: { top: rank(-1), bottom: rank(1), byType, sellReasons: reasons('sellReasons'), noBuyReasons: reasons('noBuyReasons'), pros: countBy(allDone.map((e) => e.pros || [])).slice(0, 8), cons: countBy(allDone.map((e) => e.cons || [])).slice(0, 8) },
+    reaction: { top: rank(-1), bottom: rank(1), products: prods.map(pick), byType, sellReasons: reasons('sellReasons'), noBuyReasons: reasons('noBuyReasons'), pros: countBy(allDone.map((e) => e.pros || [])).slice(0, 8), cons: countBy(allDone.map((e) => e.cons || [])).slice(0, 8) },
     display: {
       totals: da.totals, byType: da.byType.map((t) => ({ line: t.line, type: t.type, rate: t.rate, shown: t.shown, stock: t.stock, none: t.none, notReceived: t.notReceived })),
       groups: ['expand', 'star', 'review'].map((k) => ({ key: k, items: da.products.filter((p) => p.group === k).map((p) => ({ code: p.code, name: p.name, type: p.type, displayRate: p.displayRate, avgReaction: p.avgReaction, goodPct: p.goodPct })) })),
