@@ -665,6 +665,14 @@ test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체
   await fetch(base + '/api/admin/production/import', { method: 'POST', headers: admin, body: JSON.stringify({ fileName: 'p.csv', rows: [['STKA1', '', 80, 20]] }) });
   sp = (await (await fetch(base + '/api/admin/summary', { headers: admin })).json()).products.find((x) => x.code === 'STKA1');
   assert.deepStrictEqual([sp.salesQty, sp.sellThrough], [20, 25]);
+  // 🎯 판매율 진단: 판매현황표(입고·주별 판매) → 소진 전망 + 진열률 → 액션
+  assert.strictEqual((await (await fetch(base + '/api/admin/sell-review', { headers: admin })).json()).ready, false); // 주별 판매 없음
+  await fetch(base + '/api/admin/production/import', { method: 'POST', headers: admin, body: JSON.stringify({ fileName: 'r.xlsx', basis: '기획수량', weekLabels: ['Nov 1st 11/02~11/08', 'Nov 2nd 11/09~11/15', 'Nov 3rd 11/16~11/22', 'Nov 4th 11/23~11/29', 'Feb 4th 2/22~2/28'], rows: [['STKA1', '', 80, 20, 80, [2, 2, 2, 0, 0]]] }) });
+  const sv = await (await fetch(base + '/api/admin/sell-review', { headers: admin })).json();
+  const k = sv.skus[0];
+  assert.deepStrictEqual([sv.ready, sv.lastWeek, sv.seasonEndLabel, sv.skus.length, k.st, k.rem, k.rec, k.cover, k.displayRate, k.status], [true, '11/16~11/22', '2/22~2/28', 1, 25, 60, 2, 30, 50, 'slow']);
+  assert.ok(sv.weeksLeft >= 13 && sv.weeksLeft <= 15 && k.leftover === 60 - 2 * sv.weeksLeft && k.action.includes('진열 부족'));
+  assert.strictEqual(sv.groups.length, 1);
   await fetch(base + '/api/admin/sales', { method: 'DELETE', headers: admin });
   await fetch(base + '/api/admin/stock', { method: 'DELETE', headers: admin });
   for (const st of ['롯데중동', '롯데잠실']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });

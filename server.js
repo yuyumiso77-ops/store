@@ -804,12 +804,25 @@ function importProduction(b) {
   const byCode = new Map(db.products.filter((p) => p.code).map((p) => [String(p.code).toUpperCase().trim(), p]));
   const products = {};
   let matched = 0, skipped = 0, hasSales = false;
+  const mp = erpMapper({});
+  const skus = {};
+  const weekLabels = Array.isArray(b.weekLabels) ? b.weekLabels.slice(0, 60).map((x) => cleanText(x, 40)) : null;
   for (const r of Array.isArray(b.rows) ? b.rows : []) {
     if (!Array.isArray(r)) { skipped++; continue; }
-    const [code, , prod, sales] = r;
+    const [code, color, prod, sales, recv, weeks] = r;
     const p = byCode.get(String(code || '').toUpperCase().trim());
     const q = Number(prod);
     if (!p || !(q >= 0)) { skipped++; continue; }
+    // SKU(품번×컬러) 단위: 기획·입고·판매·주별 판매 (판매율 진단용)
+    const sku = mp.sku(code, color);
+    if (sku) {
+      const k = skus[sku] || { plan: 0, recv: 0, sold: 0, w: [] };
+      k.plan += q;
+      if (recv != null && recv !== '' && !Number.isNaN(Number(recv))) k.recv += Number(recv); else k.recv = null;
+      k.sold += Number(sales) || 0;
+      if (Array.isArray(weeks) && weekLabels) weeks.slice(0, weekLabels.length).forEach((v, i) => (k.w[i] = (k.w[i] || 0) + (Number(v) || 0)));
+      skus[sku] = k;
+    }
     const a = products[p.id] || { prod: 0, sales: null };
     a.prod += q;
     if (sales != null && sales !== '' && !Number.isNaN(Number(sales))) { a.sales = (a.sales || 0) + Number(sales); hasSales = true; }
@@ -817,9 +830,76 @@ function importProduction(b) {
     matched++;
   }
   if (!matched) return { error: '조사 상품의 품번과 맞는 생산수량이 없어요. 첫 줄에 품번(상품코드)·생산수량 열이 있는지 확인해 주세요.' };
-  db.production = { fileName: cleanText(b.fileName, 120), basis: cleanText(b.basis, 20) || '생산수량', uploadedAt: new Date().toISOString(), products, hasSales };
+  db.production = { fileName: cleanText(b.fileName, 120), basis: cleanText(b.basis, 20) || '생산수량', uploadedAt: new Date().toISOString(), products, hasSales, skus, weekLabels: weekLabels && Object.values(skus).some((k) => k.w.length) ? weekLabels : null };
   saveDb();
   return { ok: true, products: Object.keys(products).length, rows: matched, skipped, hasSales };
+}
+// 🎯 판매율 진단: 기획 대비 판매율 + 남은 재고를 시즌 끝까지 팔 수 있는지 + 매장 진열률 → SKU별 진열 액션
+function sellReview() {
+  const pr = db.production;
+  if (!pr || !pr.skus || !pr.weekLabels) return { ready: false };
+  const labels = pr.weekLabels;
+  const up = new Date(pr.uploadedAt);
+  // 주 라벨 'Nov 3rd11/16~11/22' → 그 주의 마지막 날
+  const y0 = up.getUTCMonth() >= 5 ? up.getUTCFullYear() : up.getUTCFullYear() - 1; // 시즌 시작 연도 (6월~)
+  const endOf = (l) => { const m = String(l).match(/(\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})/); if (!m) return null; const mo = +m[3]; return Date.UTC(mo >= 6 ? y0 : y0 + 1, mo - 1, +m[4]); };
+  const ends = labels.map(endOf);
+  const short = (l) => { const m = String(l || '').match(/\d{1,2}\/\d{1,2}\s*~\s*\d{1,2}\/\d{1,2}/); return m ? m[0].replace(/\s+/g, '') : l || null; };
+  const all = Object.values(pr.skus);
+  let L = -1; // 판매가 있는 마지막 주
+  labels.forEach((_, i) => { if (all.some((k) => k.w[i])) L = i; });
+  if (L < 0) return { ready: false };
+  const today = Date.parse(new Date().toISOString().slice(0, 10));
+  const lastFull = ends[L] != null && ends[L] >= Math.min(today, Date.parse(pr.uploadedAt.slice(0, 10))) ? L - 1 : L; // 덜 끝난 주는 빼고
+  const recentIdx = [lastFull, lastFull - 1, lastFull - 2].filter((i) => i >= 0);
+  const seasonEnd = ends[labels.length - 1];
+  const baseDay = ends[L] || today;
+  const weeksLeft = seasonEnd ? Math.max(1, Math.round((seasonEnd - baseDay) / (7 * 864e5))) : Math.max(1, labels.length - 1 - L);
+  const disp = new Map(displayReport().skus.map((x) => [x.sku, x]));
+  const idx = skuIndex();
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const skus = [];
+  Object.entries(pr.skus).forEach(([sku, k]) => {
+    const ix = idx.get(sku);
+    if (!ix) return;
+    const p = ix.product, d = disp.get(sku) || {};
+    const recv = k.recv == null ? k.plan : k.recv;
+    const rem = Math.max(0, recv - k.sold);
+    const rec = Math.max(0, r1(recentIdx.reduce((a, i) => a + (k.w[i] || 0), 0) / (recentIdx.length || 1))); // 반품이 많아 음수면 0
+    const cover = rec > 0 ? r1(rem / rec) : null;
+    const leftover = Math.max(0, Math.round(rem - Math.max(0, rec) * weeksLeft));
+    const rate = d.rate == null ? null : d.rate;
+    let status, action;
+    if (rem <= 0) { status = 'sold'; action = '완판 — 진열에서 빼고 다른 SKU로 채우기'; }
+    else if (rec <= 0.3) { status = 'stall'; action = '최근 판매 거의 없음 — 진열 빼고 잘 팔리는 SKU로 교체, 시즌 아웃 검토'; }
+    else if (cover < 4) { status = 'hot'; action = '품절 임박 — 진열 유지, 잘 팔리는 매장 위주로 재고 몰아주기'; }
+    else if (cover > weeksLeft) { status = 'slow'; action = rate != null && rate < 70 ? `진열 부족(진열률 ${rate}%) — 걸어서 노출부터 늘리기` : rate == null ? '시즌 내 소진 어려움 — 진열 체크 결과 확인 필요' : '진열은 충분 — 코디 제안·행사로 판매 촉진'; }
+    else { status = 'ok'; action = rate != null && rate < 70 ? `시즌 내 소진 가능, 진열률 ${rate}% — 더 걸면 추가 판매 여지` : '적정 — 지금 진열 유지'; }
+    skus.push({ sku, productId: p.id, code: p.code || '', name: p.name, color: ix.color, gender: lineOf(p), type: typeOf(p), imageUrl: imageUrl(p),
+      plan: k.plan, recv, sold: k.sold, st: k.plan ? r1((k.sold / k.plan) * 100) : null, rem, rec, cover, leftover,
+      w: k.w.slice(0, L + 1), displayRate: rate, checked: d.checked || 0, status, action });
+  });
+  const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);
+  const groupBy = (f) => {
+    const m = new Map();
+    skus.forEach((x) => { const g = f(x); m.has(g) || m.set(g, []); m.get(g).push(x); });
+    return [...m].map(([g, xs]) => {
+      const plan = sum(xs, (x) => x.plan), sold = sum(xs, (x) => x.sold), rem = sum(xs, (x) => x.rem), rec = r1(sum(xs, (x) => x.rec));
+      const dr = xs.filter((x) => x.displayRate != null);
+      return { group: g, skus: xs.length, plan, sold, st: plan ? r1((sold / plan) * 100) : null, rem, rec, cover: rec > 0 ? r1(rem / rec) : null, leftover: sum(xs, (x) => x.leftover),
+        displayRate: dr.length ? Math.round(sum(dr, (x) => x.displayRate) / dr.length) : null, hot: xs.filter((x) => x.status === 'hot').length, slow: xs.filter((x) => x.status === 'slow' || x.status === 'stall').length };
+    }).sort((a, b) => (b.st || 0) - (a.st || 0));
+  };
+  const plan = sum(skus, (x) => x.plan), sold = sum(skus, (x) => x.sold);
+  return {
+    ready: true, fileName: pr.fileName, basis: (pr.basis || '기획수량').replace(/수량$/, ''),
+    lastWeek: short(labels[L]), lastFullWeek: short(labels[lastFull]), recentWeeks: recentIdx.length, weeksLeft, seasonEndLabel: short(labels[labels.length - 1]),
+    weekLabels: labels.slice(0, L + 1).map(short),
+    totals: { plan, sold, st: plan ? r1((sold / plan) * 100) : null, rem: sum(skus, (x) => x.rem), rec: r1(sum(skus, (x) => x.rec)), leftover: sum(skus, (x) => x.leftover) },
+    counts: ['hot', 'ok', 'slow', 'stall', 'sold'].reduce((o, s) => ((o[s] = skus.filter((x) => x.status === s).length), o), {}),
+    groups: groupBy((x) => `${x.gender} ${x.type}`.trim()),
+    skus: skus.sort((a, b) => b.leftover - a.leftover),
+  };
 }
 // 상품별 실판매 합계 (판매 자료가 있을 때)
 function productSales() {
@@ -1413,6 +1493,7 @@ async function handle(req, res) {
     if (m === 'GET' && p === '/api/admin/display-analysis') return send(res, 200, displayAnalysis());
     if (m === 'GET' && p === '/api/admin/space-efficiency') return send(res, 200, spaceEfficiency());
     if (m === 'GET' && p === '/api/admin/stock-analysis') return send(res, 200, stockAnalysis());
+    if (m === 'GET' && p === '/api/admin/sell-review') return send(res, 200, sellReview());
     if (m === 'POST' && p === '/api/admin/stock/import') {
       let b;
       try { b = JSON.parse((await readRaw(req, 8 * 1024 * 1024)).toString('utf8')); } catch { return send(res, 400, { error: '재고 데이터를 읽지 못했어요 (너무 크거나 형식 오류).' }); }

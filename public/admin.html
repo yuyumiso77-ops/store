@@ -68,10 +68,12 @@
       </div>
     </div>
     <div class="chips bold-chips" id="dView" style="margin-bottom:12px">
+      <button type="button" data-v="sell">🎯 판매율 진단</button>
       <button type="button" data-v="optimal">🧮 적정 진열·재고</button>
       <button type="button" data-v="analysis">📈 분석</button>
       <button type="button" data-v="list">📋 SKU 목록</button>
     </div>
+    <div id="dSell"></div>
     <div id="dOpt"></div>
     <div id="dAnalysis"></div>
     <div id="dListView">
@@ -677,7 +679,7 @@ const PROD_COLS = { code: ['품번', '상품코드', '스타일', 'style', 'styl
 const normHead = (x) => String(x == null ? '' : x).replace(/\s+/g, '').toLowerCase();
 let PROD_BASIS = '생산';
 const basisWord = (pi) => (PROD_BASIS = (pi && pi.basis ? pi.basis.replace(/수량$/, '') : '생산'));
-function prodBox(data) {
+function prodUploader(label, after) {
   const file = el('input', { type: 'file', accept: '.xlsx,.csv', hidden: '' });
   const result = el('p', { class: 'hint', style: 'margin:6px 0 0' });
   file.onchange = async () => {
@@ -694,15 +696,23 @@ function prodBox(data) {
       const find = (names) => { for (const n of names) { const i = head.indexOf(n); if (i >= 0) return i; } return -1; }; // 앞에 적힌 이름 우선 (기획수량 > 생산수량 > 입고수량 > …)
       const c = { code: find(PROD_COLS.code), color: find(PROD_COLS.color), prod: find(PROD_COLS.prod), sales: find(PROD_COLS.sales) };
       if (c.code < 0) throw new Error('첫 줄에 품번(상품코드) 열이 필요해요.');
-      const out = rows.slice(hi + 1).filter((r) => r && r[c.code]).map((r) => [String(r[c.code]).trim(), c.color >= 0 ? r[c.color] : '', Number(r[c.prod]) || 0, c.sales >= 0 && r[c.sales] !== '' && r[c.sales] != null ? Number(r[c.sales]) : null]);
+      const recvCol = head.indexOf('입고수량');
+      // 주별 판매 열 (판매현황표의 'Jun 3rd 6/15~6/21' …) → 판매율 진단에 사용
+      const wcols = rows[hi].map((x, i) => [i, String(x == null ? '' : x).replace(/\s+/g, ' ').trim()]).filter(([, x]) => /\d{1,2}\/\d{1,2}\s*~\s*\d{1,2}\/\d{1,2}/.test(x));
+      const out = rows.slice(hi + 1).filter((r) => r && r[c.code]).map((r) => [String(r[c.code]).trim(), c.color >= 0 ? r[c.color] : '', Number(r[c.prod]) || 0, c.sales >= 0 && r[c.sales] !== '' && r[c.sales] != null ? Number(r[c.sales]) : null,
+        recvCol >= 0 && r[recvCol] !== '' && r[recvCol] != null ? Number(r[recvCol]) : null, wcols.length ? wcols.map(([i]) => Number(r[i]) || 0) : null]);
       const basis = String(rows[hi][c.prod] || '').replace(/\s+/g, '');
-      const r = await api('/api/admin/production/import', { method: 'POST', body: JSON.stringify({ fileName: f.name, basis, rows: out }) });
-      result.textContent = `✅ ${r.products}개 상품의 ${basis || '생산수량'}을 연결했어요.` + (r.hasSales ? ' (파일의 판매수량으로 판매율 계산)' : ' (판매수량은 판매 자료 기준)') + (r.skipped ? ` · 품번이 안 맞아 건너뛴 줄 ${r.skipped}개` : '');
-      load();
+      const r = await api('/api/admin/production/import', { method: 'POST', body: JSON.stringify({ fileName: f.name, basis, rows: out, weekLabels: wcols.length ? wcols.map(([, x]) => x) : null }) });
+      result.textContent = `✅ ${r.products}개 상품의 ${basis || '생산수량'}을 연결했어요.` + (r.hasSales ? ' (파일의 판매수량으로 판매율 계산)' : ' (판매수량은 판매 자료 기준)') + (wcols.length ? ` · 주별 판매 ${wcols.length}주 → 🎯 판매율 진단에 반영` : '') + (r.skipped ? ` · 품번이 안 맞아 건너뛴 줄 ${r.skipped}개` : '');
+      after();
     } catch (ex) { result.textContent = '❌ ' + ex.message; }
   };
+  return { btn: el('label', { class: 'btn accent', style: 'cursor:pointer' }, file, label), result };
+}
+function prodBox(data) {
   const pi = data.productionInfo, si = data.salesInfo;
   const B = basisWord(pi);
+  const upl = prodUploader(pi ? `📁 새 ${B}수량 파일` : '📁 기획·생산수량 올리기', load);
   const ps = data.products.filter((p) => p.active);
   const prod = ps.reduce((a, p) => a + (p.prodQty || 0), 0), sales = ps.filter((p) => p.prodQty).reduce((a, p) => a + (p.salesQty || 0), 0);
   return el('div', { class: 'card' },
@@ -711,9 +721,9 @@ function prodBox(data) {
         el('p', { class: 'hint', style: 'margin:0;line-height:1.6' },
           (pi ? `${B}수량: ${pi.fileName || ''} (${pi.products}개 상품)` : '생산수량 자료가 아직 없어요. 품번·생산수량(또는 입고수량) 열이 있는 엑셀을 올려 주세요. 26FW 판매현황표(Style NO.·Color·입고수량·전체 판매량)도 그대로 올리면 돼요.') +
           ` · 판매수량: ${pi && pi.hasSales ? '올린 파일의 판매량(전체)' : si ? `판매 자료 (${si.from}~${si.to}, 조사 매장 합계)` : '판매 자료 없음'}`)),
-      el('div', { class: 'actions' }, el('label', { class: 'btn accent', style: 'cursor:pointer' }, file, pi ? `📁 새 ${B}수량 파일` : '📁 기획·생산수량 올리기'))),
+      el('div', { class: 'actions' }, upl.btn)),
     pi ? el('div', { class: 'stats', style: 'margin-top:12px' }, stat(prod.toLocaleString() + '장', `전체 ${B}수량`), stat(sales.toLocaleString() + '장', '전체 판매수량'), stat(prod ? Math.round((sales / prod) * 1000) / 10 + '%' : '-', `판매율 (판매 ÷ ${B})`)) : null,
-    result);
+    upl.result);
 }
 async function load() {
   const data = await api('/api/admin/summary');
@@ -996,7 +1006,7 @@ async function loadDisplayTab() {
   DREP = await api('/api/admin/display');
   renderDisplayTab();
   let v = 'optimal';
-  try { v = localStorage.getItem('dView3') || 'optimal'; } catch {}
+  try { v = localStorage.getItem('dView4') || 'sell'; } catch {}
   setDView(v);
 }
 function renderDisplayTab() {
@@ -1141,6 +1151,71 @@ function sizeUploader() {
   };
   return { btn: el('label', { class: 'btn accent', style: 'cursor:pointer' }, file, '📁 평수 엑셀 올리기'), result };
 }
+// 🎯 판매율 진단: 기획 대비 판매율 · 남은 재고 · 최근 주간 판매 → 시즌 끝까지 팔 수 있나 + 진열률 → SKU별 진열 액션
+const SELL_ST = { hot: ['🔥 품절 임박', 'good'], ok: ['✅ 적정', ''], slow: ['🧊 소진 어려움', 'gap'], stall: ['🌙 판매 정체', 'gap'], sold: ['완판', ''] };
+let SELL_F = '', SELL_G = '';
+async function loadSell() {
+  $('dSell').replaceChildren(el('p', { class: 'hint' }, '계산 중…'));
+  const o = await api('/api/admin/sell-review');
+  const upl = prodUploader(o.ready ? '📁 새 판매현황표' : '📁 판매현황표 올리기', loadSell);
+  const dataCard = el('div', { class: 'card' },
+    el('div', { class: 'product-head' },
+      el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '🎯 판매율 진단 — 남은 재고를 시즌 안에 팔 수 있나?'),
+        el('p', { class: 'hint', style: 'margin:0;line-height:1.6' }, o.ready
+          ? `${o.fileName || ''} · 판매 반영 ~${o.lastWeek} · 최근 주간 판매 = ${o.lastFullWeek || ''} 주까지 최근 ${o.recentWeeks}주 평균 · 시즌 끝(${o.seasonEndLabel})까지 약 ${o.weeksLeft}주`
+          : 'ERP 26FW 판매현황표(Style NO. · Color · 기획수량 · 입고수량 · 전체 판매량 · 주별 판매)를 그대로 올려 주세요. 이미 올렸다면 주별 판매까지 읽도록 한 번 더 올려 주세요.')),
+      el('div', { class: 'actions' }, upl.btn)), upl.result);
+  if (!o.ready) { $('dSell').replaceChildren(dataCard); return; }
+  const t = o.totals, B = o.basis;
+  const n = (v) => (v == null ? '-' : Math.round(v).toLocaleString());
+  const wk = (v) => (v == null ? '-' : v > 99 ? '99주+' : v + '주');
+  const stats = el('div', { class: 'card' }, el('div', { class: 'stats' },
+    stat(t.st + '%', `판매율 (판매 ${n(t.sold)} ÷ ${B} ${n(t.plan)})`),
+    stat(n(t.rem) + '장', '남은 재고 (입고 − 판매)'),
+    stat(n(t.rec) + '장', '최근 주간 판매'),
+    stat(wk(t.rec ? Math.round(t.rem / t.rec) : null), `소진까지 (남은 시즌 ${o.weeksLeft}주)`),
+    stat(n(t.leftover) + '장', '지금 속도면 시즌 끝 남는 재고')),
+    el('p', { class: 'hint', style: 'margin:10px 0 0;line-height:1.7' },
+      '판정: 🔥 품절 임박 = 4주 안에 소진 · ✅ 적정 = 시즌 안에 소진 · 🧊 소진 어려움 = 지금 속도로는 시즌 끝에 남음 · 🌙 판매 정체 = 최근 주 판매 거의 없음. ',
+      '진열률 = 매장 진열 체크에서 걸려 있는 매장 비율(70% 미만이면 노출 부족). 다운처럼 12~1월에 판매가 늘어나는 복종은 실제 소진이 더 빠를 수 있어요.'));
+  // 복종별
+  const gTable = el('table', { class: 'stock-table' }, el('tr', {}, ['복종', 'SKU', `${B}`, '판매', '판매율', '남은 재고', '주간 판매', '소진까지', '시즌 끝 잔량', '평균 진열률', '품절 임박', '소진 어려움·정체'].map((h, i) => el('th', { class: i ? 'n' : '' }, h))));
+  o.groups.forEach((g) => {
+    const tr = el('tr', { class: 'opt-row' + (SELL_G === g.group ? ' open' : ''), style: 'cursor:pointer', title: '누르면 아래 SKU 목록을 이 복종으로 걸러요' },
+      el('td', {}, el('b', {}, g.group)), el('td', { class: 'n' }, g.skus), el('td', { class: 'n' }, n(g.plan)), el('td', { class: 'n' }, n(g.sold)),
+      el('td', { class: 'n' }, el('b', {}, g.st + '%')), el('td', { class: 'n' }, n(g.rem)), el('td', { class: 'n' }, n(g.rec)),
+      el('td', { class: 'n' }, el('span', { class: g.cover == null || g.cover > o.weeksLeft ? 'over' : '' }, wk(g.cover == null ? null : Math.round(g.cover)))),
+      el('td', { class: 'n' }, n(g.leftover)), el('td', { class: 'n' }, g.displayRate == null ? '-' : g.displayRate + '%'),
+      el('td', { class: 'n' }, g.hot || '-'), el('td', { class: 'n' }, g.slow || '-'));
+    tr.onclick = () => { SELL_G = SELL_G === g.group ? '' : g.group; draw(); };
+    gTable.append(tr);
+  });
+  const gCard = el('div', { class: 'card' }, el('h2', { style: 'margin:0 0 8px' }, '복종별 판매율 · 소진 전망'), el('div', { class: 'tw' }, gTable));
+  const listBox = el('div');
+  const spark = (w) => { const last = w.slice(-12); const mx = Math.max(1, ...last); return el('span', { class: 'spark', title: o.weekLabels.slice(-last.length).map((l, i) => `${l}: ${last[i]}장`).join('\n') }, last.map((v, i) => el('i', { class: i >= last.length - 3 ? 'r' : '', style: `height:${Math.max(4, (v / mx) * 100)}%` }))); };
+  const draw = () => {
+    gTable.querySelectorAll('tr.opt-row').forEach((tr, i) => tr.classList.toggle('open', o.groups[i].group === SELL_G));
+    const base = o.skus.filter((x) => !SELL_G || `${x.gender} ${x.type}`.trim() === SELL_G);
+    const chips = el('div', { class: 'chips bold-chips', style: 'margin-bottom:10px' }, ['', 'hot', 'ok', 'slow', 'stall', 'sold'].filter((k) => !k || base.some((x) => x.status === k)).map((k) =>
+      el('button', { type: 'button', class: SELL_F === k ? 'on' : '', onclick: () => { SELL_F = k; draw(); } }, `${k ? SELL_ST[k][0] : '전체'} ${base.filter((x) => !k || x.status === k).length}`)));
+    const xs = base.filter((x) => !SELL_F || x.status === SELL_F);
+    const tb = el('table', { class: 'stock-table' }, el('tr', {}, ['SKU', '판매율', '남은 재고', '최근 주별 판매', '주간', '소진까지', '시즌 끝 잔량', '진열률', '판정 · 진열 액션'].map((h, i) => el('th', { class: i && i < 8 ? 'n' : '' }, h))));
+    xs.forEach((x) => tb.append(el('tr', {},
+      el('td', {}, el('div', { style: 'display:flex;gap:8px;align-items:center' }, x.imageUrl ? el('img', { src: x.imageUrl, alt: '', style: 'width:36px;height:36px;object-fit:cover;border-radius:6px' }) : null,
+        el('div', {}, el('b', {}, `${x.code} ${x.color}`), el('div', { class: 'hint', style: 'font-size:.75rem' }, `${x.name}`)))),
+      el('td', { class: 'n' }, el('b', {}, x.st == null ? '-' : x.st + '%'), el('div', { class: 'hint', style: 'font-size:.72rem' }, `${n(x.sold)} / ${n(x.plan)}`)),
+      el('td', { class: 'n' }, n(x.rem)), el('td', { class: 'n' }, spark(x.w)), el('td', { class: 'n' }, x.rec),
+      el('td', { class: 'n' }, el('span', { class: x.cover == null || x.cover > o.weeksLeft ? 'over' : x.cover < 4 ? 'short' : '' }, wk(x.cover == null ? null : Math.round(x.cover)))),
+      el('td', { class: 'n' }, n(x.leftover)),
+      el('td', { class: 'n' }, x.displayRate == null ? el('span', { class: 'hint' }, '미체크') : el('span', { class: x.displayRate < 70 ? 'short' : '' }, x.displayRate + '%')),
+      el('td', { style: 'white-space:normal;min-width:240px' }, el('span', { class: 'tag ' + SELL_ST[x.status][1] }, SELL_ST[x.status][0]), el('div', { style: 'font-size:.8rem;margin-top:3px;line-height:1.4' }, x.action)))));
+    listBox.replaceChildren(el('div', { class: 'card' },
+      el('h2', { style: 'margin:0 0 8px' }, `SKU별 진열 액션${SELL_G ? ' · ' + SELL_G : ''}`, el('small', { class: 'hint', style: 'font-weight:400;margin-left:8px' }, '시즌 끝 잔량이 많은 순')),
+      chips, xs.length ? el('div', { class: 'tw' }, tb) : el('p', { class: 'hint' }, '해당하는 SKU가 없어요.')));
+  };
+  draw();
+  $('dSell').replaceChildren(dataCard, stats, gCard, listBox);
+}
 async function loadOptimal() {
   $('dOpt').replaceChildren(el('p', { class: 'hint' }, '계산 중…'));
   const o = await api('/api/admin/optimal-display' + optQs());
@@ -1265,12 +1340,14 @@ function optDetail(s, o) {
         el('ul', { class: 'opt-list' }, d.evalMiss.map((x) => el('li', {}, el('b', {}, x.code), ` — 매장 평가 '${{ good: '잘 팔림', normal: '보통', poor: '안 팔림' }[x.said]}' · 실제 판매 ${x.qty}개 (${{ good: '상위', normal: '중위', poor: '하위' }[x.actual]})`)))) : null));
 }
 function setDView(v) {
-  DVIEW = ['list', 'optimal'].includes(v) ? v : 'analysis';
+  DVIEW = ['list', 'optimal', 'sell'].includes(v) ? v : 'analysis';
   $('dView').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === DVIEW));
   $('dAnalysis').hidden = DVIEW !== 'analysis';
   $('dOpt').hidden = DVIEW !== 'optimal';
+  $('dSell').hidden = DVIEW !== 'sell';
+  if (DVIEW === 'sell') loadSell();
   $('dListView').hidden = DVIEW !== 'list';
-  try { localStorage.setItem('dView3', DVIEW); } catch {}
+  try { localStorage.setItem('dView4', DVIEW); } catch {}
   if (DVIEW === 'analysis') loadDisplayAnalysis();
   if (DVIEW === 'optimal') loadOptimal();
 }
