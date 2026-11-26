@@ -8,77 +8,95 @@
 <link rel="stylesheet" href="/style.css">
 <link rel="icon" type="image/png" href="/favicon.png">
 <style>
-  body { background: var(--bg); }
-  .rp { max-width: 920px; margin: 0 auto; padding: 20px 16px 60px; }
-  .rp-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
-  .rank-ctl { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 4px; display: flex; flex-direction: column; gap: 8px; }
-  .rank-row { display: grid; grid-template-columns: 40px 1fr; gap: 8px; align-items: start; }
-  .rank-lbl { font-size: .8rem; font-weight: 700; color: var(--muted); padding-top: 6px; }
-  .rank .chips.small { gap: 5px; }
-  .rank td:first-child { color: var(--muted); font-weight: 700; width: 40px; }
-  .rp-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 10px; margin: -6px 0 12px; background: var(--bg); scrollbar-width: none; }
+  /* 매출 현황 대시보드와 같은 톤: 흰 바탕 · 밑줄 탭 · 흰 카드 · 파란 막대 */
+  :root { --bg: #ffffff; --card: #ffffff; --text: #111827; --muted: #6b7280; --line: #e5e7eb; --accent: #2b5fcf; --accent-soft: #f6f7f9; --s1: #2b5fcf; --danger: #d14343; }
+  body { background: #fff; color: var(--text); }
+  .rp { max-width: 1240px; margin: 0 auto; padding: 40px 24px 80px; }
+  .rp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
+  .rp-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+  .rp .btn, .rp-bar .btn { background: #fff; border: 1px solid var(--line); color: var(--text); border-radius: 10px; padding: 9px 16px; font-size: .92rem; font-weight: 500; box-shadow: none; }
+  .rp .btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .rp-cover { margin: 0; }
+  .rp-cover img { height: 18px; display: block; margin-bottom: 14px; opacity: .85; }
+  .rp-cover h1 { font-size: 2.1rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 10px; }
+  .rp-cover .sub-title { color: var(--accent); margin-left: 4px; }
+  .rp-cover .meta { color: var(--muted); font-size: .95rem; }
+  .rp-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 4px; overflow-x: auto; background: #fff; border-bottom: 1px solid var(--line); margin: 0 0 36px; scrollbar-width: none; }
   .rp-tabs::-webkit-scrollbar { display: none; }
-  .rp-tabs button { flex: 0 0 auto; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 8px 14px; font-size: .9rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
-  .rp-tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .rp-cover .sub-title { display: inline-block; margin-left: 6px; color: var(--accent); }
-  .rp-cover { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 26px 26px 22px; margin-bottom: 18px; }
-  .rp-cover img { height: 26px; display: block; margin-bottom: 18px; }
-  .rp-cover h1 { font-size: 1.7rem; margin: 0 0 6px; }
-  .rp-cover .meta { color: var(--muted); font-size: .9rem; }
-  .rp section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; margin-bottom: 18px; }
-  .rp h2 { font-size: 1.2rem; margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; }
-  .rp h2 .no { color: var(--accent); font-weight: 800; }
-  .rp h3 { font-size: 1rem; margin: 18px 0 8px; }
-  .rp .lead { color: var(--muted); font-size: .88rem; margin: 0 0 14px; line-height: 1.6; }
-  .rp .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-  .rp .kpi { background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; }
-  .rp .kpi b { font-size: 1.45rem; display: block; }
-  .rp .kpi span { font-size: .8rem; color: var(--muted); }
-  .rp table { width: 100%; border-collapse: collapse; font-size: .86rem; }
-  .rp th, .rp td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  .rp th { color: var(--muted); font-weight: 600; font-size: .8rem; white-space: nowrap; }
+  .rp-tabs button { flex: 0 0 auto; border: 0; background: none; color: #4b5563; padding: 16px 22px 14px; font-size: 1.02rem; font-weight: 600; cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .rp-tabs button:hover { color: var(--text); }
+  .rp-tabs button.on { color: var(--text); font-weight: 700; border-bottom-color: var(--text); }
+  .rp section { margin: 0 0 56px; }
+  .rp h2 { font-size: 1.55rem; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 8px; }
+  .rp h2 .no { display: none; }
+  .rp h3 { font-size: 1.05rem; font-weight: 700; margin: 30px 0 12px; }
+  .rp .lead { color: var(--muted); font-size: .95rem; margin: 0 0 22px; line-height: 1.6; }
+  .rp .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+  .rp .kpi { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; display: flex; flex-direction: column; gap: 10px; }
+  .rp .kpi span { font-size: .92rem; color: var(--muted); order: 1; }
+  .rp .kpi b { font-size: 1.6rem; font-weight: 600; letter-spacing: -0.01em; order: 2; }
+  .rp table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  .rp th, .rp td { text-align: left; padding: 11px 10px; border-bottom: 1px solid #eef0f3; vertical-align: middle; }
+  .rp th { color: var(--muted); font-weight: 500; font-size: .85rem; white-space: nowrap; border-bottom-color: var(--line); }
+  .rp tr:hover td { background: #fafbfc; }
   .rp td.n, .rp th.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .rp .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 18px; }
-  .rp .minibar { display: inline-block; width: 70px; height: 7px; background: var(--line); border-radius: 4px; overflow: hidden; vertical-align: middle; margin-right: 6px; }
-  .rp .minibar i { display: block; height: 100%; background: var(--s1); }
-  .rp .pill { display: inline-block; font-size: .72rem; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-  .rp .pill.good { border-color: #2f8f5b; color: #2f8f5b; } .rp .pill.bad { border-color: var(--danger); color: var(--danger); }
-  .rp .ai-box { background: var(--accent-soft); border-radius: 12px; padding: 14px 16px; margin-top: 14px; }
+  .rp .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 32px; }
+  .rp .minibar { display: inline-block; width: 90px; height: 8px; background: #eef1f6; border-radius: 2px; overflow: hidden; vertical-align: middle; margin-right: 8px; }
+  .rp .minibar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+  .rp .pill { display: inline-block; font-size: .75rem; padding: 3px 9px; border-radius: 6px; background: #f3f4f6; color: #4b5563; white-space: nowrap; }
+  .rp .pill.good { background: #e8effc; color: var(--accent); } .rp .pill.bad { background: #fdecec; color: var(--danger); }
+  .rp .ai-box { background: #f8f9fb; border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; margin-top: 24px; }
   .rp .ai-box .ai-head { margin-top: 0; }
-  .rp .empty { color: var(--muted); font-size: .88rem; }
-  .rp .thumb { width: 34px; height: 34px; object-fit: contain; background: #fff; border-radius: 6px; border: 1px solid var(--line); vertical-align: middle; margin-right: 6px; }
-  .rp .tags { font-size: .78rem; color: var(--muted); }
-  .rp .notes li { margin-bottom: 4px; }
+  .rp .ai-sec { background: #fff; }
+  .rp .empty { color: var(--muted); font-size: .92rem; }
+  .rp .thumb { width: 38px; height: 38px; object-fit: contain; background: #fff; border-radius: 8px; border: 1px solid var(--line); vertical-align: middle; margin-right: 10px; }
+  .rp .tags { font-size: .88rem; color: #4b5563; line-height: 1.7; }
+  .rp .notes li { margin-bottom: 6px; }
   .rp .wr { word-break: keep-all; overflow-wrap: anywhere; }
   .rp .tw { overflow-x: auto; }
-  @media (max-width: 600px) { .rp .tw table { min-width: 460px; } }
-  @media print { .rp .tw { overflow: visible; } .rp .tw table { min-width: 0; } }
+  .rank-ctl { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 10px; }
+  .rank-row { display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: start; }
+  .rank-lbl { font-size: .85rem; font-weight: 600; color: var(--muted); padding-top: 6px; }
+  .rp .chips button { background: #fff; border: 1px solid var(--line); color: #374151; border-radius: 8px; font-weight: 500; }
+  .rp .chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .rank td:first-child { color: var(--muted); font-weight: 600; width: 44px; }
+  @media (max-width: 600px) {
+    .rp { padding: 24px 16px 60px; }
+    .rp-cover h1 { font-size: 1.55rem; }
+    .rp-tabs button { padding: 14px 14px 12px; font-size: .95rem; }
+    .rp .kpis { grid-template-columns: 1fr 1fr; gap: 10px; } .rp .kpi { padding: 16px; } .rp .kpi b { font-size: 1.3rem; }
+    .rp .tw table { min-width: 460px; }
+  }
   @media print {
     @page { size: A4; margin: 12mm; }
-    body { background: #fff; }
+    html { font-size: 12.5px; }
     body * { visibility: visible !important; } /* 공용 style.css의 인쇄 숨김 규칙 해제 */
     .rp { max-width: none; padding: 0; }
     .rp-bar, .rp-tabs, .no-print { display: none !important; }
-    .rp section.first { break-before: auto; }
-    .rp section, .rp-cover { border: 0; padding: 0; margin: 0 0 8mm; break-inside: auto; }
-    .rp section { break-before: page; }
-    .rp section.keep { break-before: auto; }
+    .rp-head { margin-bottom: 8mm; }
+    .rp section { margin: 0 0 8mm; break-before: page; }
+    .rp section.keep, .rp section.first { break-before: auto; }
     .rp table, .rp .ai-box, .rp .kpis { break-inside: avoid; }
-    html { font-size: 13px; }
     .rp h3, .rp h2 { break-after: avoid; }
     .rp .two { grid-template-columns: 1fr 1fr; gap: 6mm; }
     .rp .ai-grid { grid-template-columns: 1fr 1fr; }
-    .rp .kpis { grid-template-columns: repeat(4, 1fr); }
-    .rp .tr { break-inside: avoid; }
+    .rp .kpis { grid-template-columns: repeat(4, 1fr); gap: 3mm; }
+    .rp .kpi { padding: 4mm; }
+    .rp .tw { overflow: visible; } .rp .tw table { min-width: 0; }
+    .rp tr:hover td { background: none; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
 </head>
 <body>
 <main class="rp">
-  <div class="rp-bar">
-    <a class="btn" href="/admin">← 관리자 화면</a>
-    <div style="display:flex;gap:8px"><button type="button" class="btn" id="reload">🔄 최신 데이터로</button><button type="button" class="btn accent" id="print">🖨 인쇄 · PDF 저장</button></div>
+  <div class="rp-head">
+    <div id="cover"></div>
+    <div class="rp-bar">
+      <a class="btn" href="/admin">← 관리자 화면</a>
+      <button type="button" class="btn" id="reload">최신 데이터로</button>
+      <button type="button" class="btn accent" id="print">인쇄 · PDF 저장</button>
+    </div>
   </div>
   <nav class="rp-tabs" id="tabs" aria-label="리포트 항목"></nav>
   <div id="report"><p class="hint">리포트를 만드는 중…</p></div>
@@ -160,10 +178,11 @@ function render(r) {
   document.title = BASE_TITLE = `매장 조사 리포트 ${at.toLocaleDateString('ko-KR')}`;
   const out = [];
 
-  out.push(el('div', { class: 'rp-cover' },
+  $('cover').replaceChildren(el('div', { class: 'rp-cover' },
     el('img', { src: '/logo.png', alt: 'FootJoy' }),
     el('h1', {}, '26FW 매장 반응·진열 조사 리포트', el('span', { class: 'sub-title' })),
     el('div', { class: 'meta' }, `${at.toLocaleString('ko-KR')} 기준 · 조사 대상 ${o.targetStores}매장 · 본사 내부용`)));
+  out.push(null); // 예전 표지 자리 (섹션 순서 유지)
 
   // 1. 한눈에
   const s = o.sales, sn = s.good + s.normal + s.poor;
@@ -262,11 +281,11 @@ function render(r) {
       el('li', {}, 'AI 요약은 관리자 화면에서 마지막으로 만든 요약이에요. 틀릴 수 있으니 숫자와 함께 봐 주세요.'))));
   const KEYS = ['summary', 'stores', 'reaction', 'display', 'ztec', 'gift', 'notes'];
   out.slice(1).forEach((n, i) => (n.dataset.sec = KEYS[i]));
-  $('report').replaceChildren(...out);
+  $('report').replaceChildren(...out.slice(1));
   applyTab();
 }
 // ---- 주제별 탭: 고른 항목만 보이고, 인쇄·PDF도 그 항목만 ----
-const TABS = [['all', '전체'], ['summary', '📊 요약'], ['stores', '🏬 참여 현황'], ['reaction', '💬 상품 반응'], ['display', '📦 진열·공간 효율'], ['ztec', '⚡ Z-TEC'], ['gift', '🎁 사은품']];
+const TABS = [['all', '전체 리포트'], ['summary', '한눈에 보기'], ['stores', '매장 참여 현황'], ['reaction', '상품별 고객 반응'], ['display', '진열·공간 효율'], ['ztec', 'Z-TEC 매장 의견'], ['gift', '사은품 니즈']];
 let TAB = (location.hash.slice(1) && TABS.some(([k]) => k === location.hash.slice(1))) ? location.hash.slice(1) : 'all';
 let BASE_TITLE = '';
 function drawTabs() {
@@ -284,7 +303,7 @@ function applyTab() {
     n.classList.toggle('first', show && first);
     if (show) first = false;
   });
-  const label = TAB === 'all' ? '' : TABS.find(([k]) => k === TAB)[1].replace(/^\S+\s/, '');
+  const label = TAB === 'all' ? '' : TABS.find(([k]) => k === TAB)[1];
   const st = document.querySelector('.rp-cover .sub-title');
   if (st) st.textContent = label ? `· ${label}` : '';
   if (!BASE_TITLE) BASE_TITLE = document.title;
