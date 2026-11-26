@@ -8,15 +8,17 @@
 <link rel="stylesheet" href="/style.css">
 <link rel="icon" type="image/png" href="/favicon.png">
 </head>
-<body>
+<body data-mode="eval">
 <main class="wrap">
   <header class="brand brand-title"><img src="/logo.png" alt="FootJoy" width="473" height="120"><span class="bdiv"></span><span class="btitle">매장 반응·진열 체크</span><span class="tag">매장용</span></header>
   <div class="modetabs" id="modeTabs">
     <button type="button" data-mode="eval">📝 상품 평가</button>
     <button type="button" data-mode="display">📦 진열 체크</button>
+    <button type="button" data-mode="gift">🎁 사은품</button>
   </div>
   <h1 id="pageTitle">상품 반응 평가</h1>
   <p class="sub mode-eval">상품 사진을 보고, 그동안 판매하면서 느낀 고객 반응을 정리해 주세요. 상품마다 한 번씩 평가하면 됩니다.</p>
+  <p class="sub mode-gift">2026년 한 해 동안 매장에서 느낀 <b>구매 사은품</b>에 대한 고객 반응과 바람을 알려 주세요. <b>매장당 한 번</b>만 쓰면 되고, 나중에 고칠 수 있어요.</p>
   <p class="sub mode-display">지금 매장에 컬러(SKU)별로 진열돼 있는지 눌러 주세요. <b>누르는 즉시 저장</b>되고, 다시 누르면 취소돼요.</p>
 
   <form id="form" novalidate>
@@ -145,6 +147,47 @@
         <label class="hint dtodo"><input type="checkbox" id="dTodo"> 아직 체크 안 한 SKU만 보기</label>
       </div>
       <div id="dList"></div>
+    </div>
+    <div class="mode-gift">
+      <div class="card">
+        <div class="hint" id="gStatus">매장명을 입력하면 작성할 수 있어요.</div>
+        <div id="gDraftNote" class="draft-note" hidden>✏️ 작성하던 내용을 불러왔어요. 저장을 눌러야 제출돼요.</div>
+      </div>
+      <fieldset id="gBody" class="gift" disabled>
+        <div class="card">
+          <span class="q">1. 고객이 사은품에 대해 얼마나 자주 묻거나 요청하나요? <span class="req">*</span></span>
+          <div class="chips" id="gFreq"></div>
+          <span class="q sub-q">2. 사은품 때문에 구매를 미루거나 안 한 고객이 있었나요? <span class="req">*</span></span>
+          <p class="hint" style="margin:0 0 6px">예: "사은품 행사할 때 다시 올게요", "다른 브랜드는 사은품 주던데"</p>
+          <div class="chips" id="gDelay"></div>
+        </div>
+        <div class="card">
+          <span class="q">3. 올해 진행한 사은품은 구매에 도움이 됐나요? <span class="req">*</span></span>
+          <div class="chips" id="gImpact"></div>
+          <div id="gReactBox">
+            <span class="q sub-q">3-1. 그 사은품에 대한 고객 반응은? <span class="req">*</span></span>
+            <div class="chips" id="gReaction"></div>
+            <label class="q sub-q" for="gCurrentNote">3-2. 어떤 사은품이었고, 고객 반응은 어땠나요?</label>
+            <textarea id="gCurrentNote" maxlength="500" placeholder="예: 볼마커 사은품은 '또 볼마커냐'는 반응, 양말은 실용적이라 좋아했어요"></textarea>
+          </div>
+        </div>
+        <div class="card">
+          <span class="q">4. 고객이 가장 받고 싶어 하는 사은품은? <span class="req">*</span> <span class="hint">(최대 3개)</span></span>
+          <div class="chips" id="gItems"></div>
+          <label class="q sub-q" for="gItemNote">4-1. 구체적으로 원하는 품목·브랜드·디자인이 있다면?</label>
+          <textarea id="gItemNote" maxlength="500" placeholder="예: 타이틀리스트 공 3구, FJ 로고 들어간 파우치 / 여성 고객은 컬러 장갑 선호"></textarea>
+        </div>
+        <div class="card">
+          <span class="q">5. 얼마 이상 구매할 때 사은품을 주면 구매에 가장 도움이 될까요? <span class="req">*</span></span>
+          <div class="chips" id="gThreshold"></div>
+        </div>
+        <div class="card">
+          <label class="q" for="gIdea">6. 💡 매장 아이디어 제안</label>
+          <textarea id="gIdea" maxlength="500" placeholder="예: 금액대별로 사은품을 고를 수 있게 하면 객단가가 올라갈 것 같아요 / 구매 금액에 따라 골프공 개수 차등"></textarea>
+          <button type="button" class="primary" id="gSave" style="margin-top:12px">사은품 의견 저장</button>
+          <p class="error" id="gError"></p>
+        </div>
+      </fieldset>
     </div>
   </form>
   <div class="toast" id="toast" role="status"></div>
@@ -299,11 +342,11 @@ async function init() {
     $('storeWarn').textContent = warn ? '⚠️ 조사 대상 매장 목록에 없는 이름이에요. 입력칸을 누르면 나오는 목록에서 골라 주세요.' : '';
   };
   $('staff').addEventListener('change', normStore, true);
-  $('staff').onchange = () => { loadMine(); loadZtec(); if (MODE === 'display') loadDisplay(); };
+  $('staff').onchange = () => { loadMine(); loadZtec(); if (MODE === 'display') loadDisplay(); if (MODE === 'gift') loadGift(); };
   $('modeTabs').querySelectorAll('button').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
   $('dSearch').oninput = renderDisplay;
   $('dTodo').onchange = renderDisplay;
-  $('staff').addEventListener('input', () => { $('ztecToggle').disabled = !$('staff').value.trim(); });
+  $('staff').addEventListener('input', () => { $('ztecToggle').disabled = !$('staff').value.trim(); $('gBody').disabled = !$('staff').value.trim(); });
   ['click', 'input'].forEach((ev) => {
     $('survey').addEventListener(ev, (e) => { if (e.target.closest && e.target.closest('#submit')) return; saveDraft(); });
     $('ztecBody').addEventListener(ev, (e) => { if (e.target.id === 'zSave' || e.target.id === 'zCancel') return; saveZDraft(); });
@@ -312,6 +355,8 @@ async function init() {
     if (!confirm('임시저장한 내용을 지우고 원래대로 되돌릴까요?')) return;
     const pid = $('product').value; clearTimeout(draftT); clearDraft(pid); selectProduct(pid);
   };
+  Object.values(G_TEXTS).forEach((id) => $(id).addEventListener('input', () => { G_TOUCH++; saveGDraft(); }));
+  $('gSave').onclick = saveGift;
   setupZtec(); // 상태는 저장된 매장명을 불러온 뒤 loadZtec()에서 갱신
   try { $('staff').value = localStorage.getItem('staff') || ''; } catch {}
   normStore();
@@ -341,13 +386,107 @@ function syncMsg(sy) {
   if (!sy) return '';
   return sy.display === 'notReceived' ? ` 진열 체크에도 컬러 ${sy.count}개를 '미입고'로 반영했어요.` : sy.display === 'cleared' ? ` 진열 체크의 '미입고' ${sy.count}개를 지웠어요.` : '';
 }
+// ---- 🎁 사은품 니즈 (매장당 1회) ----
+const GF = { freq: '', delay: '', impact: '', reaction: 0, items: [], threshold: '' };
+const G_TEXTS = { currentNote: 'gCurrentNote', itemNote: 'gItemNote', idea: 'gIdea' };
+const gKey = () => { const st = $('staff').value.trim().toLowerCase().replace(/\s+/g, ''); return st ? `gdraft:${st}` : ''; };
+function gChips(id, items, key, multi) {
+  const box = $(id);
+  box.replaceChildren();
+  items.forEach(([v, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.className = (multi ? GF[key].includes(v) : GF[key] === v) ? 'on' : '';
+    b.onclick = () => {
+      if (multi) {
+        const i = GF[key].indexOf(v);
+        if (i >= 0) GF[key].splice(i, 1);
+        else if (GF[key].length >= 3) return toast('최대 3개까지 고를 수 있어요');
+        else GF[key].push(v);
+      } else GF[key] = v;
+      G_TOUCH++;
+      drawGift();
+      saveGDraft();
+    };
+    box.appendChild(b);
+  });
+}
+function drawGift() {
+  gChips('gFreq', Object.entries(OPTS.giftFreq), 'freq');
+  gChips('gDelay', Object.entries(OPTS.giftDelay), 'delay');
+  gChips('gImpact', Object.entries(OPTS.giftImpact), 'impact');
+  gChips('gReaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${OPTS.reactions[n]}`]), 'reaction');
+  gChips('gItems', OPTS.giftItems.map((x) => [x, x]), 'items', true);
+  gChips('gThreshold', Object.entries(OPTS.giftThreshold), 'threshold');
+  $('gReactBox').hidden = GF.impact === 'noGift';
+}
+function fillGift(e) {
+  Object.assign(GF, { freq: '', delay: '', impact: '', reaction: 0, items: [], threshold: '' });
+  if (e) Object.keys(GF).forEach((k) => e[k] != null && (GF[k] = k === 'items' ? [...e[k]] : e[k]));
+  Object.entries(G_TEXTS).forEach(([k, id]) => ($(id).value = (e && e[k]) || ''));
+  drawGift();
+}
+function saveGDraft() {
+  clearTimeout(saveGDraft.t);
+  saveGDraft.t = setTimeout(() => {
+    const d = { ...structuredClone(GF), at: Date.now() };
+    Object.entries(G_TEXTS).forEach(([k, id]) => (d[k] = $(id).value));
+    lsSet(gKey(), d);
+  }, 300);
+}
+let G_LOADED = null, G_TOUCH = 0;
+async function loadGift(force) {
+  const store = $('staff').value.trim();
+  if (!force && G_LOADED === gKey()) return; // 같은 매장이면 다시 불러오지 않음 (입력 중인 답 유지)
+  G_LOADED = gKey();
+  const t0 = G_TOUCH;
+  $('gBody').disabled = !store;
+  if (!store) { $('gStatus').textContent = '⬆️ 매장명을 먼저 입력해 주세요.'; fillGift(null); $('gDraftNote').hidden = true; return; }
+  const e = await (await fetch('/api/gifts/mine?store=' + encodeURIComponent(store))).json();
+  if (G_LOADED !== gKey()) return; // 그사이 매장명이 바뀜
+  const d = lsGet(gKey());
+  const useDraft = d && (!e || d.at > Date.parse(e.updatedAt));
+  if (d && !useDraft) lsSet(gKey(), null);
+  if (force || G_TOUCH === t0) fillGift(useDraft ? d : e); // 불러오는 사이 누른 답은 그대로 둠
+  $('gDraftNote').hidden = !useDraft || G_TOUCH !== t0;
+  $('gStatus').textContent = e ? `✓ ${new Date(e.updatedAt).toLocaleDateString('ko-KR')}에 작성했어요. 고친 뒤 다시 저장하면 바뀌어요.` : '아직 작성하지 않았어요. 매장당 한 번만 작성하면 돼요.';
+  $('gStatus').className = e ? 'hint pdone' : 'hint';
+  $('gSave').textContent = e ? '사은품 의견 수정' : '사은품 의견 저장';
+}
+async function saveGift() {
+  $('gError').textContent = '';
+  const err = !GF.freq ? '1. 사은품 문의 빈도를 골라 주세요.' : !GF.delay ? '2. 사은품 때문에 구매를 미룬 경우를 골라 주세요.'
+    : !GF.impact ? '3. 올해 사은품이 구매에 도움이 됐는지 골라 주세요.' : GF.impact !== 'noGift' && !GF.reaction ? '3-1. 사은품에 대한 고객 반응을 골라 주세요.'
+    : !GF.items.length ? '4. 원하는 사은품을 1~3개 골라 주세요.' : !GF.threshold ? '5. 기준 금액을 골라 주세요.' : '';
+  if (err) { $('gError').textContent = err; return; }
+  $('gSave').disabled = true;
+  try {
+    const body = { store: $('staff').value, ...GF };
+    Object.entries(G_TEXTS).forEach(([k, id]) => (body[k] = $(id).value));
+    const res = await fetch('/api/gifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '저장에 실패했어요.');
+    clearTimeout(saveGDraft.t);
+    lsSet(gKey(), null);
+    await loadGift(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    toast(data.updated ? '✅ 사은품 의견을 수정했어요.' : '✅ 사은품 의견을 저장했어요. 감사합니다!');
+  } catch (ex) {
+    $('gError').textContent = ex.message;
+  } finally {
+    $('gSave').disabled = false;
+  }
+}
+
 function setMode(m) {
-  MODE = m === 'display' ? 'display' : 'eval';
+  MODE = ['display', 'gift'].includes(m) ? m : 'eval';
   document.body.dataset.mode = MODE;
   $('modeTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === MODE));
-  $('pageTitle').textContent = MODE === 'display' ? '진열 현황 체크' : '상품 반응 평가';
+  $('pageTitle').textContent = MODE === 'display' ? '진열 현황 체크' : MODE === 'gift' ? '사은품 니즈 조사' : '상품 반응 평가';
   try { localStorage.setItem('mode', MODE); } catch {}
   if (MODE === 'display') loadDisplay();
+  else if (MODE === 'gift') loadGift();
   else if (OPTS) loadMine(); // 다른 탭에서 바뀐 내용 반영
 }
 async function loadDisplay() {

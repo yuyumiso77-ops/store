@@ -14,14 +14,26 @@
   <div class="modetabs" id="adminTabs">
     <button type="button" data-tab="analysis">📊 반응 분석</button>
     <button type="button" data-tab="display">📦 진열 현황</button>
+    <button type="button" data-tab="gift">🎁 사은품</button>
     <button type="button" data-tab="stores">🏬 매장 참여</button>
+  </div>
+
+  <div id="tabGift" hidden>
+    <div class="product-head">
+      <div>
+        <h1>사은품 니즈 조사</h1>
+        <p class="sub">2026년 한 해 동안 매장에서 느낀 구매 사은품 반응과 바람이에요. 매장당 한 번 작성해요. (매장 링크: <code>/?mode=gift</code>)</p>
+      </div>
+      <div class="actions"><a class="btn" href="/api/admin/gifts.csv">사은품 CSV</a></div>
+    </div>
+    <div id="giftBody"><p class="hint">불러오는 중…</p></div>
   </div>
 
   <div id="tabStores" hidden>
     <div class="product-head">
       <div>
         <h1>매장 참여 현황</h1>
-        <p class="sub">조사 대상 매장별로 진열 체크·상품 평가·Z-TEC 의견을 얼마나 했는지 봅니다.</p>
+        <p class="sub">조사 대상 매장별로 진열 체크·상품 평가·Z-TEC·사은품 의견을 얼마나 했는지 봅니다.</p>
       </div>
       <div class="actions">
         <button type="button" class="btn accent" id="copyRemind">📋 미완료 매장 알림 문구 복사</button>
@@ -701,7 +713,8 @@ async function load() {
 let DREP = null, DL = '', DT = '';
 const DOPEN = new Set();
 function setTab(t) {
-  const tab = ['display', 'stores'].includes(t) ? t : 'analysis';
+  const tab = ['display', 'stores', 'gift'].includes(t) ? t : 'analysis';
+  $('tabGift').hidden = tab !== 'gift';
   $('tabDisplay').hidden = tab !== 'display';
   $('tabStores').hidden = tab !== 'stores';
   $('tabAnalysis').hidden = tab !== 'analysis';
@@ -709,7 +722,67 @@ function setTab(t) {
   try { localStorage.setItem('adminTab', tab); } catch {}
   if (tab === 'display') loadDisplayTab();
   if (tab === 'stores') loadStoresTab();
+  if (tab === 'gift') loadGiftTab();
 }
+
+// ---- 🎁 사은품 니즈 ----
+let OPTS_P = null;
+async function loadGiftTab() {
+  const [g, opts] = await Promise.all([api('/api/admin/gifts'), OPTS_P || (OPTS_P = api('/api/options'))]);
+  $('giftBody').replaceChildren(...renderGift(g, opts));
+}
+function distCard(title, dist, labels, n, note) {
+  const max = Math.max(1, ...Object.values(dist));
+  return el('div', { class: 'card' }, el('h2', { style: 'margin:0 0 8px' }, title), note ? el('p', { class: 'hint', style: 'margin:0 0 8px' }, note) : null,
+    ...Object.entries(dist).map(([k, v]) => el('div', { class: 'bar gbar' }, el('span', { class: 'lbl' }, labels[k] || k),
+      el('span', { class: 'track' }, el('span', { class: 'fill', style: `width:${(v / max) * 100}%` })), el('span', {}, `${v}`), el('small', {}, n ? Math.round((v / n) * 100) + '%' : ''))));
+}
+function renderGift(g, o) {
+  if (!g.count) return [el('div', { class: 'card' }, el('p', { class: 'hint', style: 'margin:0' }, '아직 응답한 매장이 없어요. 매장 화면의 🎁 사은품 탭에서 매장마다 한 번 작성해요.'))];
+  const pct = (v) => Math.round((v / g.count) * 100) + '%';
+  const items = Object.fromEntries(g.items.map((x) => [x.name, x.count]));
+  const KINDS = [['all', '전체', () => true], ['currentNote', '🎁 현재 사은품 반응', (e) => e.currentNote], ['itemNote', '🛍 원하는 품목', (e) => e.itemNote], ['idea', '💡 아이디어', (e) => e.idea]];
+  let kind = 'all';
+  const list = el('div');
+  const draw = () => {
+    const [, , test] = KINDS.find((k) => k[0] === kind);
+    const show = (k) => kind === 'all' || kind === k;
+    list.replaceChildren(
+      el('div', { class: 'chips small' }, KINDS.map(([k, label, t]) =>
+        el('button', { type: 'button', class: kind === k ? 'on' : '', onclick: () => { kind = k; draw(); } }, `${label} ${g.entries.filter(t).length}`))),
+      collapsibleList(g.entries.filter(test), 5, (e) => el('li', {},
+        show('currentNote') && e.currentNote ? el('div', { class: 'note-line' }, '🎁 ', e.currentNote) : '',
+        show('itemNote') && e.itemNote ? el('div', { class: 'note-line' }, '🛍 ', e.itemNote) : '',
+        show('idea') && e.idea ? el('div', { class: 'note-line' }, '💡 ', e.idea) : '',
+        el('div', { class: 'meta' }, `${e.store} · 원함: ${e.items.join('·')} · ${o.giftThreshold[e.threshold]} · 문의 ${o.giftFreq[e.freq]} · ${o.giftImpact[e.impact]}${e.reaction ? ' (' + REACT[e.reaction] + ')' : ''} · ${new Date(e.updatedAt).toLocaleDateString('ko-KR')} `,
+          el('button', {
+            type: 'button', class: 'mini danger', title: '이 의견 삭제',
+            onclick: async () => {
+              if (!confirm(`"${e.store}"의 사은품 의견을 삭제할까요?\n되돌릴 수 없어요.`)) return;
+              try { await api(`/api/admin/gifts/${e.id}`, { method: 'DELETE' }); loadGiftTab(); } catch (ex) { alert(ex.message); }
+            },
+          }, '🗑')))));
+  };
+  draw();
+  return [
+    el('div', { class: 'card' }, el('div', { class: 'stats' },
+      stat(g.count + '매장', '응답 매장'),
+      stat(pct(g.freq.often), '사은품 문의가 자주 있음'),
+      stat(pct(g.delay.often + g.delay.sometimes), '사은품 때문에 구매를 미룬 고객 있음'),
+      stat(fmt(g.avgReaction), '올해 사은품 고객 반응 (5점)'),
+      stat(g.items[0] ? g.items[0].name : '-', '가장 원하는 사은품'))),
+    el('div', { class: 'card' }, aiBlock('gift')),
+    el('div', { class: 'grid2' },
+      distCard('🛍 원하는 사은품 순위', items, {}, g.count, '매장마다 최대 3개 선택 · %는 응답 매장 중 비율'),
+      distCard('💰 적정 사은품 기준 금액', g.threshold, o.giftThreshold, g.count, '이 금액 이상 구매 시 사은품을 주면 구매에 가장 도움이 된다는 응답'),
+      distCard('🙋 고객 사은품 문의 빈도', g.freq, o.giftFreq, g.count),
+      distCard('⏸ 사은품 때문에 구매를 미룬 고객', g.delay, o.giftDelay, g.count),
+      distCard('🎁 올해 사은품의 구매 도움', g.impact, o.giftImpact, g.count),
+      distCard('🙂 올해 사은품 고객 반응', Object.fromEntries(g.reactionDist.map((v, i) => [i + 1, v])), Object.fromEntries([1, 2, 3, 4, 5].map((n) => [n, REACT[n]])), g.reactionDist.reduce((a, b) => a + b, 0))),
+    el('div', { class: 'card' }, el('h2', { style: 'margin:0 0 8px' }, '매장 의견'), list),
+  ];
+}
+
 
 // ---- 🏬 매장 참여 ----
 let SP = null, SMGR = '', SSTATUS = '';
@@ -730,7 +803,7 @@ function renderStoresTab() {
   const cnt = (st) => r.stores.filter((x) => x.status === st).length;
   $('sStats').replaceChildren(
     stat(r.stores.length + '매장', '조사 대상 매장'),
-    stat(cnt('done') + '매장', '완료 (진열·평가·Z-TEC 모두)'),
+    stat(cnt('done') + '매장', '완료 (진열·평가·Z-TEC·사은품 모두)'),
     stat(cnt('progress') + '매장', '진행 중'),
     stat(cnt('none') + '매장', '미참여'),
     stat(r.stores.filter((x) => x.flags.length).length + '매장', '⚠️ 응답 점검 필요'),
@@ -753,14 +826,15 @@ function renderStoresTab() {
     el('div', { class: 'pc' }, bar(x.display, r.totalSkus), el('small', {}, `진열 체크 ${x.display}/${r.totalSkus}`)),
     el('div', { class: 'pc' }, bar(x.evals, r.totalProducts), el('small', {}, `상품 평가 ${x.evals}/${r.totalProducts}` + (x.skipped ? ` (제외 ${x.skipped})` : ''))),
     el('div', { class: 'pc num' }, el('b', {}, x.ztec ? '✓' : '–'), el('small', {}, 'Z-TEC')),
+    el('div', { class: 'pc num' }, el('b', {}, x.gift ? '✓' : '–'), el('small', {}, '사은품')),
     el('div', { class: 'pc' }, el('span', { class: 'tag st-' + x.status }, STATUS_L[x.status]), el('small', {}, x.last ? new Date(x.last).toLocaleDateString('ko-KR') : '')),
     x.flags.length ? el('div', { class: 'qa' }, x.flags.map((f) => el('div', {}, el('span', { class: 'tag gap' }, '⚠️ ' + f.label), ' ', el('small', {}, f.detail)))) : null,
-    el('div', { class: 'qa' }, x.evals || x.ztec ? el('button', { type: 'button', class: 'linklike', onclick: (ev) => toggleAnswers(ev.target, x.name) }, '답변 보기 ▾') : null),
+    el('div', { class: 'qa' }, x.evals || x.ztec || x.gift ? el('button', { type: 'button', class: 'linklike', onclick: (ev) => toggleAnswers(ev.target, x.name) }, '답변 보기 ▾') : null),
   )));
   $('sUnknown').replaceChildren(...(r.unknown.length ? [el('div', { class: 'card', style: 'margin-top:16px' },
     el('h2', { style: 'margin:0 0 4px' }, '⚠️ 명단에 없는 이름으로 입력된 데이터'),
     el('p', { class: 'hint', style: 'margin:0 0 8px' }, '매장명을 다르게 입력한 경우예요. 해당 매장에 정확한 이름으로 다시 입력해 달라고 요청하거나, 반응 분석 탭의 매장별 보기에서 🗑로 지울 수 있어요.'),
-    el('ul', { class: 'comments' }, r.unknown.map((u) => el('li', {}, el('b', {}, u.name), el('span', { class: 'hint' }, ` — 평가 ${u.evals} · 진열 체크 ${u.display} · Z-TEC ${u.ztec ? '✓' : '–'}`)))))] : []));
+    el('ul', { class: 'comments' }, r.unknown.map((u) => el('li', {}, el('b', {}, u.name), el('span', { class: 'hint' }, ` — 평가 ${u.evals} · 진열 체크 ${u.display} · Z-TEC ${u.ztec ? '✓' : '–'} · 사은품 ${u.gift ? '✓' : '–'}`)))))] : []));
 }
 const EVST = { done: '', nosale: '판매 안 함', notreceived: '미입고' };
 async function toggleAnswers(btn, name) {
@@ -772,6 +846,7 @@ async function toggleAnswers(btn, name) {
   btn.textContent = '답변 접기 ▴';
   const t = (iso) => (iso ? new Date(iso).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
   box.append(el('div', { class: 'answers' },
+    r.gift ? el('p', { class: 'hint' }, el('b', {}, '사은품: '), `원함 ${r.gift.items.join('·')} · 기준 ${r.gift.threshold}만원 이상 · ` + [r.gift.currentNote, r.gift.itemNote, r.gift.idea].filter(Boolean).join(' / ')) : null,
     r.ztec ? el('p', { class: 'hint' }, el('b', {}, 'Z-TEC: '), `반응 ${r.ztec.reaction}점 · ` + [r.ztec.good, r.ztec.bad, r.ztec.suggestion].filter(Boolean).join(' / ')) : null,
     el('table', {}, el('tr', {}, ...['입력 시각', '상품', '고객 반응', '판매 반응', '의견'].map((h) => el('th', {}, h))),
       ...r.evals.map((e) => el('tr', {}, el('td', {}, t(e.at)), el('td', {}, e.product),
@@ -782,7 +857,7 @@ function remindText() {
   const by = {};
   r.stores.filter((x) => x.status !== 'done').forEach((x) => {
     const m = x.manager || '담당자 없음';
-    (by[m] = by[m] || []).push(`${x.name}${x.status === 'none' ? '(미참여)' : `(진열 ${x.display}/${r.totalSkus}·평가 ${x.evals}/${r.totalProducts}${x.ztec ? '' : '·Z-TEC 미작성'})`}`);
+    (by[m] = by[m] || []).push(`${x.name}${x.status === 'none' ? '(미참여)' : `(진열 ${x.display}/${r.totalSkus}·평가 ${x.evals}/${r.totalProducts}${x.ztec ? '' : '·Z-TEC 미작성'}${x.gift ? '' : '·사은품 미작성'})`}`);
   });
   return ['[FJ 진열·반응 체크 미완료 매장]', ...Object.entries(by).map(([m, l]) => `\n▶ ${m} 담당 (${l.length}매장)\n` + l.join('\n')),
     ...(r.stores.some((x) => x.flags.length) ? ['\n▶ 응답 다시 확인 부탁 매장\n' + r.stores.filter((x) => x.flags.length).map((x) => `${x.name}: ${x.flags.map((f) => f.label).join(', ')}`).join('\n')] : []),

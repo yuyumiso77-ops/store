@@ -249,8 +249,11 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 
 .pc.num.low b { color: var(--danger); }
 /* 모드 전환 (상품 평가 / 진열 체크) */
-body[data-mode="display"] .mode-eval { display: none !important; }
+body:not([data-mode="eval"]) .mode-eval { display: none !important; }
 body:not([data-mode="display"]) .mode-display { display: none !important; }
+body:not([data-mode="gift"]) .mode-gift { display: none !important; }
+fieldset.gift { border: 0; padding: 0; margin: 0; min-width: 0; }
+fieldset.gift:disabled { opacity: .55; }
 .modetabs { display: flex; gap: 6px; margin: 0 0 14px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
 .modetabs button { flex: 1; padding: 10px; border: none; border-radius: 9px; background: none; color: var(--muted); font-size: .95rem; font-weight: 600; cursor: pointer; }
 .modetabs button.on { background: var(--accent); color: #fff; }
@@ -325,7 +328,7 @@ body:not([data-mode="display"]) .mode-display { display: none !important; }
 @media (max-width: 380px) { .seg { padding: 7px 6px; font-size: .8rem; } }
 .sgroup b.tx { color: #7d8085; }
 /* 매장 참여 */
-.strow { display: grid; grid-template-columns: minmax(150px, 1.3fr) minmax(140px, 1.4fr) minmax(140px, 1.4fr) 56px 100px; gap: 12px; align-items: center; padding: 8px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 4px; }
+.strow { display: grid; grid-template-columns: minmax(150px, 1.3fr) minmax(140px, 1.4fr) minmax(140px, 1.4fr) 56px 56px 100px; gap: 12px; align-items: center; padding: 8px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 4px; }
 .strow .sbar { margin-bottom: 3px; }
 .tag.st-none { border-color: var(--danger); color: var(--danger); }
 .tag.st-progress { border-color: var(--star); color: #a7861c; }
@@ -341,3 +344,11 @@ body:not([data-mode="display"]) .mode-display { display: none !important; }
 .answers td:first-child { white-space: nowrap; color: var(--muted); }
 .draft-note { margin: 8px 0; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--star) 15%, transparent); font-size: .85rem; }
 .badge.draft { background: var(--star); color: #222; }
+/* 사은품 */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.grid2 .card { margin: 0; }
+.bar.gbar .lbl { width: 9.5em; flex: none; }
+.bar.gbar .fill { background: var(--s1, #257de0); }
+.bar.gbar > small { width: 3em; text-align: right; color: var(--muted); }
+.bar.gbar > :nth-last-child(2) { width: 2em; text-align: right; }
+.bar.gbar .fill { display: block; }

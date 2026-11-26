@@ -501,6 +501,37 @@ test('응답 품질 점검: 같은 답 반복·의견 없음·너무 빠름', as
   for (const id of ids) await fetch(base + `/api/admin/products/${id}`, { method: 'DELETE', headers: admin });
 });
 
+test('사은품 니즈: 매장당 1회 저장·수정·집계·CSV·참여 현황', async () => {
+  const post = (b) => fetch(base + '/api/gifts', { method: 'POST', headers: staff, body: JSON.stringify(b) });
+  const ok = { store: '갤광교점', freq: 'often', delay: 'sometimes', impact: 'some', reaction: 4, items: ['골프공', '골프 양말'], threshold: 30, currentNote: '양말 반응 좋음', idea: '금액대별 선택' };
+  assert.strictEqual((await post({ ...ok, items: [] })).status, 400);
+  assert.strictEqual((await post({ ...ok, reaction: 0 })).status, 400); // 반응 누락
+  assert.strictEqual((await post({ ...ok, threshold: 7 })).status, 400);
+  assert.strictEqual((await post(ok)).status, 201);
+  // 행사 없었음이면 반응 없어도 OK, 같은 매장(이름 차이)은 수정. 품목은 최대 3개·목록에 있는 것만
+  const r2 = await post({ ...ok, store: '갤광교', impact: 'noGift', reaction: 5, items: ['골프공', '우산', '모자·캡', '헤드커버', '없는품목'] });
+  assert.strictEqual(r2.status, 200);
+  const mine = await (await fetch(base + '/api/gifts/mine?store=' + encodeURIComponent('갤광교 점'), { headers: staff })).json();
+  assert.deepStrictEqual([mine.impact, mine.reaction, mine.items], ['noGift', 0, ['골프공', '우산', '모자·캡']]);
+  await post({ ...ok, store: '갤타임월드', items: ['골프공'], threshold: 20 });
+  const g = await (await fetch(base + '/api/admin/gifts', { headers: admin })).json();
+  assert.strictEqual(g.count, 2);
+  assert.deepStrictEqual(g.items[0], { name: '골프공', count: 2 });
+  assert.deepStrictEqual([g.threshold['20'], g.threshold['30'], g.freq.often, g.impact.noGift, g.avgReaction], [1, 1, 2, 1, 4]);
+  const csv = await (await fetch(base + '/api/admin/gifts.csv', { headers: admin })).text();
+  assert.ok(csv.includes('갤타임월드') && csv.includes('20만원 이상'));
+  await fetch(base + '/api/admin/stores/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows: [{ name: '갤광교' }] }) });
+  const pr = await (await fetch(base + '/api/admin/store-progress', { headers: admin })).json();
+  assert.deepStrictEqual([pr.stores[0].gift, pr.stores[0].status], [true, 'progress']);
+  assert.ok(pr.unknown.some((u) => u.name === '갤타임월드' && u.gift));
+  // 매장 전체 삭제에 사은품도 포함, 한 건 삭제
+  const del = await (await fetch(base + `/api/admin/stores/${encodeURIComponent('갤광교')}?confirm=${encodeURIComponent('갤광교')}`, { method: 'DELETE', headers: admin })).json();
+  assert.strictEqual(del.deletedGifts, 1);
+  const left = (await (await fetch(base + '/api/admin/gifts', { headers: admin })).json()).entries;
+  assert.strictEqual((await fetch(base + '/api/admin/gifts/' + left[0].id, { method: 'DELETE', headers: admin })).status, 200);
+  assert.strictEqual((await (await fetch(base + '/api/admin/gifts', { headers: admin })).json()).count, 0);
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);

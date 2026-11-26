@@ -56,15 +56,21 @@ const OPTIONS = {
   genders: ['남성', '여성'],
   reactions: ['', '매우 나쁨', '나쁨', '보통', '좋음', '매우 좋음'],
   ztecEase: { easy: '쉬웠다', normal: '보통', hard: '어려웠다' },
+  // 사은품 니즈 (매장당 1회, 26년 전체 기준)
+  giftFreq: { often: '자주 (거의 매일)', sometimes: '가끔 (주 1~2번)', rarely: '거의 없음' },
+  giftDelay: { often: '자주 있음', sometimes: '가끔 있음', never: '없음' },
+  giftImpact: { big: '구매 결정에 큰 도움', some: '약간 도움', none: '영향 거의 없음', noGift: '사은품 행사가 없었음·모름' },
+  giftItems: ['골프공', '골프장갑', '골프 양말', '볼마커·티', '파우치·클러치', '모자·캡', '헤드커버', '골프 타월', '우산', '텀블러·보틀', '슈백(신발 가방)', '보스턴백·가방', '기타'],
+  giftThreshold: { 10: '10만원 이상', 20: '20만원 이상', 30: '30만원 이상', 50: '50만원 이상', 100: '100만원 이상' },
 };
 
 // ---------- 저장소 ----------
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [] };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [] };
   } catch {
-    return { products: [], evaluations: [], ztec: [], summaries: {}, displays: [], stores: [] };
+    return { products: [], evaluations: [], ztec: [], gifts: [], summaries: {}, displays: [], stores: [] };
   }
 }
 const db = loadDb();
@@ -293,6 +299,22 @@ function ztecSummary() {
   };
 }
 
+// ---------- 사은품 니즈 (매장당 1회) ----------
+function giftSummary() {
+  const g = db.gifts;
+  const dist = (key) => Object.fromEntries(Object.keys(OPTIONS[key]).map((k) => [k, g.filter((e) => String(e[key.replace('gift', '').toLowerCase()]) === k).length]));
+  const items = OPTIONS.giftItems.map((name) => ({ name, count: g.filter((e) => e.items.includes(name)).length })).filter((x) => x.count).sort((a, b) => b.count - a.count);
+  const rated = g.filter((e) => e.reaction);
+  return {
+    count: g.length,
+    freq: dist('giftFreq'), delay: dist('giftDelay'), impact: dist('giftImpact'), threshold: dist('giftThreshold'),
+    items,
+    avgReaction: rated.length ? Math.round((rated.reduce((a, e) => a + e.reaction, 0) / rated.length) * 10) / 10 : null,
+    reactionDist: [1, 2, 3, 4, 5].map((n) => rated.filter((e) => e.reaction === n).length),
+    entries: g.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+  };
+}
+
 // ---------- 진열 현황 (매장 × SKU) ----------
 // SKU = 품번 × 컬러(PLC). PLC가 없는 상품은 상품 자체를 SKU 하나로 본다
 const skusOf = (p) => ((p.plcs && p.plcs.length) ? p.plcs.map((q) => ({ sku: q.plc, color: q.color })) : [{ sku: 'P-' + p.id, color: '' }]);
@@ -425,18 +447,20 @@ function storeProgress() {
     const ev = db.evaluations.filter((e) => storeKey(e.staff) === k && activeIds.has(e.productId));
     const ds = db.displays.filter((d) => storeKey(d.store) === k && skuSet.has(d.sku));
     const zt = db.ztec.find((z) => storeKey(z.store) === k);
+    const gf = db.gifts.find((z) => storeKey(z.store) === k);
     const evals = ev.length, display = ds.length;
-    const last = [...ev, ...ds, ...(zt ? [zt] : [])].reduce((m, x) => (x.updatedAt > m ? x.updatedAt : m), '');
-    const names = [...new Set([...ev.map((e) => e.staff), ...ds.map((d) => d.store), ...(zt ? [zt.store] : [])])];
-    const status = !evals && !display && !zt ? 'none' : evals >= active.length && display >= totalSkus && zt ? 'done' : 'progress';
-    return { ...st, evals, evalsDone: ev.filter(isDone).length, skipped: evals - ev.filter(isDone).length, display, ztec: !!zt, last, status, names, flags: qualityFlags(ev, ds) };
+    const last = [...ev, ...ds, ...(zt ? [zt] : []), ...(gf ? [gf] : [])].reduce((m, x) => (x.updatedAt > m ? x.updatedAt : m), '');
+    const names = [...new Set([...ev.map((e) => e.staff), ...ds.map((d) => d.store), ...(zt ? [zt.store] : []), ...(gf ? [gf.store] : [])])];
+    const status = !evals && !display && !zt && !gf ? 'none' : evals >= active.length && display >= totalSkus && zt && gf ? 'done' : 'progress';
+    return { ...st, evals, evalsDone: ev.filter(isDone).length, skipped: evals - ev.filter(isDone).length, display, ztec: !!zt, gift: !!gf, last, status, names, flags: qualityFlags(ev, ds) };
   });
   // 명단에 없는 이름으로 입력된 데이터
   const seen = new Map();
-  const add = (name, field) => { if (matchStore(name)) return; const k = storeKey(name); if (!seen.has(k)) seen.set(k, { name, evals: 0, display: 0, ztec: false }); const r = seen.get(k); if (field === 'ztec') r.ztec = true; else r[field]++; };
+  const add = (name, field) => { if (matchStore(name)) return; const k = storeKey(name); if (!seen.has(k)) seen.set(k, { name, evals: 0, display: 0, ztec: false, gift: false }); const r = seen.get(k); if (field === 'ztec' || field === 'gift') r[field] = true; else r[field]++; };
   db.evaluations.forEach((e) => add(e.staff, 'evals'));
   db.displays.forEach((d) => add(d.store, 'display'));
   db.ztec.forEach((z) => add(z.store, 'ztec'));
+  db.gifts.forEach((z) => add(z.store, 'gift'));
   return { totalProducts: active.length, totalSkus, stores: rows, unknown: [...seen.values()] };
 }
 
@@ -582,6 +606,25 @@ function summarySource(key) {
       count: db.displays.length,
     };
   }
+  if (key === 'gift') {
+    const g = db.gifts;
+    if (!g.length) return null;
+    const gs = giftSummary();
+    const L = (key, v) => OPTIONS[key][v] || v;
+    const lines = g.map((e) => `- [${e.store}] 문의 ${L('giftFreq', e.freq)}, 사은품 때문에 구매 미룸 ${L('giftDelay', e.delay)}, 현재 사은품 ${e.reaction ? '반응 ' + OPTIONS.reactions[e.reaction] + ', ' : ''}${L('giftImpact', e.impact)}` +
+      `, 원하는 품목 ${e.items.join('·')}, 적정 기준 ${L('giftThreshold', e.threshold)}` +
+      (e.currentNote ? ` / 현재 사은품 반응: ${e.currentNote}` : '') + (e.itemNote ? ` / 품목 의견: ${e.itemNote}` : '') + (e.idea ? ` / 아이디어: ${e.idea}` : ''));
+    const d = (key, obj) => Object.entries(obj).map(([k, n]) => `${L(key, k)} ${n}`).join('·');
+    return {
+      basis: `${g.length}:${g.reduce((a, e) => (e.updatedAt > a ? e.updatedAt : a), '')}`,
+      title: '2026년 사은품(구매 사은품) 니즈에 대한 매장 의견',
+      body: [`응답 매장 ${gs.count}매장`, `고객 사은품 문의: ${d('giftFreq', gs.freq)}`, `사은품 때문에 구매를 미루거나 안 한 경우: ${d('giftDelay', gs.delay)}`,
+        `현재 사은품 평균 고객 반응 ${gs.avgReaction ?? '-'}/5, 구매 영향: ${d('giftImpact', gs.impact)}`, `원하는 사은품 순위: ${gs.items.map((x) => `${x.name} ${x.count}`).join(', ')}`,
+        `적정 사은품 기준 금액: ${d('giftThreshold', gs.threshold)}`, '', `매장 의견:\n${lines.join('\n')}`,
+        '', '요약 지침: strengths=현재 사은품에서 잘 먹히는 점, weaknesses=아쉬운 점, requests=매장·고객이 원하는 사은품과 조건, actions=본사가 다음 사은품 기획에 바로 반영할 일로 써 주세요.'].join('\n'),
+      count: g.length,
+    };
+  }
   if (key === 'ztec') {
     const z = db.ztec;
     if (!z.length) return null;
@@ -669,7 +712,8 @@ async function handle(req, res) {
           text: [e.prosNote, e.consNote, e.improvement, e.missing].map((t) => String(t || '').trim()).filter(Boolean).join(' / '), at: e.createdAt || e.updatedAt };
       }).sort((a, b) => String(a.at).localeCompare(String(b.at)));
       const zt = db.ztec.find((z) => storeKey(z.store) === k) || null;
-      return send(res, 200, { evals, ztec: zt && { reaction: zt.reaction, good: zt.good, bad: zt.bad, suggestion: zt.suggestion } });
+      const gf = db.gifts.find((z) => storeKey(z.store) === k) || null;
+      return send(res, 200, { evals, ztec: zt && { reaction: zt.reaction, good: zt.good, bad: zt.bad, suggestion: zt.suggestion }, gift: gf });
     }
     if (m === 'POST' && p === '/api/admin/stores/import') {
       const b = await readBody(req, 256 * 1024);
@@ -726,6 +770,22 @@ async function handle(req, res) {
       return send(res, 200, { ok: true });
     }
     // Z-TEC 의견 한 건 삭제
+    if (m === 'GET' && p === '/api/admin/gifts') return send(res, 200, giftSummary());
+    const dg = p.match(/^\/api\/admin\/gifts\/([\w-]+)$/);
+    if (dg && m === 'DELETE') {
+      const before = db.gifts.length;
+      db.gifts = db.gifts.filter((e) => e.id !== dg[1]);
+      if (db.gifts.length === before) return send(res, 404, { error: '의견이 없습니다.' });
+      saveDb();
+      return send(res, 200, { ok: true });
+    }
+    if (m === 'GET' && p === '/api/admin/gifts.csv') {
+      const L = (key, v) => OPTIONS[key][v] || v || '';
+      const rows = [['수정일시', '매장명', '사은품 문의 빈도', '사은품 때문에 구매 미룸', '현재 사은품 고객 반응(1~5)', '현재 사은품 구매 영향', '현재 사은품 반응 메모', '원하는 사은품', '품목 의견', '적정 기준 금액', '매장 아이디어']];
+      db.gifts.forEach((e) => rows.push([e.updatedAt, e.store, L('giftFreq', e.freq), L('giftDelay', e.delay), e.reaction || '', L('giftImpact', e.impact), e.currentNote, e.items.join(' / '), e.itemNote, L('giftThreshold', e.threshold), e.idea]));
+      const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+      return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="gifts.csv"' });
+    }
     const dz = p.match(/^\/api\/admin\/ztec\/([\w-]+)$/);
     if (dz && m === 'DELETE') {
       const before = db.ztec.length;
@@ -742,14 +802,15 @@ async function handle(req, res) {
       const ev = db.evaluations.length, zt = db.ztec.length;
       db.evaluations = db.evaluations.filter((e) => !sameName(e.staff, store));
       db.ztec = db.ztec.filter((e) => !sameName(e.store, store));
-      const dp = db.displays.length;
+      const dp = db.displays.length, gf = db.gifts.length;
       db.displays = db.displays.filter((d) => !sameName(d.store, store));
+      db.gifts = db.gifts.filter((e) => !sameName(e.store, store));
       saveDb();
-      return send(res, 200, { ok: true, deletedEvaluations: ev - db.evaluations.length, deletedZtec: zt - db.ztec.length, deletedDisplays: dp - db.displays.length });
+      return send(res, 200, { ok: true, deletedEvaluations: ev - db.evaluations.length, deletedZtec: zt - db.ztec.length, deletedDisplays: dp - db.displays.length, deletedGifts: gf - db.gifts.length });
     }
 
     // AI 의견 요약: GET = 저장된 요약, POST = 새로 요약
-    const sm = p.match(/^\/api\/admin\/ai-summary\/(ztec|display|product:[\w-]+)$/);
+    const sm = p.match(/^\/api\/admin\/ai-summary\/(ztec|gift|display|product:[\w-]+)$/);
     if (sm) {
       const key = sm[1];
       const src = summarySource(key);
@@ -1039,6 +1100,34 @@ async function handle(req, res) {
     const existing = db.ztec.find((e) => sameName(e.store, store));
     if (existing) Object.assign(existing, data);
     else db.ztec.push({ id: crypto.randomUUID(), createdAt: data.updatedAt, ...data });
+    saveDb();
+    return send(res, existing ? 200 : 201, { ok: true, updated: !!existing });
+  }
+
+  // 사은품 니즈 (매장당 1회, 다시 저장하면 수정)
+  if (m === 'GET' && p === '/api/gifts/mine') {
+    const k = storeKey(cleanText(url.searchParams.get('store'), 30));
+    return send(res, 200, (k && db.gifts.find((e) => storeKey(e.store) === k)) || null);
+  }
+  if (m === 'POST' && p === '/api/gifts') {
+    const b = await readBody(req);
+    const store = cleanText(b.store, 30);
+    if (!store) return send(res, 400, { error: '매장명을 먼저 입력해 주세요.' });
+    if (!(b.freq in OPTIONS.giftFreq)) return send(res, 400, { error: '1. 사은품 문의 빈도를 골라 주세요.' });
+    if (!(b.delay in OPTIONS.giftDelay)) return send(res, 400, { error: '2. 사은품 때문에 구매를 미룬 경우를 골라 주세요.' });
+    if (!(b.impact in OPTIONS.giftImpact)) return send(res, 400, { error: '3. 현재 사은품이 구매에 준 영향을 골라 주세요.' });
+    if (b.impact !== 'noGift' && !intIn(b.reaction, 1, 5)) return send(res, 400, { error: '3. 현재 사은품에 대한 고객 반응을 골라 주세요.' });
+    const items = [...new Set(Array.isArray(b.items) ? b.items.filter((x) => OPTIONS.giftItems.includes(x)) : [])].slice(0, 3);
+    if (!items.length) return send(res, 400, { error: '4. 고객이 원하는 사은품을 1~3개 골라 주세요.' });
+    if (!(String(b.threshold) in OPTIONS.giftThreshold)) return send(res, 400, { error: '5. 적정 사은품 기준 금액을 골라 주세요.' });
+    const data = {
+      store, freq: b.freq, delay: b.delay, impact: b.impact, reaction: b.impact === 'noGift' ? 0 : b.reaction,
+      currentNote: cleanText(b.currentNote, 500), items, itemNote: cleanText(b.itemNote, 500), threshold: String(b.threshold), idea: cleanText(b.idea, 500),
+      updatedAt: new Date().toISOString(),
+    };
+    const existing = db.gifts.find((e) => storeKey(e.store) === storeKey(store));
+    if (existing) Object.assign(existing, data);
+    else db.gifts.push({ id: crypto.randomUUID(), createdAt: data.updatedAt, ...data });
     saveDb();
     return send(res, existing ? 200 : 201, { ok: true, updated: !!existing });
   }
