@@ -661,6 +661,15 @@ test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체
   for (const id of [a, b]) await fetch(base + `/api/admin/products/${id}`, { method: 'DELETE', headers: admin });
 });
 
+test('화면 스크립트 문법 검사 (관리자·매장·리포트·공용 JS)', () => {
+  const vm = require('node:vm');
+  for (const f of ['admin.html', 'index.html', 'report.html']) {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+    [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].forEach((m, i) => assert.doesNotThrow(() => new vm.Script(m[1], { filename: `${f}#${i}` }), `${f} 스크립트 ${i}`));
+  }
+  for (const f of ['bulk-ai.js', 'xlsx-lite.js']) assert.doesNotThrow(() => new vm.Script(fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8')), f);
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);

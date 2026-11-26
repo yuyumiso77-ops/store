@@ -72,13 +72,11 @@
       <div id="dStores" style="margin-top:12px"></div>
     </div>
     <div class="chips bold-chips" id="dView" style="margin-bottom:12px">
-      <button type="button" data-v="space">🧩 공간 효율</button>
       <button type="button" data-v="optimal">🧮 적정 진열·재고</button>
       <button type="button" data-v="stock">📦 재고 대조</button>
       <button type="button" data-v="analysis">📈 분석</button>
       <button type="button" data-v="list">📋 SKU 목록</button>
     </div>
-    <div id="dSpace"></div>
     <div id="dStock"></div>
     <div id="dOpt"></div>
     <div id="dAnalysis"></div>
@@ -952,8 +950,8 @@ async function loadDisplayTab() {
   $('dRows').replaceChildren(el('p', { class: 'hint' }, '불러오는 중…'));
   DREP = await api('/api/admin/display');
   renderDisplayTab();
-  let v = 'space';
-  try { v = localStorage.getItem('dView2') || 'space'; } catch {}
+  let v = 'optimal';
+  try { v = localStorage.getItem('dView3') || 'optimal'; } catch {}
   setDView(v);
 }
 function renderDisplayTab() {
@@ -1040,88 +1038,6 @@ const GROUPS = {
   review: { label: '진열 재검토', desc: '진열은 많은데 반응·판매가 부진해요', color: 'var(--s3)' },
 };
 const pctS = (v) => (v == null ? '-' : v + '%');
-// ---- 🧩 공간 효율: 좁은 공간에 잘 팔리는 상품이 걸려 있는가 ----
-const SCORE_L = (s) => (s == null ? '판단 불가' : s >= 67 ? '잘 팔림' : s <= 33 ? '안 팔림' : '보통');
-async function loadSpace() {
-  $('dSpace').replaceChildren(el('p', { class: 'hint' }, '분석 중…'));
-  const sp = await api('/api/admin/space-efficiency');
-  if (!sp.totals.slots) {
-    $('dSpace').replaceChildren(el('div', { class: 'card hint' }, '아직 진열 체크 데이터가 없어요. 매장들이 📦 진열 체크를 하면 여기에서 분석돼요.'));
-    return;
-  }
-  const t = sp.totals;
-  const pct = (v) => (t.slots ? Math.round((v / t.slots) * 100) : 0) + '%';
-  $('dSpace').replaceChildren(
-    el('div', { class: 'card' },
-      el('h2', { style: 'margin:0 0 6px' }, '🧩 작은 공간, 잘 팔리는 상품으로 채워져 있나요?'),
-      el('p', { class: 'hint', style: 'margin:0 0 12px;line-height:1.6' }, '진열 중인 SKU 하나를 "진열 자리 하나"로 보고, 그 자리의 상품이 그 매장에서 얼마나 팔리는지(상품 평가의 판매 반응) 점수로 매겼어요. 잘 팔림 100 · 보통 50 · 안 팔림 0점. 그 매장이 평가하지 않은 상품은 전체 매장 평균을 썼어요.'),
-      el('div', { class: 'stats' },
-        stat(t.score == null ? '-' : t.score + '점', '평균 판매 점수 (진열 자리 기준)'),
-        stat(pct(t.good), `잘 팔리는 상품이 차지한 자리 (${t.good.toLocaleString()}개)`),
-        stat(pct(t.poor), `안 팔리는 상품이 차지한 자리 (${t.poor.toLocaleString()}개)`),
-        stat(t.goodStock.toLocaleString() + '건', '창고에서 놀고 있는 잘 팔리는 SKU'),
-        stat(t.swaps.toLocaleString() + '건', '바로 바꿀 수 있는 교체 추천')),
-      el('div', { style: 'margin-top:12px' }, el('div', { class: 'sbar', style: 'height:14px' },
-        el('span', { class: 'g', style: `width:${(t.good / t.slots) * 100}%` }), el('span', { class: 'n', style: `width:${(t.normal / t.slots) * 100}%` }), el('span', { class: 'p', style: `width:${(t.poor / t.slots) * 100}%` })),
-        el('div', { class: 'legend' }, el('span', {}, el('i', { class: 'g' }), '잘 팔림'), el('span', {}, el('i', { class: 'n' }), '보통'), el('span', {}, el('i', { class: 'p' }), '안 팔림'), el('span', {}, el('i', {}), `판단 불가 ${t.unknown}`))),
-      t.evalCount < 50 ? el('p', { class: 'hint warn-text' }, '⚠️ 상품 평가가 아직 적어서 결과가 정확하지 않을 수 있어요.') : null),
-    spaceTypeCard(sp), spaceStoreCard(sp), spaceSkuCard(sp));
-}
-function spaceTypeCard(sp) {
-  const rows = sp.byType.filter((x) => x.known);
-  const max = Math.max(1, ...rows.map((x) => Math.max(x.spacePct, x.contribPct)));
-  const multi = new Set(rows.map((x) => x.line)).size > 1;
-  return el('div', { class: 'card' },
-    el('h2', { style: 'margin:0 0 4px' }, '👕 복종별: 차지한 공간만큼 팔리나요?'),
-    el('p', { class: 'hint', style: 'margin:0 0 6px;line-height:1.6' }, '공간 점유율 = 전체 진열 자리 중 이 복종이 차지한 비율 · 판매 기여 = 전체 판매 점수 중 이 복종의 몫. 판매 기여가 공간보다 크면(효율 1 이상) 좁은 공간을 잘 쓰는 복종이고, 작으면 공간을 줄이고 다른 복종에 내줘도 되는 후보예요.'),
-    el('div', { class: 'legend', style: 'margin-bottom:8px' }, el('span', {}, el('i', { style: 'background:var(--s1)' }), '공간 점유율'), el('span', {}, el('i', { style: 'background:var(--s2)' }), '판매 기여')),
-    ...rows.sort((a, b) => b.efficiency - a.efficiency).map((x) => el('div', { class: 'eff-row' },
-      el('div', { class: 'eff-name' }, el('b', {}, (multi ? x.line + ' ' : '') + x.type), el('small', { class: 'hint' }, `자리 ${x.slots}개 · 평균 ${x.score}점`)),
-      el('div', { class: 'eff-bars' },
-        el('div', { class: 'bar gbar' }, el('span', { class: 'track' }, el('span', { class: 'fill', style: `width:${(x.spacePct / max) * 100}%;background:var(--s1)` })), el('small', {}, x.spacePct + '%')),
-        el('div', { class: 'bar gbar' }, el('span', { class: 'track' }, el('span', { class: 'fill', style: `width:${(x.contribPct / max) * 100}%;background:var(--s2)` })), el('small', {}, x.contribPct + '%'))),
-      el('div', { class: 'eff-idx' }, el('b', {}, x.efficiency.toFixed(2)),
-        el('span', { class: 'tag ' + (x.efficiency >= 1.1 ? 'good' : x.efficiency <= 0.9 ? 'gap' : '') }, x.efficiency >= 1.1 ? '공간 대비 잘 팔림' : x.efficiency <= 0.9 ? '공간 줄일 후보' : '보통')))));
-}
-function swapLine(w) {
-  const it = (x, cls) => el('span', { class: 'sw ' + cls }, x.imageUrl ? el('img', { src: x.imageUrl, alt: '', loading: 'lazy' }) : null, el('b', {}, `${x.code}`), ` ${x.color} `, el('small', {}, `${SCORE_L(x.score)}${x.src === 'all' ? '·전체평균' : ''}`));
-  return el('li', { class: 'swap' }, it(w.out, 'out'), el('span', { class: 'arrow' }, '→'), it(w.in, 'in'));
-}
-function spaceStoreCard(sp) {
-  let q = '';
-  const list = el('div');
-  const draw = () => {
-    const rows = sp.stores.filter((s) => !q || s.name.includes(q));
-    list.replaceChildren(...rows.map((s) => el('details', { class: 'space-store' },
-      el('summary', {},
-        el('span', { class: 'ss-name' }, el('b', {}, s.name), el('small', { class: 'hint' }, `진열 자리 ${s.slots}개` + (s.ownPct < 50 ? ` · 매장 평가 ${s.ownPct}% (나머지는 전체 평균)` : ''))),
-        el('span', { class: 'ss-score ' + (s.score == null ? '' : s.score >= 67 ? 'good' : s.score < 50 ? 'bad' : '') }, s.score == null ? '-' : s.score + '점'),
-        el('span', { class: 'ss-bar' }, stackBar(s.good, s.normal, s.poor)),
-        el('span', { class: 'ss-tags' }, s.poor ? el('span', { class: 'tag gap' }, `안 팔리는 진열 ${s.poor}`) : null, s.goodStock.length ? el('span', { class: 'tag good' }, `창고 속 잘 팔림 ${s.goodStock.length}`) : null)),
-      el('div', { class: 'ss-body' },
-        s.swaps.length ? [el('div', { class: 'q', style: 'margin:4px 0' }, `🔁 교체 추천 ${s.swaps.length}건 (왼쪽을 빼고 오른쪽을 진열 · 같은 복종 우선)`), el('ul', { class: 'swaps' }, s.swaps.map(swapLine))]
-          : el('p', { class: 'hint' }, s.poorShown.length ? '안 팔리는 진열은 있지만, 창고에 바꿔 걸 잘 팔리는 상품이 없어요.' : '안 팔리는 상품이 진열된 자리가 없어요. 👍'),
-        s.poorShown.length > s.swaps.length ? el('p', { class: 'hint' }, '바꿀 상품이 없는 안 팔리는 진열: ' + s.poorShown.slice(s.swaps.length).map((x) => `${x.code} ${x.color}`).join(', ')) : null,
-        s.goodStock.length > s.swaps.length ? el('p', { class: 'hint' }, '자리가 생기면 더 걸 수 있는 창고 속 잘 팔리는 상품: ' + s.goodStock.filter((g) => !s.swaps.some((w) => w.in.sku === g.sku)).map((x) => `${x.code} ${x.color}`).join(', ')) : null,
-        s.goodNone.length ? el('p', { class: 'hint' }, '📮 잘 팔리는데 매장에 아예 없는 상품 (배분 검토): ' + s.goodNone.map((x) => `${x.code} ${x.color}`).join(', ')) : null))));
-  };
-  draw();
-  const search = el('input', { type: 'search', placeholder: '매장 검색', style: 'max-width:220px' });
-  search.oninput = () => { q = search.value.trim(); draw(); };
-  return el('div', { class: 'card' },
-    el('div', { class: 'product-head' }, el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '🏬 매장별 공간 효율'),
-      el('p', { class: 'hint', style: 'margin:0' }, '점수 낮은 매장부터 보여요. 매장을 누르면 "무엇을 빼고 무엇을 걸지" 교체 추천이 나와요.')),
-      el('div', { class: 'actions' }, search, el('a', { class: 'btn', href: '/api/admin/space-swaps.csv' }, '교체 추천 CSV'))),
-    list);
-}
-function spaceSkuCard(sp) {
-  const block = (title, desc, items, word) => el('div', {}, el('h3', { style: 'margin:0 0 4px' }, title), el('p', { class: 'hint', style: 'margin:0 0 8px' }, desc),
-    items.length ? collapsibleList(items, 6, (k) => el('li', { class: 'evrow' }, el('div', {}, el('b', {}, `${k.code} · ${k.color}`), ` — ${word} ${k.stores.length}매장 (${SCORE_L(k.score)})`, el('div', { class: 'meta' }, k.stores.join(', ')))), 'SKU')
-      : el('p', { class: 'hint' }, '해당 SKU가 없어요.'));
-  return el('div', { class: 'card grid2', style: 'display:grid' },
-    block('🪑 자리만 차지하는 SKU', '여러 매장에서 진열은 됐지만 그 매장에서 안 팔리는 SKU예요. 진열 축소·RT 후보.', sp.wasted, '안 팔리는데 진열'),
-    block('📦 창고에서 놀고 있는 잘 팔리는 SKU', '잘 팔리는데 창고에만 있는 SKU예요. 위 자리와 바꿔 걸면 같은 공간으로 더 팔 수 있어요.', sp.idle, '창고에만'));
-}
 // ---- 📦 재고 대조: ERP 매장 재고(재고·판매수량) × 진열 체크 ----
 const ST_L = { shown: '진열', stock: '창고만', none: '없음', notReceived: '미입고', unchecked: '미체크' };
 const num = (v) => (v == null ? '-' : Number(v).toLocaleString());
@@ -1357,7 +1273,8 @@ function seasonCard(o) {
   if (!o.seasonal) return el('div', { class: 'card' }, el('h2', { style: 'margin:0 0 4px' }, '🌡️ 기온·계절 반영'),
     el('p', { class: 'hint', style: 'margin:0' }, '지금 올라간 판매 자료에는 주별 정보가 없어요. 📦 재고 대조 화면에서 판매 자료 엑셀을 한 번 더 올리면, 최근 4주 판매 흐름(기온 변화)을 반영해 권장 진열·재고를 다시 계산해요.'));
   const se = o.seasonal;
-  const spark = (all) => { const weeks = Array.from({ length: se.fullWeeks || all.length }, (_, i) => all[i] || 0); const mx = Math.max(1, ...weeks); // 7일 안 된 마지막 주는 그래프에서 뺌 return el('span', { class: 'spark', title: se.weekStarts.map((d, i) => `${d}~ ${weeks[i] || 0}개`).join('\n') }, weeks.map((v, i) => el('i', { class: i >= weeks.length - 4 ? 'r' : '', style: `height:${Math.max(4, (v / mx) * 100)}%` }))); };
+  // 7일 안 된 마지막 주는 그래프에서 뺌
+  const spark = (all) => { const weeks = Array.from({ length: se.fullWeeks || all.length }, (_, i) => all[i] || 0); const mx = Math.max(1, ...weeks); return el('span', { class: 'spark', title: se.weekStarts.map((d, i) => `${d}~ ${weeks[i] || 0}개`).join('\n') }, weeks.map((v, i) => el('i', { class: i >= weeks.length - 4 ? 'r' : '', style: `height:${Math.max(4, (v / mx) * 100)}%` }))); };
   return el('div', { class: 'card' },
     el('h2', { style: 'margin:0 0 4px' }, '🌡️ 기온·계절 반영 — 지금 무엇이 팔리고 있나'),
     el('p', { class: 'hint', style: 'margin:0 0 10px;line-height:1.6' }, `최근 ${se.recentDays}일(${se.recentFrom}~${o.salesInfo.to}) 하루 판매를 시즌 평균과 비교한 계절 지수예요. 날이 추워지며 수요가 오르는 복종은 1보다 크고, 시즌이 끝나가는 복종은 1보다 작아요. 권장 진열 순서와 권장 재고는 "최근 ${se.recentDays}일 판매 60% + 시즌 평균×계절 지수 40%"의 예상 판매로 계산해요.`),
@@ -1396,16 +1313,14 @@ function optDetail(s, o) {
         el('ul', { class: 'opt-list' }, d.evalMiss.map((x) => el('li', {}, el('b', {}, x.code), ` — 매장 평가 '${{ good: '잘 팔림', normal: '보통', poor: '안 팔림' }[x.said]}' · 실제 판매 ${x.qty}개 (${{ good: '상위', normal: '중위', poor: '하위' }[x.actual]})`)))) : null));
 }
 function setDView(v) {
-  DVIEW = ['list', 'space', 'stock', 'optimal'].includes(v) ? v : 'analysis';
+  DVIEW = ['list', 'stock', 'optimal'].includes(v) ? v : 'analysis';
   $('dView').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === DVIEW));
   $('dAnalysis').hidden = DVIEW !== 'analysis';
-  $('dSpace').hidden = DVIEW !== 'space';
   $('dStock').hidden = DVIEW !== 'stock';
   $('dOpt').hidden = DVIEW !== 'optimal';
   $('dListView').hidden = DVIEW !== 'list';
-  try { localStorage.setItem('dView2', DVIEW); } catch {}
+  try { localStorage.setItem('dView3', DVIEW); } catch {}
   if (DVIEW === 'analysis') loadDisplayAnalysis();
-  if (DVIEW === 'space') loadSpace();
   if (DVIEW === 'stock') loadStock();
   if (DVIEW === 'optimal') loadOptimal();
 }
