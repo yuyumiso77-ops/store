@@ -1170,7 +1170,7 @@ async function loadOptimal() {
     return tb;
   })()));
   draw();
-  $('dOpt').replaceChildren(dataCard,
+  $('dOpt').replaceChildren(dataCard, planCard(o),
     el('div', { class: 'card' },
       el('div', { class: 'product-head' }, el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '🧮 매장별 권장 진열 SKU · 적정 재고'),
         el('p', { class: 'hint', style: 'margin:0' }, `판매 ${o.salesInfo.from}~${o.salesInfo.to} 기준 · 평당 매출 높은 순 · 매장 줄을 누르면 걸기·빼기 후보와 재고 과부족이 나와요.`)),
@@ -1184,6 +1184,52 @@ async function loadOptimal() {
         stat(t.agreePct == null ? '-' : t.agreePct + '%', '매장 평가와 실제 판매 일치율')),
       rowsBox),
     seasonCard(o), method);
+}
+// 🚀 진열 최적화 플랜: 같은 자리 수로 예상 매출이 가장 큰 구성 + 교체 짝
+const OPEN_PLAN = new Set();
+function planPairs(p) {
+  if (!p.pairs.length) return el('p', { class: 'hint' }, '지금 진열이 이미 최적에 가까워요 👍');
+  const it = (x, extra) => el('div', { class: 'pp-item' }, x.imageUrl ? el('img', { src: x.imageUrl, alt: x.code, class: 'opt-img' }) : null,
+    el('div', {}, el('b', {}, `${x.code} ${x.color}`), el('div', { class: 'hint' }, extra)));
+  return el('ul', { class: 'pp-list' }, p.pairs.map((x) => el('li', {},
+    el('div', { class: 'pp-out' }, it(x.out, `예상 주 ${x.out.week}개 · 재고 ${x.out.stock}`)),
+    el('div', { class: 'pp-arrow' }, '→'),
+    el('div', { class: 'pp-in' }, it(x.in, `예상 주 ${x.in.week}개${x.in.basis === 'network' ? ' (다른 매장 기준)' : ''} · ` + (x.in.now ? `재고 ${x.in.stock} · 바로 가능` : '재고 없음 · 배분 필요'))),
+    el('div', { class: 'pp-gain' }, el('b', {}, '+' + won(x.gainAmt)), el('div', { class: 'hint' }, `주 +${x.gainWeek}개`)))));
+}
+function planCard(o) {
+  const P = o.totals.plan;
+  const weeks = Math.round(o.opt.coverDays / 7);
+  const rows = o.stores.filter((s) => s.plan.checked).sort((a, b) => b.plan.gainAmt - a.plan.gainAmt);
+  const un = o.stores.filter((s) => !s.plan.checked).map((s) => s.name);
+  const tb = el('table', { class: 'stock-table opt-table' }, el('tr', {}, ['매장', '진열 자리', '교체 (바로 가능)', '지금 진열 예상 주간 매출', '바로 교체 시 주간 +', '배분 포함 주간 +', '증가율'].map((h, i) => el('th', { class: i ? 'n' : '' }, h))));
+  rows.forEach((s) => {
+    const p = s.plan;
+    const tr = el('tr', { class: 'opt-row' + (OPEN_PLAN.has(s.name) ? ' open' : '') },
+      el('td', {}, el('b', {}, s.name), el('span', { class: 'caret' }, ' ▾'), el('div', { class: 'hint', style: 'font-size:.75rem' }, s.tier ? el('span', { class: 'tier t' + s.tier }, { A: '상위', B: '중위', C: '하위' }[s.tier]) : null, ' ', s.manager)),
+      el('td', { class: 'n' }, p.slots), el('td', { class: 'n' }, p.swaps ? `${p.swaps} (${p.nowSwaps})` : '-'),
+      el('td', { class: 'n' }, won(p.currentAmt)), el('td', { class: 'n' }, p.nowGainAmt ? el('b', { class: 'gain' }, '+' + won(p.nowGainAmt)) : '-'),
+      el('td', { class: 'n' }, p.gainAmt ? '+' + won(p.gainAmt) : '-'), el('td', { class: 'n' }, p.currentAmt ? Math.round((p.gainAmt / p.currentAmt) * 100) + '%' : '-'));
+    const det = el('tr', { class: 'opt-detail' }, el('td', { colspan: '7' }, el('div', { class: 'opt-det' },
+      el('div', { class: 'opt-sum' }, `진열 자리 ${p.slots}개는 그대로, 아래 ${p.swaps}개를 바꾸면 예상 주간 매출 +${won(p.gainAmt)} (바로 가능 ${p.nowSwaps}개로 +${won(p.nowGainAmt)}). 빼는 상품은 예상 판매가 낮은 순, 거는 상품은 높은 순으로 짝지었어요.`),
+      planPairs(p))));
+    det.hidden = !OPEN_PLAN.has(s.name);
+    tr.onclick = () => { det.hidden = !det.hidden; tr.classList.toggle('open', !det.hidden); det.hidden ? OPEN_PLAN.delete(s.name) : OPEN_PLAN.add(s.name); };
+    tb.append(tr, det);
+  });
+  return el('div', { class: 'card plan-card' },
+    el('div', { class: 'product-head' },
+      el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '🚀 진열 최적화 플랜 — 같은 공간에서 판매 극대화'),
+        el('p', { class: 'hint', style: 'margin:0;line-height:1.6' }, '매장마다 지금 진열 자리 수는 그대로 두고, 그 매장에서 지금(기온·계절 반영) 예상 매출이 가장 큰 SKU로 채웠을 때와 지금 진열을 비교했어요. 매장을 누르면 "빼기 → 걸기" 교체 짝과 예상 증가가 나와요.')),
+      el('div', { class: 'actions' }, el('a', { class: 'btn', href: '/api/admin/display-plan.csv' + optQs() }, '교체 플랜 CSV'))),
+    el('div', { class: 'stats', style: 'margin:14px 0' },
+      stat('+' + won(P.nowGainAmt), `지금 매장 재고로 바로 교체하면 (주간 예상 매출, ${num(P.nowSwaps)}건)`),
+      stat('+' + won(P.gainAmt), `본사 배분까지 하면 (주간, ${num(P.swaps)}건)`),
+      stat(P.currentAmt ? '+' + Math.round((P.gainAmt / P.currentAmt) * 100) + '%' : '-', '지금 진열의 예상 주간 매출 대비'),
+      stat('+' + won(P.nowGainAmt * weeks), `바로 교체 효과 ${weeks}주 환산`)),
+    rows.length ? el('div', { class: 'tw' }, tb) : el('p', { class: 'hint' }, '진열 체크를 한 매장이 없어요. 매장들이 📦 진열 체크를 하면 계산돼요.'),
+    un.length ? el('p', { class: 'hint', style: 'margin-top:10px' }, `진열 체크를 안 한 매장 ${un.length}곳은 비교할 수 없어 빠졌어요: ${un.join(', ')}`) : null,
+    el('p', { class: 'hint', style: 'margin-top:6px' }, `※ 예상 판매 = 그 매장 판매(최근 흐름 60% + 시즌 평균×계절 지수 40%). 그 매장에서 안 팔아 본 상품은 다른 매장 평균 × 이 매장 판매 규모 × ${o.opt.newSkuFactor}(보수적으로)로 추정해요. 실제 매출을 보장하는 값이 아니라 우선순위를 정하는 기준이에요.`));
 }
 // 🌡️ 기온·계절 반영 카드: 복종별 계절 지수 + 주별 판매 흐름
 function seasonCard(o) {
