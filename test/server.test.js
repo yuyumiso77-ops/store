@@ -565,6 +565,23 @@ test('명단에 없는 매장명 합치기', async () => {
   await fetch(base + `/api/admin/stores/${encodeURIComponent('현대신촌')}?confirm=${encodeURIComponent('현대신촌')}`, { method: 'DELETE', headers: admin });
 });
 
+test('공간 효율: 안 팔리는 진열 ↔ 창고 속 잘 팔리는 상품 교체 추천', async () => {
+  const mk = async (name) => (await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name, category: '용품' }) })).json()).id;
+  const bad = await mk('안팔림 상품'), good = await mk('잘팔림 상품');
+  const store = '공간테스트점';
+  const ev = (productId, b) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId, staff: store, ...b }) });
+  assert.strictEqual((await ev(bad, { reaction: 2, sales: 'poor', cons: ['가격(가치 대비)'], noBuyReasons: ['기타'] })).status, 201);
+  assert.strictEqual((await ev(good, { reaction: 5, sales: 'good', pros: ['디자인'], sellReasons: ['기타'] })).status, 201);
+  await fetch(base + '/api/display', { method: 'POST', headers: staff, body: JSON.stringify({ store, items: [{ sku: 'P-' + bad, status: 'shown' }, { sku: 'P-' + good, status: 'stock' }] }) });
+  const sp = await (await fetch(base + '/api/admin/space-efficiency', { headers: admin })).json();
+  const st = sp.stores.find((x) => x.name === store);
+  assert.deepStrictEqual([st.slots, st.score, st.poor, st.goodStock.length, st.swaps.length], [1, 0, 1, 1, 1]);
+  assert.deepStrictEqual([st.swaps[0].out.name, st.swaps[0].in.name], ['안팔림 상품', '잘팔림 상품']);
+  assert.ok((await (await fetch(base + '/api/admin/space-swaps.csv', { headers: admin })).text()).includes(store));
+  await fetch(base + `/api/admin/stores/${encodeURIComponent(store)}?confirm=${encodeURIComponent(store)}`, { method: 'DELETE', headers: admin });
+  for (const id of [bad, good]) await fetch(base + `/api/admin/products/${id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);
