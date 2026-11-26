@@ -68,7 +68,7 @@ const OPTIONS = {
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], giftItems: d.giftItems, summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [], stock: d.stock || null, sales: d.sales || null, storeSizes: d.storeSizes || null };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], giftItems: d.giftItems, summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [], stock: d.stock || null, sales: d.sales || null, storeSizes: d.storeSizes || null, production: d.production || null };
   } catch {
     return { products: [], evaluations: [], ztec: [], gifts: [], summaries: {}, displays: [], stores: [] };
   }
@@ -251,6 +251,9 @@ function summary() {
   return val;
 }
 function computeSummary() {
+  // 생산·판매·판매율: 생산수량 = 올린 생산 자료, 판매수량 = 생산 자료의 판매수량(있으면) 없으면 판매 자료(매장 판매 합계)
+  const psales = typeof productSales === 'function' ? productSales() : null;
+  const prodOf = (id) => (db.production && db.production.products[id]) || null;
   const avg = (arr) => (arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null);
   const products = db.products.map((p) => {
     const all = db.evaluations.filter((e) => e.productId === p.id);
@@ -277,6 +280,12 @@ function computeSummary() {
       noBuyReasons: countBy(es.map((e) => e.noBuyReasons)),
       sellReasons: countBy(es.map((e) => e.sellReasons || [])),
       gap: gapOf(avg(es.map((e) => e.reaction)), sales, es.length),
+      ...(() => {
+        const pr = prodOf(p.id);
+        const salesQty = pr && pr.sales != null ? pr.sales : psales ? (psales.get(p.id) || { qty: 0 }).qty : null;
+        const prodQty = pr ? pr.prod : null;
+        return { prodQty, salesQty, sellThrough: prodQty && salesQty != null ? Math.round((salesQty / prodQty) * 1000) / 10 : null };
+      })(),
       ageGroups: countBy(es.map((e) => e.ageGroups)),
       genders: countBy(es.map((e) => e.genders)),
       missing: es.filter((e) => e.missing).map(({ missing, staff, updatedAt }) => ({ missing, staff, updatedAt })),
@@ -291,7 +300,9 @@ function computeSummary() {
     ...x,
     done: db.evaluations.filter((e) => e.staff === x.name && active.includes(e.productId)).length,
   }));
-  return { totalEvaluations: db.evaluations.filter(isDone).length, skippedEvaluations: db.evaluations.filter((e) => !isDone(e)).length, activeProducts: active.length, staff, products, ztec: ztecSummary(), aiEnabled: !!process.env.ANTHROPIC_API_KEY };
+  const productionInfo = db.production ? { fileName: db.production.fileName, uploadedAt: db.production.uploadedAt, products: Object.keys(db.production.products).length, hasSales: db.production.hasSales } : null;
+  const salesInfo = db.sales ? { from: db.sales.from, to: db.sales.to } : null;
+  return { productionInfo, salesInfo, totalEvaluations: db.evaluations.filter(isDone).length, skippedEvaluations: db.evaluations.filter((e) => !isDone(e)).length, activeProducts: active.length, staff, products, ztec: ztecSummary(), aiEnabled: !!process.env.ANTHROPIC_API_KEY };
 }
 
 // ---------- Z-TEC 매장 의견 (매장당 1회) ----------
@@ -787,6 +798,28 @@ function importSales(b) {
   saveDb();
   const qty = db.sales.items.reduce((a, x) => a + x.qty, 0), amount = db.sales.items.reduce((a, x) => a + x.amount, 0);
   return { ok: true, items: items.size, stores: new Set(db.sales.items.map((x) => x.store)).size, skus: new Set(db.sales.items.map((x) => x.sku)).size, qty, amount, unmatchedStores: db.sales.unmatchedStores, skipped };
+}
+// 생산수량 자료: 품번(+색상)별 생산수량, 판매수량(선택). 상품 단위로 합침
+function importProduction(b) {
+  const byCode = new Map(db.products.filter((p) => p.code).map((p) => [String(p.code).toUpperCase().trim(), p]));
+  const products = {};
+  let matched = 0, skipped = 0, hasSales = false;
+  for (const r of Array.isArray(b.rows) ? b.rows : []) {
+    if (!Array.isArray(r)) { skipped++; continue; }
+    const [code, , prod, sales] = r;
+    const p = byCode.get(String(code || '').toUpperCase().trim());
+    const q = Number(prod);
+    if (!p || !(q >= 0)) { skipped++; continue; }
+    const a = products[p.id] || { prod: 0, sales: null };
+    a.prod += q;
+    if (sales != null && sales !== '' && !Number.isNaN(Number(sales))) { a.sales = (a.sales || 0) + Number(sales); hasSales = true; }
+    products[p.id] = a;
+    matched++;
+  }
+  if (!matched) return { error: '조사 상품의 품번과 맞는 생산수량이 없어요. 첫 줄에 품번(상품코드)·생산수량 열이 있는지 확인해 주세요.' };
+  db.production = { fileName: cleanText(b.fileName, 120), uploadedAt: new Date().toISOString(), products, hasSales };
+  saveDb();
+  return { ok: true, products: Object.keys(products).length, rows: matched, skipped, hasSales };
 }
 // 상품별 실판매 합계 (판매 자료가 있을 때)
 function productSales() {
@@ -1394,6 +1427,12 @@ async function handle(req, res) {
       return send(res, r.error ? 400 : 200, r);
     }
     if (m === 'DELETE' && p === '/api/admin/sales') { db.sales = null; saveDb(); return send(res, 200, { ok: true }); }
+    if (m === 'POST' && p === '/api/admin/production/import') {
+      let b;
+      try { b = JSON.parse((await readRaw(req, 4 * 1024 * 1024)).toString('utf8')); } catch { return send(res, 400, { error: '생산 자료를 읽지 못했어요.' }); }
+      const r = importProduction(b);
+      return send(res, r.error ? 400 : 200, r);
+    }
     if (m === 'POST' && p === '/api/admin/sizes/import') {
       const r = importSizes(await readBody(req, 256 * 1024));
       return send(res, r.error ? 400 : 200, r);

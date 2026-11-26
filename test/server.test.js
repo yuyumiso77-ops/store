@@ -657,6 +657,14 @@ test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체
   // 등급별 재고: 평수 있는 매장 중 평당 매출 상위 → A
   assert.strictEqual(jd.tier, 'A');
   assert.ok((await (await fetch(base + '/api/admin/optimal-display.csv', { headers: admin })).text()).includes('롯데중동'));
+  // 생산수량 → 상품별 판매율 (판매 = 판매 자료 합계, 생산 자료에 판매수량이 있으면 그 값)
+  const pi = await (await fetch(base + '/api/admin/production/import', { method: 'POST', headers: admin, body: JSON.stringify({ fileName: 'p.csv', rows: [['STKA1', '', 40, null], ['stka1', 'X', 40, null], ['NOPE', '', 5, null]] }) })).json();
+  assert.deepStrictEqual([pi.products, pi.skipped, pi.hasSales], [1, 1, false]);
+  let sp = (await (await fetch(base + '/api/admin/summary', { headers: admin })).json()).products.find((x) => x.code === 'STKA1');
+  assert.deepStrictEqual([sp.prodQty, sp.salesQty, sp.sellThrough], [80, 8, 10]);
+  await fetch(base + '/api/admin/production/import', { method: 'POST', headers: admin, body: JSON.stringify({ fileName: 'p.csv', rows: [['STKA1', '', 80, 20]] }) });
+  sp = (await (await fetch(base + '/api/admin/summary', { headers: admin })).json()).products.find((x) => x.code === 'STKA1');
+  assert.deepStrictEqual([sp.salesQty, sp.sellThrough], [20, 25]);
   await fetch(base + '/api/admin/sales', { method: 'DELETE', headers: admin });
   await fetch(base + '/api/admin/stock', { method: 'DELETE', headers: admin });
   for (const st of ['롯데중동', '롯데잠실']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });

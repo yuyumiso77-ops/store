@@ -112,6 +112,8 @@
     <div id="staffBox" style="margin-top:12px"></div>
   </div>
 
+  <div id="prodBox"></div>
+
   <div id="ztecBox"></div>
 
   <div class="card">
@@ -170,6 +172,8 @@
         <option value="poorDesc">'잘 안 팔림' 비율 높은 순</option>
         <option value="goodDesc">'잘 팔림' 비율 높은 순</option>
         <option value="displayAsc">진열률 낮은 순</option>
+        <option value="stDesc">판매율 높은 순</option>
+        <option value="stAsc">판매율 낮은 순</option>
         <option value="countAsc">평가 매장 적은 순</option>
         <option value="countDesc">평가 매장 많은 순</option>
       </select>
@@ -362,6 +366,8 @@ function renderRow(p) {
     el('div', { class: 'pc num' }, el('b', {}, n), el('small', {}, '매장')),
     el('div', { class: 'pc num' }, el('b', {}, fmt(p.avgReaction)), el('small', {}, '반응')),
     el('div', { class: 'pc num' + (p.displayRate != null && p.displayRate < 50 ? ' low' : '') }, el('b', {}, p.displayRate == null ? '-' : p.displayRate + '%'), el('small', {}, '진열')),
+    el('div', { class: 'pc st', title: p.prodQty ? `생산 ${p.prodQty.toLocaleString()} · 판매 ${(p.salesQty || 0).toLocaleString()} · 판매율 ${p.sellThrough}%` : '' },
+      el('b', {}, p.sellThrough == null ? '-' : p.sellThrough + '%'), el('small', {}, p.prodQty ? `판매 ${(p.salesQty || 0).toLocaleString()} / 생산 ${p.prodQty.toLocaleString()}` : p.salesQty != null ? `판매 ${p.salesQty.toLocaleString()}` : '판매율')),
     el('div', { class: 'pc sales' },
       n ? el('div', { class: 'sbar', title: `잘 팔림 ${p.sales.good} · 보통 ${p.sales.normal} · 잘 안 팔림 ${p.sales.poor}` },
         el('span', { class: 'g', style: `width:${pct(p.sales.good)}%` }), el('span', { class: 'n', style: `width:${pct(p.sales.normal)}%` }), el('span', { class: 'p', style: `width:${pct(p.sales.poor)}%` }))
@@ -665,8 +671,47 @@ async function uploadMany(files) {
   load();
 }
 
+// 📦 생산·판매 자료: 생산수량 엑셀(품번·생산수량[·색상·판매수량])을 올리면 상품별 판매율 = 판매 ÷ 생산
+const PROD_COLS = { code: ['품번', '상품코드', '스타일', 'STYLE', 'Style', '스타일코드'], color: ['색상명', '색상', '컬러', 'COLOR'], prod: ['생산수량', '생산량', '입고수량', '총입고수량', '발주수량', '생산'], sales: ['판매수량', '총판매수량', '전체판매수량', '판매량'] };
+function prodBox(data) {
+  const file = el('input', { type: 'file', accept: '.xlsx,.csv', hidden: '' });
+  const result = el('p', { class: 'hint', style: 'margin:6px 0 0' });
+  file.onchange = async () => {
+    const f = file.files[0]; file.value = '';
+    if (!f) return;
+    try {
+      result.textContent = '파일 읽는 중…';
+      let rows;
+      if (/\.csv$/i.test(f.name)) { const buf = await f.arrayBuffer(); let text = new TextDecoder('utf-8').decode(buf); if (text.includes('\uFFFD')) text = new TextDecoder('euc-kr').decode(buf); rows = parseCsv(text); }
+      else rows = await readXlsx(f);
+      const hi = rows.findIndex((r) => (r || []).some((c) => PROD_COLS.prod.includes(String(c || '').trim())));
+      if (hi < 0) throw new Error('첫 줄에 생산수량(또는 입고수량) 열이 필요해요.');
+      const head = rows[hi].map((x) => String(x || '').trim());
+      const find = (names) => head.findIndex((h) => names.includes(h));
+      const c = { code: find(PROD_COLS.code), color: find(PROD_COLS.color), prod: find(PROD_COLS.prod), sales: find(PROD_COLS.sales) };
+      if (c.code < 0) throw new Error('첫 줄에 품번(상품코드) 열이 필요해요.');
+      const out = rows.slice(hi + 1).filter((r) => r && r[c.code]).map((r) => [String(r[c.code]).trim(), c.color >= 0 ? r[c.color] : '', Number(r[c.prod]) || 0, c.sales >= 0 && r[c.sales] !== '' && r[c.sales] != null ? Number(r[c.sales]) : null]);
+      const r = await api('/api/admin/production/import', { method: 'POST', body: JSON.stringify({ fileName: f.name, rows: out }) });
+      result.textContent = `✅ ${r.products}개 상품의 생산수량을 연결했어요.` + (r.hasSales ? ' (파일의 판매수량으로 판매율 계산)' : ' (판매수량은 판매 자료 기준)') + (r.skipped ? ` · 품번이 안 맞아 건너뛴 줄 ${r.skipped}개` : '');
+      load();
+    } catch (ex) { result.textContent = '❌ ' + ex.message; }
+  };
+  const pi = data.productionInfo, si = data.salesInfo;
+  const ps = data.products.filter((p) => p.active);
+  const prod = ps.reduce((a, p) => a + (p.prodQty || 0), 0), sales = ps.filter((p) => p.prodQty).reduce((a, p) => a + (p.salesQty || 0), 0);
+  return el('div', { class: 'card' },
+    el('div', { class: 'product-head' },
+      el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '📦 생산 · 판매 · 판매율'),
+        el('p', { class: 'hint', style: 'margin:0;line-height:1.6' },
+          (pi ? `생산수량: ${pi.fileName || ''} (${pi.products}개 상품)` : '생산수량 자료가 아직 없어요. 품번·생산수량 열이 있는 엑셀(또는 CSV)을 올려 주세요. 색상·판매수량 열이 있으면 함께 써요.') +
+          ` · 판매수량: ${pi && pi.hasSales ? '생산 자료의 판매수량' : si ? `판매 자료 (${si.from}~${si.to}, 조사 매장 합계)` : '판매 자료 없음'}`)),
+      el('div', { class: 'actions' }, el('label', { class: 'btn accent', style: 'cursor:pointer' }, file, pi ? '📁 새 생산수량 파일' : '📁 생산수량 올리기'))),
+    pi ? el('div', { class: 'stats', style: 'margin-top:12px' }, stat(prod.toLocaleString() + '장', '전체 생산수량'), stat(sales.toLocaleString() + '장', '전체 판매수량'), stat(prod ? Math.round((sales / prod) * 1000) / 10 + '%' : '-', '판매율 (판매 ÷ 생산)')) : null,
+    result);
+}
 async function load() {
   const data = await api('/api/admin/summary');
+  $('prodBox').replaceChildren(prodBox(data));
   const ps = data.products;
   const recorded = ps.filter((p) => p.count);
   const total = recorded.reduce((a, p) => a + p.count, 0);
@@ -1421,6 +1466,8 @@ function renderList() {
       poorDesc: (p) => -ratio(p, 'poor'),
       goodDesc: (p) => -ratio(p, 'good'),
       displayAsc: (p) => (p.displayRate == null ? 999 : p.displayRate),
+      stDesc: (p) => (p.sellThrough == null ? 999 : -p.sellThrough),
+      stAsc: (p) => (p.sellThrough == null ? 999 : p.sellThrough),
       countAsc: (p) => p.count,
       countDesc: (p) => -p.count,
     }[SORT];
@@ -1439,8 +1486,10 @@ function renderList() {
       const evals = rated.reduce((a, x) => a + x.count, 0);
       const avg = evals ? rated.reduce((a, x) => a + x.avgReaction * x.count, 0) / evals : null;
       const sales = g.reduce((a, x) => ({ good: a.good + x.sales.good, normal: a.normal + x.sales.normal, poor: a.poor + x.sales.poor }), { good: 0, normal: 0, poor: 0 });
+      const gp = g.filter((x) => x.prodQty), gProd = gp.reduce((a, x) => a + x.prodQty, 0), gSales = gp.reduce((a, x) => a + (x.salesQty || 0), 0);
       out.push(el('h2', { class: 'group-title' }, groupLabel(p),
-        el('small', {}, `상품 ${g.length}개 · 평가된 상품 ${rated.length}개 · 평균 반응 ${fmt(avg)} · 판매 반응 잘 팔림 ${sales.good} / 보통 ${sales.normal} / 안 팔림 ${sales.poor}`)));
+        el('small', {}, `상품 ${g.length}개 · 평가된 상품 ${rated.length}개 · 평균 반응 ${fmt(avg)} · 판매 반응 잘 팔림 ${sales.good} / 보통 ${sales.normal} / 안 팔림 ${sales.poor}` +
+          (gProd ? ` · 생산 ${gProd.toLocaleString()} / 판매 ${gSales.toLocaleString()} / 판매율 ${Math.round((gSales / gProd) * 1000) / 10}%` : ''))));
     }
     out.push(item(p));
   });
