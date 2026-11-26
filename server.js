@@ -322,6 +322,9 @@ function seedGiftItems() {
 }
 const giftItemView = (g) => ({ id: g.id, name: g.name, active: g.active, photos: g.photos.map((f) => `/images/${f}`) });
 const GIFT_NA = 'na'; // 우리 매장은 증정 안 함
+const GIFT_NR = 'nr'; // 사은품이 매장에 들어오지 않음 (미입고)
+const GIFT_SKIP = { [GIFT_NA]: '증정 안 함', [GIFT_NR]: '미입고' };
+const giftLabel = (r) => GIFT_SKIP[r] || OPTIONS.reactions[r] || '';
 
 function giftSummary() {
   const g = db.gifts;
@@ -337,9 +340,10 @@ function giftSummary() {
     reactionDist: [1, 2, 3, 4, 5].map((n) => rated.filter((e) => e.reaction === n).length),
     giftItems: db.giftItems.map((it) => {
       const rv = g.map((e) => ({ store: e.store, ...((e.reviews || {})[it.id] || {}) })).filter((x) => x.r);
-      const sc = rv.filter((x) => x.r !== GIFT_NA);
+      const sc = rv.filter((x) => !GIFT_SKIP[x.r]);
       return {
-        ...giftItemView(it), answered: rv.length, na: rv.length - sc.length, count: sc.length,
+        ...giftItemView(it), answered: rv.length, na: rv.filter((x) => x.r === GIFT_NA).length, nr: rv.filter((x) => x.r === GIFT_NR).length,
+        nrStores: rv.filter((x) => x.r === GIFT_NR).map((x) => x.store), count: sc.length,
         avg: sc.length ? Math.round((sc.reduce((a, x) => a + x.r, 0) / sc.length) * 10) / 10 : null,
         dist: [1, 2, 3, 4, 5].map((n) => sc.filter((x) => x.r === n).length),
         notes: rv.filter((x) => x.note).map((x) => ({ store: x.store, r: x.r, note: x.note })),
@@ -647,7 +651,7 @@ function summarySource(key) {
     const L = (key, v) => OPTIONS[key][v] || v;
     const lines = g.map((e) => `- [${e.store}] 문의 ${L('giftFreq', e.freq)}, 사은품 때문에 구매 미룸 ${L('giftDelay', e.delay)}, 현재 사은품 ${e.reaction ? '반응 ' + OPTIONS.reactions[e.reaction] + ', ' : ''}${L('giftImpact', e.impact)}` +
       `, 원하는 품목 ${e.items.join('·')}, 적정 기준 ${L('giftThreshold', e.threshold)}` +
-      (Object.keys(e.reviews || {}).length ? ' / 사은품별: ' + db.giftItems.filter((it) => (e.reviews || {})[it.id]).map((it) => { const v = e.reviews[it.id]; return `${it.name} ${v.r === GIFT_NA ? '증정 안 함' : OPTIONS.reactions[v.r]}${v.note ? '(' + v.note + ')' : ''}`; }).join(', ') : '') +
+      (Object.keys(e.reviews || {}).length ? ' / 사은품별: ' + db.giftItems.filter((it) => (e.reviews || {})[it.id]).map((it) => { const v = e.reviews[it.id]; return `${it.name} ${giftLabel(v.r)}${v.note ? '(' + v.note + ')' : ''}`; }).join(', ') : '') +
       (e.currentNote ? ` / 현재 사은품 반응: ${e.currentNote}` : '') + (e.itemNote ? ` / 품목 의견: ${e.itemNote}` : '') + (e.idea ? ` / 아이디어: ${e.idea}` : ''));
     const d = (key, obj) => Object.entries(obj).map(([k, n]) => `${L(key, k)} ${n}`).join('·');
     return {
@@ -655,7 +659,8 @@ function summarySource(key) {
       title: '2026년 사은품(구매 사은품) 니즈에 대한 매장 의견',
       body: [`응답 매장 ${gs.count}매장`, `고객 사은품 문의: ${d('giftFreq', gs.freq)}`, `사은품 때문에 구매를 미루거나 안 한 경우: ${d('giftDelay', gs.delay)}`,
         `현재 사은품 평균 고객 반응 ${gs.avgReaction ?? '-'}/5, 구매 영향: ${d('giftImpact', gs.impact)}`,
-        `2026 사은품별 평균 반응(5점): ${gs.giftItems.filter((x) => x.count).map((x) => `${x.name} ${x.avg}(${x.count}매장)`).join(', ') || '없음'}`, `원하는 사은품 순위: ${gs.items.map((x) => `${x.name} ${x.count}`).join(', ')}`,
+        `2026 사은품별 평균 반응(5점): ${gs.giftItems.filter((x) => x.count).map((x) => `${x.name} ${x.avg}(${x.count}매장)`).join(', ') || '없음'}`,
+        `사은품 미입고 매장(배분 검토): ${gs.giftItems.filter((x) => x.nr).map((x) => `${x.name} ${x.nr}매장`).join(', ') || '없음'}`, `원하는 사은품 순위: ${gs.items.map((x) => `${x.name} ${x.count}`).join(', ')}`,
         `적정 사은품 기준 금액: ${d('giftThreshold', gs.threshold)}`, '', `매장 의견:\n${lines.join('\n')}`,
         '', '요약 지침: strengths=현재 사은품에서 잘 먹히는 점, weaknesses=아쉬운 점, requests=매장·고객이 원하는 사은품과 조건, actions=본사가 다음 사은품 기획에 바로 반영할 일로 써 주세요. 사은품별로 반응이 좋았던 것·나빴던 것을 구체적인 이름으로 짚어 주세요.'].join('\n'),
       count: g.length,
@@ -863,7 +868,7 @@ async function handle(req, res) {
       const rows = [['수정일시', '매장명', '사은품 문의 빈도', '사은품 때문에 구매 미룸', '올해 사은품 평균 반응(1~5)', '올해 사은품 구매 영향', '올해 사은품 전체 메모', '원하는 사은품', '품목 의견', '적정 기준 금액', '매장 아이디어',
         ...its.flatMap((it) => [`[${it.name}] 반응`, `[${it.name}] 메모`])]];
       db.gifts.forEach((e) => rows.push([e.updatedAt, e.store, L('giftFreq', e.freq), L('giftDelay', e.delay), e.reaction || '', L('giftImpact', e.impact), e.currentNote, e.items.join(' / '), e.itemNote, L('giftThreshold', e.threshold), e.idea,
-        ...its.flatMap((it) => { const v = (e.reviews || {})[it.id]; return v ? [v.r === GIFT_NA ? '증정 안 함' : v.r, v.note] : ['', '']; })]));
+        ...its.flatMap((it) => { const v = (e.reviews || {})[it.id]; return v ? [GIFT_SKIP[v.r] || v.r, v.note] : ['', '']; })]));
       const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
       return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="gifts.csv"' });
     }
@@ -1202,11 +1207,11 @@ async function handle(req, res) {
       const src = b.reviews && typeof b.reviews === 'object' ? b.reviews : {};
       for (const it of db.giftItems.filter((g) => g.active)) {
         const v = src[it.id] || {};
-        if (!(v.r === GIFT_NA || intIn(v.r, 1, 5))) return send(res, 400, { error: `3-1. '${it.name}' 사은품의 고객 반응을 골라 주세요. (증정 안 했으면 '증정 안 함')` });
+        if (!(GIFT_SKIP[v.r] || intIn(v.r, 1, 5))) return send(res, 400, { error: `3-1. '${it.name}' 사은품의 고객 반응을 골라 주세요. (안 들어왔으면 '미입고', 증정 안 했으면 '증정 안 함')` });
         reviews[it.id] = { r: v.r, note: cleanText(v.note, 300) };
       }
     }
-    const scored = Object.values(reviews).filter((v) => v.r !== GIFT_NA);
+    const scored = Object.values(reviews).filter((v) => !GIFT_SKIP[v.r]);
     b.reaction = scored.length ? Math.round(scored.reduce((a, v) => a + v.r, 0) / scored.length) : 0;
     const items = [...new Set(Array.isArray(b.items) ? b.items.filter((x) => OPTIONS.giftItems.includes(x)) : [])].slice(0, 3);
     if (!items.length) return send(res, 400, { error: '4. 고객이 원하는 사은품을 1~3개 골라 주세요.' });

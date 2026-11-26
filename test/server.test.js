@@ -507,7 +507,7 @@ test('사은품 니즈: 매장당 1회 저장·수정·집계·CSV·참여 현�
   assert.strictEqual(opts.giftCatalog.length, 11); // 2026 사은품 기본 목록
   assert.ok(opts.giftCatalog[0].photos[0].startsWith('/images/gift-'));
   assert.strictEqual((await fetch(base + opts.giftCatalog[0].photos[0], { headers: staff })).status, 200);
-  const reviews = Object.fromEntries(opts.giftCatalog.map((g, i) => [g.id, i === 0 ? { r: 5, note: '가방 인기' } : i === 1 ? { r: 'na' } : { r: 3 }]));
+  const reviews = Object.fromEntries(opts.giftCatalog.map((g, i) => [g.id, i === 0 ? { r: 5, note: '가방 인기' } : i === 1 ? { r: 'na' } : i === 2 ? { r: 'nr' } : { r: 3 }]));
   const ok = { store: '갤광교점', freq: 'often', delay: 'sometimes', impact: 'some', reviews, items: ['골프공', '골프 양말'], threshold: 30, currentNote: '양말 반응 좋음', idea: '금액대별 선택' };
   assert.strictEqual((await post({ ...ok, items: [] })).status, 400);
   const { [opts.giftCatalog[2].id]: _, ...partial } = reviews;
@@ -526,6 +526,9 @@ test('사은품 니즈: 매장당 1회 저장·수정·집계·CSV·참여 현�
   assert.deepStrictEqual([g.threshold['20'], g.threshold['30'], g.freq.often, g.impact.noGift, g.avgReaction], [1, 1, 2, 1, 3]);
   const gi0 = g.giftItems.find((x) => x.id === opts.giftCatalog[0].id), gi1 = g.giftItems.find((x) => x.id === opts.giftCatalog[1].id);
   assert.deepStrictEqual([gi0.avg, gi0.count, gi0.notes[0].note, gi1.na, gi1.avg], [5, 1, '가방 인기', 1, null]);
+  const gi2 = g.giftItems.find((x) => x.id === opts.giftCatalog[2].id);
+  assert.deepStrictEqual([gi2.nr, gi2.nrStores, gi2.avg], [1, ['갤타임월드'], null]);
+  assert.ok((await (await fetch(base + '/api/admin/gifts.csv', { headers: admin })).text()).includes('미입고'));
   // 사은품 목록 관리: 숨기면 매장 평가 대상에서 빠짐, 이름 변경, 새 사은품 추가
   const g0 = opts.giftCatalog[0].id;
   await fetch(base + '/api/admin/gift-items/' + g0, { method: 'PATCH', headers: admin, body: JSON.stringify({ name: '미니 보스턴백', active: false }) });
