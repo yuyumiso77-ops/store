@@ -147,6 +147,7 @@ const el = (tag, attrs = {}, ...kids) => {
   kids.flat().forEach((c) => c !== '' && c != null && c !== false && n.append(c instanceof Node ? c : document.createTextNode(String(c))));
   return n;
 };
+const num = (v) => (v == null ? '-' : Number(v).toLocaleString());
 const fmt1 = (v) => (v == null ? '-' : Number(v).toFixed(1));
 const pct = (v) => (v == null ? '-' : v + '%');
 const pctOf = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '-');
@@ -349,7 +350,6 @@ function render(r) {
       kpi(fmt1(o.avgReaction), '평균 고객 반응 (5점)'),
       kpi(pctOf(s.good, sn), '잘 팔림 응답 비율'),
       kpi(pct(o.displayRate), `진열률 (체크 ${o.displayChecks.toLocaleString()}건)`),
-      kpi(o.spaceScore == null ? '-' : o.spaceScore + '점', '공간 효율 (진열 자리 판매 점수)'),
       kpi(`${o.ztec} · ${o.gifts}`, 'Z-TEC · 사은품 응답 매장'))), { className: 'keep' }));
 
   // 2. 참여 현황
@@ -370,29 +370,20 @@ function render(r) {
       el('div', {}, el('h3', {}, '고객이 좋아한 점'), el('p', { class: 'tags wr' }, chipsOf(rc.pros)), el('h3', {}, '판매를 도운 요인'), el('p', { class: 'tags wr' }, chipsOf(rc.sellReasons))),
       el('div', {}, el('h3', {}, '고객이 아쉬워한 점'), el('p', { class: 'tags wr' }, chipsOf(rc.cons)), el('h3', {}, '판매를 막은 요인'), el('p', { class: 'tags wr' }, chipsOf(rc.noBuyReasons))))));
 
-  // 4. 진열 · 공간 효율
-  const sp = r.space, dt = r.display;
-  const st = sp.totals;
+  // 4. 진열 현황
+  const dt = r.display;
   const G = { expand: '진열 확대 후보 (반응·판매 좋은데 진열 적음)', star: '효자 상품 (진열·반응·판매 모두 좋음)', review: '진열 재검토 (진열 많은데 부진)' };
-  out.push(sec('4', '진열 현황과 공간 효율', '좁은 매장 공간에 잘 팔리는 상품이 걸려 있는지 봐요. 진열 자리(진열 중인 SKU)마다 그 매장의 판매 반응으로 점수(잘 팔림 100·보통 50·안 팔림 0)를 매겼어요.',
+  const tot = dt.totals;
+  out.push(sec('4', '진열 현황', '매장이 SKU(품번 × 컬러)별로 체크한 진열 상태예요. 진열률은 미입고를 뺀 기준이에요.',
     el('div', { class: 'kpis' },
       kpi(pct(o.displayRate), '전체 진열률 (미입고 제외)'),
-      kpi(st.score == null ? '-' : st.score + '점', '진열 자리 평균 판매 점수'),
-      kpi(pctOf(st.good, st.slots), `잘 팔리는 상품 자리 (${st.good})`),
-      kpi(pctOf(st.poor, st.slots), `안 팔리는 상품 자리 (${st.poor})`),
-      kpi(st.goodStock + '건', '창고 속 잘 팔리는 SKU'),
-      kpi(st.swaps + '건', '교체 추천')),
-    el('h3', {}, '복종별: 차지한 공간만큼 팔리나요?'),
-    sp.byType.length ? table(['복종', '진열 자리', '공간 점유', '판매 기여', '효율 지수', ''],
-      sp.byType.slice().sort((a, b) => b.efficiency - a.efficiency).map((t) => [`${t.line} ${t.type}`, t.slots, t.spacePct + '%', t.contribPct + '%', t.efficiency.toFixed(2),
-        el('span', { class: 'pill ' + (t.efficiency >= 1.1 ? 'good' : t.efficiency <= 0.9 ? 'bad' : '') }, t.efficiency >= 1.1 ? '공간 대비 잘 팔림' : t.efficiency <= 0.9 ? '공간 줄일 후보' : '보통')]), [1, 2, 3, 4])
-      : el('p', { class: 'empty' }, '상품 평가와 진열 체크가 더 쌓이면 계산돼요.'),
-    el('div', { class: 'two' },
-      el('div', {}, el('h3', {}, '공간 효율 낮은 매장 (하위 10)'), sp.lowStores.length ? table(['매장', '점수', '안 팔리는 진열', '창고 속 잘 팔림'], sp.lowStores.map((x) => [x.name, x.score, x.poor, x.goodStock]), [1, 2, 3]) : el('p', { class: 'empty' }, '-')),
-      el('div', {}, el('h3', {}, '복종별 진열률'), table(['복종', '진열률', '진열', '창고만', '없음'], dt.byType.map((t) => [`${t.line} ${t.type}`, el('span', {}, bar(t.rate || 0), pct(t.rate)), t.shown, t.stock, t.none]), [1, 2, 3, 4]))),
-    el('div', { class: 'two' },
-      el('div', {}, el('h3', {}, '🪑 자리만 차지하는 SKU'), sp.wasted.length ? table(['SKU', '안 팔리는데 진열'], sp.wasted.map((k) => [`${k.code} ${k.color}`, k.n + '매장']), [1]) : el('p', { class: 'empty' }, '-')),
-      el('div', {}, el('h3', {}, '📦 창고에서 노는 잘 팔리는 SKU'), sp.idle.length ? table(['SKU', '창고에만'], sp.idle.map((k) => [`${k.code} ${k.color}`, k.n + '매장']), [1]) : el('p', { class: 'empty' }, '-'))),
+      kpi(num(tot.checks) + '건', '진열 체크'),
+      kpi(num(tot.shown), '진열'),
+      kpi(num(tot.stock), '창고만'),
+      kpi(num(tot.none), '매장에 없음'),
+      kpi(num(tot.notReceived), '미입고')),
+    el('h3', {}, '복종별 진열률'),
+    table(['복종', '진열률', '진열', '창고만', '없음', '미입고'], dt.byType.map((t) => [`${t.line} ${t.type}`, el('span', {}, bar(t.rate || 0), pct(t.rate)), t.shown, t.stock, t.none, t.notReceived]), [1, 2, 3, 4, 5]),
     ...dt.groups.filter((g) => g.items.length).map((g) => {
       const order = g.key === 'expand' ? (a, b) => a.displayRate - b.displayRate : g.key === 'review' ? (a, b) => a.goodPct - b.goodPct : (a, b) => b.goodPct - a.goodPct;
       const list = g.items.slice().sort(order);
@@ -432,7 +423,6 @@ function render(r) {
       el('li', {}, '고객 반응·판매 반응은 매장 직원이 판매하면서 느낀 내용을 평가한 것으로, 실제 매출 수치가 아니에요.'),
       el('li', {}, "'판매 경험 없음'·'미입고'로 표시한 평가는 평균·비율에서 빠져요."),
       el('li', {}, '진열률은 미입고를 뺀 기준이에요. SKU = 품번 × 컬러.'),
-      el('li', {}, '공간 효율: 진열 자리마다 그 매장의 판매 반응(잘 팔림 100·보통 50·안 팔림 0)으로 점수를 매기고, 그 매장이 평가하지 않은 상품은 전체 매장 평균을 썼어요. 효율 지수 = 판매 기여 ÷ 공간 점유.'),
       el('li', {}, 'AI 요약은 관리자 화면에서 마지막으로 만든 요약이에요. 틀릴 수 있으니 숫자와 함께 봐 주세요.'))));
   const KEYS = ['summary', 'stores', 'reaction', 'display', 'ztec', 'gift', 'notes'];
   out.slice(1).forEach((n, i) => (n.dataset.sec = KEYS[i]));
@@ -440,7 +430,7 @@ function render(r) {
   applyTab();
 }
 // ---- 주제별 탭: 고른 항목만 보이고, 인쇄·PDF도 그 항목만 ----
-const TABS = [['all', '전체 리포트'], ['summary', '한눈에 보기'], ['stores', '매장 참여 현황'], ['reaction', '상품별 고객 반응'], ['display', '진열·공간 효율'], ['ztec', 'Z-TEC 매장 의견'], ['gift', '사은품 니즈']];
+const TABS = [['all', '전체 리포트'], ['summary', '한눈에 보기'], ['stores', '매장 참여 현황'], ['reaction', '상품별 고객 반응'], ['display', '진열 현황'], ['ztec', 'Z-TEC 매장 의견'], ['gift', '사은품 니즈']];
 let TAB = (location.hash.slice(1) && TABS.some(([k]) => k === location.hash.slice(1))) ? location.hash.slice(1) : 'all';
 let BASE_TITLE = '';
 function drawTabs() {

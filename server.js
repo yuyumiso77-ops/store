@@ -918,7 +918,9 @@ function importSizes(b) {
 function optimalDisplay(over = {}) {
   const OPT_ = { ...OPT, ...over };
   const sl = db.sales;
-  if (!sl) return { ready: false, need: ['판매 자료'] };
+  const stockInfo = db.stock ? { asOf: db.stock.asOf, fileName: db.stock.fileName } : null;
+  const sizesInfo0 = db.storeSizes ? { fileName: db.storeSizes.fileName, uploadedAt: db.storeSizes.uploadedAt, stores: Object.keys(db.storeSizes.sizes).length } : null;
+  if (!sl) return { ready: false, need: ['판매 자료'], hasStock: !!db.stock, stockInfo, sizesInfo: sizesInfo0 };
   const idx = skuIndex();
   const days = Math.max(1, Math.round((Date.parse(sl.to) - Date.parse(sl.from)) / 864e5) + 1) || 1;
   // ── 기온·계절 반영: 최근 4주 판매 흐름 (주별 판매가 있을 때) ──
@@ -1016,7 +1018,7 @@ function optimalDisplay(over = {}) {
   }).filter((s) => s.amount > 0 || s.held > 0);
   const sum = (f) => stores.reduce((a, s) => a + (f(s) || 0), 0);
   return {
-    ready: true, opt: OPT_, days, salesInfo: { from: sl.from, to: sl.to },
+    ready: true, opt: OPT_, days, salesInfo: { from: sl.from, to: sl.to, fileName: sl.fileName }, stockInfo,
     seasonal: hasWeeks ? { fullWeeks: Math.floor(days / 7), recentDays, recentFrom: new Date(Date.parse(sl.from) + recentFrom * 7 * 864e5).toISOString().slice(0, 10), weekStarts: Array.from({ length: nW }, (_, i) => new Date(Date.parse(sl.from) + i * 7 * 864e5).toISOString().slice(5, 10)),
       types: [...season.values()].filter((t) => t.qty > 0).sort((a, b) => b.factor - a.factor).map((t) => ({ line: t.line, type: t.type, factor: t.factor, qty: t.qty, recent: t.recent, weeks: t.weeks })) } : null, hasStock: !!db.stock, hasSizes: !!db.storeSizes,
     sizesInfo: db.storeSizes ? { fileName: db.storeSizes.fileName, uploadedAt: db.storeSizes.uploadedAt, stores: Object.keys(db.storeSizes.sizes).length } : null,
@@ -1133,7 +1135,6 @@ function summarySource(key) {
   if (key === 'display') {
     if (!db.displays.length) return null;
     const a = displayAnalysis();
-    const sp = spaceEfficiency();
     const pct = (v) => (v == null ? '-' : v + '%');
     const g = (k) => a.products.filter((p) => p.group === k).map((p) => `${p.code}(${p.type}, 진열 ${pct(p.displayRate)}, 반응 ${p.avgReaction}, 잘 팔림 ${pct(p.goodPct)})`).join('; ') || '없음';
     return {
@@ -1141,14 +1142,6 @@ function summarySource(key) {
       title: '매장 진열 현황 분석 (SKU = 품번 × 컬러)',
       body: [
         `체크한 매장 ${a.storeCount}매장, SKU ${a.totalSkus}개, 체크 ${a.totals.checks}건 (진열 ${a.totals.shown}·창고만 ${a.totals.stock}·없음 ${a.totals.none}·미입고 ${a.totals.notReceived}). 진열률은 미입고를 뺀 기준`,
-        '',
-        '[핵심 목적] 매장 공간이 작아서, 한정된 진열 자리에 잘 팔리는 상품이 걸려 있는지(공간 효율)를 보는 것이 목적입니다.',
-        `공간 효율: 전체 진열 자리 ${sp.totals.slots}개 중 잘 팔리는 상품 ${sp.totals.good}·보통 ${sp.totals.normal}·안 팔리는 상품 ${sp.totals.poor}·판단 불가 ${sp.totals.unknown}. 평균 판매 점수 ${sp.totals.score ?? '-'}점(잘 팔림 100·보통 50·안 팔림 0). 창고에 있는 잘 팔리는 SKU ${sp.totals.goodStock}건, 교체 추천 ${sp.totals.swaps}건`,
-        '복종별 공간 효율 (공간 점유율 → 판매 기여, 효율 지수 1보다 크면 공간 대비 잘 팔림):',
-        ...sp.byType.filter((t) => t.known).map((t) => `- ${t.line} ${t.type}: 공간 ${t.spacePct}% → 판매 기여 ${t.contribPct}%, 효율 지수 ${t.efficiency}, 평균 판매 점수 ${t.score}`),
-        '공간 효율 낮은 매장 (하위 10): ' + sp.stores.filter((x) => x.score != null).slice(0, 10).map((x) => `${x.name} ${x.score}점(안 팔리는 진열 ${x.poor}·창고 속 잘 팔리는 ${x.goodStock.length})`).join(', '),
-        '자리만 차지하는 SKU (진열됐지만 안 팔리는 매장 수): ' + (sp.wasted.map((k) => `${k.code}-${k.color} ${k.stores.length}매장`).join(', ') || '없음'),
-        '창고에서 노는 잘 팔리는 SKU: ' + (sp.idle.map((k) => `${k.code}-${k.color} ${k.stores.length}매장`).join(', ') || '없음'),
         '',
         '복종별 진열률:',
         ...a.byType.map((t) => `- ${t.line} ${t.type}: 진열률 ${pct(t.rate)} (진열 ${t.shown}·창고만 ${t.stock}·없음 ${t.none}·미입고 ${t.notReceived}, SKU ${t.skus}개)`),
@@ -1164,7 +1157,7 @@ function summarySource(key) {
         '미입고 매장이 많은 SKU(배분 검토): ' + (a.notReceived.map((k) => `${k.code}-${k.color} ${k.notReceived}매장`).join(', ') || '없음'),
         '진열·재고 모두 없는 매장이 많은 SKU: ' + (a.missing.map((k) => `${k.code}-${k.color} ${k.none}매장`).join(', ') || '없음'),
         '',
-        '요약 지침: 이것은 매장 의견이 아니라 진열 데이터 분석입니다. 반드시 "작은 공간을 잘 팔리는 상품으로 채우고 있는가"(공간 효율) 관점을 중심으로 정리하세요. strengths=잘 되고 있는 점, weaknesses=문제점, requests=추가로 확인할 점, actions=영업·VMD가 바로 할 조치로 써 주세요.',
+        '요약 지침: 이것은 매장 의견이 아니라 진열 데이터 분석입니다. strengths=잘 되고 있는 점, weaknesses=문제점, requests=추가로 확인할 점, actions=영업·VMD가 바로 할 조치로 써 주세요.',
       ].join('\n'),
       count: db.displays.length,
     };

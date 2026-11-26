@@ -109,3 +109,4 @@ body.admin .card:has(> .stats:first-child) > .stats + * { margin-top: 12px; }
 .spark i { flex: 1; background: #c9d3e6; border-radius: 1px; min-height: 2px; }
 .spark i.r { background: var(--accent); }
 .season-table td { padding: 7px 10px; }
+body.admin p.hint:empty { display: none; }
