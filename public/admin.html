@@ -881,7 +881,38 @@ function renderStoresTab() {
   $('sUnknown').replaceChildren(...(r.unknown.length ? [el('div', { class: 'card', style: 'margin-top:16px' },
     el('h2', { style: 'margin:0 0 4px' }, '⚠️ 명단에 없는 이름으로 입력된 데이터'),
     el('p', { class: 'hint', style: 'margin:0 0 8px' }, '매장명을 다르게 입력한 경우예요. 해당 매장에 정확한 이름으로 다시 입력해 달라고 요청하거나, 반응 분석 탭의 매장별 보기에서 🗑로 지울 수 있어요.'),
-    el('ul', { class: 'comments' }, r.unknown.map((u) => el('li', {}, el('b', {}, u.name), el('span', { class: 'hint' }, ` — 평가 ${u.evals} · 진열 체크 ${u.display} · Z-TEC ${u.ztec ? '✓' : '–'} · 사은품 ${u.gift ? '✓' : '–'}`)))))] : []));
+    el('ul', { class: 'comments' }, r.unknown.map((u) => {
+      const sel = el('select', { class: 'merge-sel' }, el('option', { value: '' }, '명단의 매장 선택…'), ...r.stores.map((x) => el('option', { value: x.name }, x.name)));
+      const guess = guessStore(u.name, r.stores);
+      if (guess) sel.value = guess;
+      return el('li', {}, el('b', {}, u.name), el('span', { class: 'hint' }, ` — 평가 ${u.evals} · 진열 체크 ${u.display} · Z-TEC ${u.ztec ? '✓' : '–'} · 사은품 ${u.gift ? '✓' : '–'}`),
+        el('div', { class: 'merge-row' }, sel,
+          el('button', { type: 'button', class: 'btn accent', onclick: async () => {
+            if (!sel.value) return alert('합칠 매장을 골라 주세요.');
+            if (!confirm(`"${u.name}" 데이터를 "${sel.value}" 매장으로 합칠까요?\n같은 상품·SKU가 겹치면 최근에 입력한 내용을 남겨요.`)) return;
+            try { await api('/api/admin/stores/merge', { method: 'POST', body: JSON.stringify({ from: u.name, to: sel.value }) }); loadStoresTab(); } catch (ex) { alert(ex.message); }
+          } }, '➡️ 합치기'),
+          el('button', { type: 'button', class: 'btn', onclick: async () => {
+            if (!confirm(`"${u.name}" 이름으로 입력된 데이터를 모두 삭제할까요?\n(평가 ${u.evals} · 진열 체크 ${u.display}) 되돌릴 수 없어요.`)) return;
+            try { await api(`/api/admin/stores/${encodeURIComponent(u.name)}?confirm=${encodeURIComponent(u.name)}`, { method: 'DELETE' }); loadStoresTab(); } catch (ex) { alert(ex.message); }
+          } }, '🗑 삭제')));
+    })))] : []));
+}
+// 비슷한 이름 추천: 백화점·점 등을 떼고, 공식 매장명의 체인/지점 글자가 모두 들어 있으면 후보
+function guessStore(name, stores) {
+  const n = name.replace(/백화점|점$|\s|[ㄱ-ㅎㅏ-ㅣ]/g, '').replace(/^갤러리아/, '갤').replace(/스타시티/, '');
+  const key = (x) => x.replace(/\s/g, '').replace(/점$/, '');
+  const hit = stores.find((s) => key(s.name) === n);
+  if (hit) return hit.name;
+  const chains = ['더현대', '롯데', '현대', '신세계', '갤', 'AK'];
+  const cands = stores.filter((s) => {
+    const c = chains.find((x) => key(s.name).startsWith(x));
+    const branch = c ? key(s.name).slice(c.length) : key(s.name);
+    return c && n.includes(c) && branch && n.includes(branch);
+  });
+  const blen = (s) => { const k = key(s.name); const c = chains.find((x) => k.startsWith(x)); return k.length - c.length; };
+  cands.sort((a, b) => blen(b) - blen(a));
+  return cands.length === 1 || (cands.length > 1 && blen(cands[0]) > blen(cands[1])) ? cands[0].name : ''; // 지점명이 더 긴 쪽이 확실할 때만
 }
 const EVST = { done: '', nosale: '판매 안 함', notreceived: '미입고' };
 async function toggleAnswers(btn, name) {

@@ -551,6 +551,20 @@ test('사은품 니즈: 매장당 1회 저장·수정·집계·CSV·참여 현�
   assert.strictEqual((await (await fetch(base + '/api/admin/gifts', { headers: admin })).json()).count, 0);
 });
 
+test('명단에 없는 매장명 합치기', async () => {
+  await fetch(base + '/api/admin/stores/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows: [{ name: '현대신촌' }] }) });
+  await fetch(base + '/api/ztec', { method: 'POST', headers: staff, body: JSON.stringify({ store: '신촌현대', reaction: 4, ease: 'easy' }) });
+  let pr = await (await fetch(base + '/api/admin/store-progress', { headers: admin })).json();
+  assert.ok(pr.unknown.some((u) => u.name === '신촌현대'));
+  assert.strictEqual((await fetch(base + '/api/admin/stores/merge', { method: 'POST', headers: admin, body: JSON.stringify({ from: '신촌현대', to: '없는매장' }) })).status, 400);
+  const r = await (await fetch(base + '/api/admin/stores/merge', { method: 'POST', headers: admin, body: JSON.stringify({ from: '신촌현대', to: '현대신촌' }) })).json();
+  assert.strictEqual(r.moved.ztec, 1);
+  pr = await (await fetch(base + '/api/admin/store-progress', { headers: admin })).json();
+  assert.ok(!pr.unknown.some((u) => u.name === '신촌현대'));
+  assert.strictEqual(pr.stores[0].ztec, true);
+  await fetch(base + `/api/admin/stores/${encodeURIComponent('현대신촌')}?confirm=${encodeURIComponent('현대신촌')}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);

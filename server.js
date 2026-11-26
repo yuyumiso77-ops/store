@@ -475,6 +475,53 @@ function qualityFlags(ev, ds) {
   }
   return flags;
 }
+// 다른 이름으로 입력된 매장 데이터를 공식 매장명으로 합치기 (같은 상품·SKU가 겹치면 최근 입력을 남김)
+function mergeStore(from, to) {
+  const fk = storeKey(from);
+  const newer = (a, b) => (String(a.updatedAt) >= String(b.updatedAt) ? a : b);
+  const moved = { evaluations: 0, displays: 0, ztec: 0, gifts: 0 };
+  const merge = (list, field, keyOf, kind) => {
+    const keep = new Map();
+    const out = [];
+    list.forEach((x) => {
+      const isFrom = storeKey(x[field]) === fk;
+      const isTo = sameName(x[field], to);
+      if (!isFrom && !isTo) return out.push(x);
+      if (isFrom) { x[field] = to; moved[kind]++; }
+      const k = keyOf(x);
+      const prev = keep.get(k);
+      keep.set(k, prev ? newer(prev, x) : x);
+    });
+    return [...out, ...keep.values()];
+  };
+  db.evaluations = merge(db.evaluations, 'staff', (e) => e.productId, 'evaluations');
+  db.displays = merge(db.displays, 'store', (d) => d.sku, 'displays');
+  db.ztec = merge(db.ztec, 'store', () => 'one', 'ztec');
+  db.gifts = merge(db.gifts, 'store', () => 'one', 'gifts');
+  return moved;
+}
+function deleteStoreData(store) {
+  const before = [db.evaluations.length, db.ztec.length, db.displays.length, db.gifts.length];
+  db.evaluations = db.evaluations.filter((e) => !sameName(e.staff, store));
+  db.ztec = db.ztec.filter((e) => !sameName(e.store, store));
+  db.displays = db.displays.filter((d) => !sameName(d.store, store));
+  db.gifts = db.gifts.filter((e) => !sameName(e.store, store));
+  return { deletedEvaluations: before[0] - db.evaluations.length, deletedZtec: before[1] - db.ztec.length, deletedDisplays: before[2] - db.displays.length, deletedGifts: before[3] - db.gifts.length };
+}
+// 1회성 정리 (2026-11-26 요청): 명단에 없는 이름 → 공식 매장명, 순천점 삭제
+function fixStoreNames20261126() {
+  db.migrations = db.migrations || [];
+  if (db.migrations.includes('stores-20261126')) return;
+  try { fs.writeFileSync(path.join(DATA_DIR, 'db-backup-before-stores-20261126.json'), JSON.stringify(db)); } catch (ex) { console.error('백업 실패:', ex.message); }
+  const MAP = [['롯데부산본점', '롯데부산'], ['신촌현대', '현대신촌'], ['롯데백화점 창원점', '롯데창원'], ['롯데백화점 건대스타시티점', '롯데건대'],
+    ['롯데백화점본점', '롯데본점'], ['신세계김해ㅡ', '신세계김해'], ['갤러리아센터시티', '갤센터시티']];
+  const log = [];
+  MAP.forEach(([from, to]) => { if (db.stores.some((x) => x.name === to)) log.push(`${from} → ${to} ${JSON.stringify(mergeStore(from, to))}`); });
+  log.push('순천점 삭제 ' + JSON.stringify(deleteStoreData('순천점')));
+  db.migrations.push('stores-20261126');
+  saveDb();
+  console.log('매장명 정리:\n  ' + log.join('\n  '));
+}
 function storeProgress() {
   const active = db.products.filter((p) => p.active);
   const activeIds = new Set(active.map((p) => p.id));
@@ -885,14 +932,19 @@ async function handle(req, res) {
     if (dst && m === 'DELETE') {
       const store = decodeURIComponent(dst[1]);
       if (url.searchParams.get('confirm') !== store) return send(res, 400, { error: '확인용 매장명이 일치하지 않아요.' });
-      const ev = db.evaluations.length, zt = db.ztec.length;
-      db.evaluations = db.evaluations.filter((e) => !sameName(e.staff, store));
-      db.ztec = db.ztec.filter((e) => !sameName(e.store, store));
-      const dp = db.displays.length, gf = db.gifts.length;
-      db.displays = db.displays.filter((d) => !sameName(d.store, store));
-      db.gifts = db.gifts.filter((e) => !sameName(e.store, store));
+      const r = deleteStoreData(store);
       saveDb();
-      return send(res, 200, { ok: true, deletedEvaluations: ev - db.evaluations.length, deletedZtec: zt - db.ztec.length, deletedDisplays: dp - db.displays.length, deletedGifts: gf - db.gifts.length });
+      return send(res, 200, { ok: true, ...r });
+    }
+    if (m === 'POST' && p === '/api/admin/stores/merge') {
+      const b = await readBody(req);
+      const from = cleanText(b.from, 60);
+      const to = db.stores.find((x) => x.name === b.to);
+      if (!from || !to) return send(res, 400, { error: '합칠 이름과 명단의 매장을 골라 주세요.' });
+      if (storeKey(from) === storeKey(to.name)) return send(res, 400, { error: '이미 같은 매장이에요.' });
+      const moved = mergeStore(from, to.name);
+      saveDb();
+      return send(res, 200, { ok: true, moved });
     }
 
     // AI 의견 요약: GET = 저장된 요약, POST = 새로 요약
@@ -1311,6 +1363,7 @@ async function handle(req, res) {
 // 예전 데이터(사진 1장)를 사진 목록 구조로 옮기기 — 함수 정의 뒤에 실행
 db.products.forEach((p) => { photosOf(p); syncMain(p); });
 seedGiftItems();
+fixStoreNames20261126();
 
 const server = http.createServer((req, res) => {
   // 검색엔진에 노출되지 않게 (페이지·이미지·CSV 모두)
