@@ -458,7 +458,10 @@ function renderProduct(p) {
       stat(p.count, '평가한 매장 수' + (p.skipped && (p.skipped.nosale || p.skipped.notreceived) ? ` · 제외: 판매 없음 ${p.skipped.nosale}${p.nosaleFeedback ? `(응대 의견 ${p.nosaleFeedback})` : ''} · 미입고 ${p.skipped.notreceived}` : '')),
       stat(fmt(p.avgReaction), '평균 고객 반응 (5점)'),
       stat(p.displayRate == null ? '-' : p.displayRate + '%', `진열률(진열 체크) · 진열 ${p.display.shown} · 창고만 ${p.display.stock} · 없음 ${p.display.none}` + (p.display.unknown ? ` · 미응답 ${p.display.unknown}` : '')),
-      stat(`${p.sales.good} · ${p.sales.normal} · ${p.sales.poor}`, '판매 반응: 잘 팔림 · 보통 · 안 팔림')),
+      stat(`${p.sales.good} · ${p.sales.normal} · ${p.sales.poor}`, '판매 반응: 잘 팔림 · 보통 · 안 팔림'),
+      stat(p.sellThrough == null ? '-' : p.sellThrough + '%', p.prodQty
+        ? `판매율 · ${PROD_BASIS} ${p.prodQty.toLocaleString()} · 판매 ${(p.salesQty || 0).toLocaleString()}` + (p.colorSt && p.colorSt.length > 1 ? ' · ' + p.colorSt.map((c) => `${c.color} ${c.st}%`).join(' · ') : '')
+        : '판매율 (기획·생산수량 자료를 올리면 표시)')),
     p.count ? el('div', { class: 'cols' },
       rank('👍 상품 장점', p.pros, p.count),
       rank('👎 상품 단점', p.cons, p.count),

@@ -284,7 +284,9 @@ function computeSummary() {
         const pr = prodOf(p.id);
         const salesQty = pr && pr.sales != null ? pr.sales : psales ? (psales.get(p.id) || { qty: 0 }).qty : null;
         const prodQty = pr ? pr.prod : null;
-        return { prodQty, salesQty, sellThrough: prodQty && salesQty != null ? Math.round((salesQty / prodQty) * 1000) / 10 : null };
+        const ks = db.production && db.production.skus;
+        const colorSt = ks ? skusOf(p).map((k) => ks[k.sku] && ks[k.sku].plan ? { color: k.color, plan: ks[k.sku].plan, sold: ks[k.sku].sold, st: Math.round((ks[k.sku].sold / ks[k.sku].plan) * 1000) / 10 } : null).filter(Boolean) : [];
+        return { prodQty, salesQty, sellThrough: prodQty && salesQty != null ? Math.round((salesQty / prodQty) * 1000) / 10 : null, colorSt };
       })(),
       ageGroups: countBy(es.map((e) => e.ageGroups)),
       genders: countBy(es.map((e) => e.genders)),
