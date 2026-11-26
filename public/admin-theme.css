@@ -88,3 +88,20 @@ body.admin .card:has(> .stats:first-child) > .stats + * { margin-top: 12px; }
 .tw { overflow-x: auto; }
 .erp-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; background: #f8f9fb; border-radius: 12px; }
 .erp-file { display: flex; flex-direction: column; gap: 2px; }
+/* 적정 진열·재고 */
+.opt-table td, .opt-table th { padding: 9px 8px; }
+.opt-row { cursor: pointer; } .opt-row:hover td { background: #fafbfc; } .opt-row.open td { background: #f6f8fd; }
+.opt-row .caret { color: #9ca3af; font-size: .75rem; }
+.opt-detail > td { background: #fbfcfe; padding: 16px 18px 20px; white-space: normal; }
+.opt-table .over { color: #b45309; font-weight: 600; } .opt-table .short { color: #d14343; font-weight: 600; }
+.opt-sum { font-size: .9rem; margin-bottom: 12px; font-weight: 600; }
+.opt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.opt-box { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 14px; max-height: 420px; overflow: auto; }
+.opt-box.g { border-top: 3px solid #2b5fcf; } .opt-box.r { border-top: 3px solid #d14343; }
+.opt-box h4 { margin: 0 0 2px; font-size: .92rem; } .opt-box > p { margin: 0 0 8px; font-size: .78rem; }
+.opt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: .85rem; }
+.opt-it { display: flex; gap: 8px; align-items: center; }
+.opt-img { width: 36px; height: 36px; object-fit: contain; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; flex: none; }
+.opt-ctl { display: inline-flex; gap: 6px; align-items: center; }
+.opt-ctl .opt-sel { width: auto; padding: 7px 10px; font-size: .88rem; }
+.opt-det { position: sticky; left: 0; max-width: min(1180px, calc(100vw - 90px)); }

@@ -73,12 +73,14 @@
     </div>
     <div class="chips bold-chips" id="dView" style="margin-bottom:12px">
       <button type="button" data-v="space">🧩 공간 효율</button>
+      <button type="button" data-v="optimal">🧮 적정 진열·재고</button>
       <button type="button" data-v="stock">📦 재고 대조</button>
       <button type="button" data-v="analysis">📈 분석</button>
       <button type="button" data-v="list">📋 SKU 목록</button>
     </div>
     <div id="dSpace"></div>
     <div id="dStock"></div>
+    <div id="dOpt"></div>
     <div id="dAnalysis"></div>
     <div id="dListView">
     <div class="chips bold-chips" id="dLineF" style="margin-bottom:8px"></div>
@@ -1249,17 +1251,139 @@ function stockMismatchCard(sa) {
       el('div', {}, el('h3', { style: 'margin:0 0 6px' }, `재고가 있는데 '없음·미입고'로 체크 (${num(c.hasStockButNone)}건)`), c.hasStockButNone ? list(sa.mismatches.hasStockButNone) : el('p', { class: 'hint' }, '없어요 👍')),
       el('div', {}, el('h3', { style: 'margin:0 0 6px' }, `재고가 0인데 '진열'로 체크 (${num(c.shownNoStock)}건)`), c.shownNoStock ? list(sa.mismatches.shownNoStock) : el('p', { class: 'hint' }, '없어요 👍'))));
 }
+// ---- 🧮 적정 진열·재고: 판매·재고·평수 기준 권장값 + 매장 조사 비교 ----
+const JUDGE = { over: ['구색 과다', 'gap'], ok: ['적정', ''], room: ['확대 여지', 'good'] };
+const OPEN_OPT = new Set();
+let OPTQ = { cover: 56, min: 4 };
+try { Object.assign(OPTQ, JSON.parse(localStorage.getItem('optq') || '{}')); } catch {}
+const optQs = () => `?cover=${OPTQ.cover}&min=${OPTQ.min}`;
+function sizeUploader() {
+  const file = el('input', { type: 'file', accept: '.xlsx', hidden: '' });
+  const result = el('p', { class: 'hint', style: 'margin:6px 0 0' });
+  file.onchange = async () => {
+    const f = file.files[0]; file.value = '';
+    if (!f) return;
+    try {
+      result.textContent = '엑셀 읽는 중…';
+      const rows = await readXlsx(f);
+      const hi = rows.findIndex((r) => (r || []).some((c) => String(c || '').trim() === '평수'));
+      if (hi < 0) throw new Error("첫 줄에 '코드'와 '평수' 열이 필요해요.");
+      const head = rows[hi].map((x) => String(x || '').trim());
+      const ci = head.findIndex((h) => h === '코드' || h === '매장코드'), pi = head.indexOf('평수'), ni = head.indexOf('매장명');
+      if (ci < 0) throw new Error("첫 줄에 '코드'(매장코드) 열이 필요해요.");
+      const names = {}, out = [];
+      rows.slice(hi + 1).forEach((r) => { if (!r || !r[ci]) return; names[r[ci]] = ni >= 0 ? r[ni] : ''; out.push([r[ci], r[pi]]); });
+      const r = await api('/api/admin/sizes/import', { method: 'POST', body: JSON.stringify({ fileName: f.name, names, rows: out }) });
+      result.textContent = `✅ ${r.stores}매장 평수를 연결했어요.` + (r.unmatched ? ` (명단에 없는 매장 ${r.unmatched}곳 제외)` : '');
+      loadOptimal();
+    } catch (ex) { result.textContent = '❌ ' + ex.message; }
+  };
+  return { btn: el('label', { class: 'btn accent', style: 'cursor:pointer' }, file, '📁 평수 엑셀 올리기'), result };
+}
+async function loadOptimal() {
+  $('dOpt').replaceChildren(el('p', { class: 'hint' }, '계산 중…'));
+  const o = await api('/api/admin/optimal-display' + optQs());
+  const up = sizeUploader();
+  const info = (t, x, ok) => el('div', { class: 'erp-file' }, el('b', {}, `${ok ? '✅' : '⬜'} ${t}`), el('span', { class: 'hint' }, x));
+  const dataCard = el('div', { class: 'card' },
+    el('h2', { style: 'margin:0 0 4px' }, '🧮 적정 진열·재고 계산에 쓰는 자료'),
+    el('p', { class: 'hint', style: 'margin:0 0 12px' }, '판매·재고 자료는 📦 재고 대조 화면에서, 매장 평수는 여기서 올려요. (평수 엑셀: 코드 · 매장명 · 평수)'),
+    el('div', { class: 'erp-row' },
+      el('div', { style: 'display:flex;gap:28px;flex-wrap:wrap' },
+        info('판매 자료', o.salesInfo ? `${o.salesInfo.from} ~ ${o.salesInfo.to}` : '없음 (필수)', !!o.salesInfo),
+        info('매장 재고', o.hasStock ? '있음' : '없음 (재고 과부족 계산에 필요)', o.hasStock),
+        info('매장 평수', o.sizesInfo ? `${o.sizesInfo.stores}매장 · ${o.sizesInfo.fileName || ''}` : '없음 (평당 지표에 필요)', !!o.sizesInfo)),
+      el('div', { class: 'actions' }, up.btn, el('button', { type: 'button', class: 'btn', onclick: () => setDView('stock') }, '판매·재고 올리러 가기'))),
+    up.result);
+  if (!o.ready) { $('dOpt').replaceChildren(dataCard, el('div', { class: 'card hint' }, '판매 자료를 먼저 올려 주세요. (📦 재고 대조 화면의 "판매 자료 올리기")')); return; }
+  const t = o.totals, O = o.opt;
+  const method = el('details', { class: 'card' }, el('summary', { class: 'q', style: 'cursor:pointer;margin:0' }, '📐 계산 방법 보기'),
+    el('ul', { class: 'hint', style: 'line-height:1.8;margin:10px 0 0' },
+      el('li', {}, `권장 진열 SKU 수 = 그 매장에서 팔린 SKU × ${O.skuBuffer} (단, 매출 80%를 만든 SKU × ${O.coreMultiplier}보다 적지 않게). 매장 크기보다 실제 팔리는 구색이 기준이에요.`),
+      el('li', {}, '권장 진열 목록 = 그 매장에서 매출이 큰 SKU부터, 모자라면 전체 매장에서 잘 팔린 SKU로 채움.'),
+      el('li', {}, `권장 재고 = SKU별 하루 평균 판매 × ${O.coverDays}일 (최소 ${O.minStockPerSku}개). 권장 목록 밖 SKU의 권장 재고는 0. 판매 기간 ${o.days}일.`),
+      el('li', {}, `SKU 활성률 = 보유(재고>0) SKU 중 판매가 있었던 비율. ${O.lowActive}% 미만 = 구색 과다, ${O.highActive}% 이상 = 확대 여지.`),
+      el('li', {}, '매장 조사 비교: 걸기 후보 = 권장인데 진열 안 됨(재고 있음) · 빼기 후보 = 진열 중인데 권장 밖 · 배분 필요 = 권장인데 재고 없음 · 평가 일치율 = 매장의 판매 반응 평가(잘 팔림/보통/안 팔림)가 실제 판매 순위(상·중·하)와 맞은 비율.')));
+  const rowsBox = el('div');
+  const draw = () => rowsBox.replaceChildren(el('div', { class: 'tw' }, (() => {
+    const head = ['매장', '평수', '매출', '평당 매출', '보유 SKU', '판매된 SKU', '활성률', '권장 진열 SKU', '진열 SKU (조사)', '걸기 후보', '빼기 후보', '현재 재고', '권장 재고', '재고 과부족', '평가 일치', '판정'];
+    const tb = el('table', { class: 'stock-table opt-table' }, el('tr', {}, head.map((h, i) => el('th', { class: i ? 'n' : '' }, h))));
+    o.stores.forEach((s) => {
+      const sv = s.survey;
+      const diff = s.stockQty - s.recStockQty;
+      const tr = el('tr', { class: 'opt-row' + (OPEN_OPT.has(s.name) ? ' open' : '') },
+        el('td', {}, el('b', {}, s.name), el('span', { class: 'caret' }, ' ▾'), el('div', { class: 'hint', style: 'font-size:.75rem' }, s.manager)),
+        el('td', { class: 'n' }, s.py ?? '-'), el('td', { class: 'n' }, won(s.amount)), el('td', { class: 'n' }, s.perPy == null ? '-' : won(s.perPy)),
+        el('td', { class: 'n' }, s.held || '-'), el('td', { class: 'n' }, s.sold), el('td', { class: 'n' }, s.active == null ? '-' : s.active + '%'),
+        el('td', { class: 'n' }, el('b', {}, s.recSku), s.cutSku ? el('div', { class: 'hint', style: 'font-size:.75rem' }, `−${s.cutSku}`) : null),
+        el('td', { class: 'n' }, sv.checked ? sv.shown : el('span', { class: 'hint' }, '미체크')),
+        el('td', { class: 'n' }, sv.toHang ? el('span', { class: 'tag good' }, sv.toHang) : '-'), el('td', { class: 'n' }, sv.toRemove ? el('span', { class: 'tag gap' }, sv.toRemove) : '-'),
+        el('td', { class: 'n' }, o.hasStock ? num(s.stockQty) : '-'), el('td', { class: 'n' }, o.hasStock ? num(s.recStockQty) : '-'),
+        el('td', { class: 'n' }, o.hasStock ? el('span', { class: diff > 0 ? 'over' : diff < 0 ? 'short' : '' }, (diff > 0 ? '+' : '') + num(diff)) : '-'),
+        el('td', { class: 'n' }, sv.agreePct == null ? '-' : sv.agreePct + '%'),
+        el('td', { class: 'n' }, s.judge ? el('span', { class: 'tag ' + JUDGE[s.judge][1] }, JUDGE[s.judge][0]) : '-'));
+      const det = el('tr', { class: 'opt-detail' }, el('td', { colspan: String(head.length) }, optDetail(s, o)));
+      det.hidden = !OPEN_OPT.has(s.name);
+      tr.onclick = () => { det.hidden = !det.hidden; tr.classList.toggle('open', !det.hidden); det.hidden ? OPEN_OPT.delete(s.name) : OPEN_OPT.add(s.name); };
+      tb.append(tr, det);
+    });
+    return tb;
+  })()));
+  draw();
+  $('dOpt').replaceChildren(dataCard,
+    el('div', { class: 'card' },
+      el('div', { class: 'product-head' }, el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '🧮 매장별 권장 진열 SKU · 적정 재고'),
+        el('p', { class: 'hint', style: 'margin:0' }, `판매 ${o.salesInfo.from}~${o.salesInfo.to} 기준 · 평당 매출 높은 순 · 매장 줄을 누르면 걸기·빼기 후보와 재고 과부족이 나와요.`)),
+        el('div', { class: 'actions' }, optControls(), el('a', { class: 'btn', href: '/api/admin/optimal-display.csv' + optQs() }, 'CSV 내려받기'))),
+      el('div', { class: 'stats', style: 'margin:14px 0' },
+        stat(`${t.over} · ${t.ok} · ${t.room}`, '구색 과다 · 적정 · 확대 여지 (매장 수)'),
+        stat(num(t.cutSku) + '개', '줄여도 되는 SKU (보유 − 권장, 합계)'),
+        o.hasStock ? stat(`+${num(t.overStock)} / −${num(t.shortStock)}`, '과잉 재고 / 부족 재고 (수량)') : null,
+        stat(`${num(t.toHang)} · ${num(t.toRemove)}`, `걸기 후보 · 빼기 후보 (진열 체크한 ${t.checkedStores}매장)`),
+        stat(t.agreePct == null ? '-' : t.agreePct + '%', '매장 평가와 실제 판매 일치율')),
+      rowsBox),
+    method);
+}
+function optControls() {
+  const cover = el('select', { class: 'opt-sel', title: '권장 재고 = 하루 판매 × 이 기간' }, [[28, '4주치'], [42, '6주치'], [56, '8주치'], [84, '12주치']].map(([v, l]) => el('option', { value: v }, l)));
+  const min = el('select', { class: 'opt-sel', title: 'SKU당 최소 재고 (사이즈 구색)' }, [2, 3, 4, 5, 6].map((v) => el('option', { value: v }, `최소 ${v}개`)));
+  cover.value = String(OPTQ.cover); min.value = String(OPTQ.min);
+  const apply = () => { OPTQ = { cover: Number(cover.value), min: Number(min.value) }; try { localStorage.setItem('optq', JSON.stringify(OPTQ)); } catch {} loadOptimal(); };
+  cover.onchange = apply; min.onchange = apply;
+  return el('span', { class: 'opt-ctl' }, el('span', { class: 'hint' }, '권장 재고 기준'), cover, min);
+}
+function optDetail(s, o) {
+  const it = (x, extra) => el('li', { class: 'opt-it' }, x.imageUrl ? el('img', { src: x.imageUrl, alt: x.code, class: 'opt-img' }) : null,
+    el('div', {}, el('b', {}, `${x.code} ${x.color}`), el('div', { class: 'hint' }, extra(x))));
+  const box = (title, desc, list, extra, cls) => el('div', { class: 'opt-box ' + (cls || '') }, el('h4', {}, `${title} (${list.length})`), el('p', { class: 'hint' }, desc),
+    list.length ? el('ul', { class: 'opt-list' }, list.map((x) => it(x, extra))) : el('p', { class: 'hint' }, '없어요 👍'));
+  const ST = { shown: '진열', stock: '창고만', none: '없음', notReceived: '미입고', '': '미체크' };
+  const d = s.detail, sv = s.survey;
+  return el('div', { class: 'opt-det' },
+    el('div', { class: 'opt-sum' },
+      `권장 진열 ${s.recSku} SKU` + (s.py ? ` (평당 ${s.recPerPy})` : '') + ` · 매장 조사: ${sv.checked ? `진열 ${sv.shown} SKU` + (sv.shownPerPy ? ` (평당 ${sv.shownPerPy})` : '') + `, 그중 권장 ${sv.recShown}` : '진열 체크 안 함'}` +
+      (sv.evals ? ` · 상품 평가 ${sv.evals}건 중 실제 판매와 일치 ${sv.agreePct}%` : '')),
+    el('div', { class: 'opt-grid' },
+      box('🟢 걸기 후보', '잘 팔리는(권장) SKU인데 진열 안 됨 · 매장에 재고 있음', d.toHang, (x) => `판매 ${x.qty}개 · ${won(x.amount)} · 재고 ${x.stock} · 체크 '${ST[x.status]}'`, 'g'),
+      box('🔴 빼기 후보', '진열 중인데 권장 목록 밖 (판매 적은 순)', d.toRemove, (x) => `판매 ${x.qty}개 · ${won(x.amount)} · 재고 ${x.stock}`, 'r'),
+      box('📮 배분 필요', '권장 SKU인데 매장 재고 없음', d.toAllocate, (x) => `판매 ${x.qty}개 · ${won(x.amount)} · 체크 '${ST[x.status]}'`, ''),
+      o.hasStock ? box('📦 재고 과부족', `현재 재고 − 권장 재고 (하루 판매 × ${o.opt.coverDays}일)`, d.stockGap, (x) => `현재 ${x.stock} · 권장 ${x.recStock} → ${x.gap > 0 ? '+' : ''}${x.gap} · 판매 ${x.qty}개`, '') : null,
+      d.evalMiss.length ? el('div', { class: 'opt-box' }, el('h4', {}, `🧐 매장 평가와 실제 판매가 반대인 상품 (${d.evalMiss.length})`),
+        el('ul', { class: 'opt-list' }, d.evalMiss.map((x) => el('li', {}, el('b', {}, x.code), ` — 매장 평가 '${{ good: '잘 팔림', normal: '보통', poor: '안 팔림' }[x.said]}' · 실제 판매 ${x.qty}개 (${{ good: '상위', normal: '중위', poor: '하위' }[x.actual]})`)))) : null));
+}
 function setDView(v) {
-  DVIEW = ['list', 'space', 'stock'].includes(v) ? v : 'analysis';
+  DVIEW = ['list', 'space', 'stock', 'optimal'].includes(v) ? v : 'analysis';
   $('dView').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === DVIEW));
   $('dAnalysis').hidden = DVIEW !== 'analysis';
   $('dSpace').hidden = DVIEW !== 'space';
   $('dStock').hidden = DVIEW !== 'stock';
+  $('dOpt').hidden = DVIEW !== 'optimal';
   $('dListView').hidden = DVIEW !== 'list';
   try { localStorage.setItem('dView2', DVIEW); } catch {}
   if (DVIEW === 'analysis') loadDisplayAnalysis();
   if (DVIEW === 'space') loadSpace();
   if (DVIEW === 'stock') loadStock();
+  if (DVIEW === 'optimal') loadOptimal();
 }
 async function loadDisplayAnalysis() {
   $('dAnalysis').replaceChildren(el('p', { class: 'hint' }, '분석 중…'));

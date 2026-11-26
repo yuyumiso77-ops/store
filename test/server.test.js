@@ -623,6 +623,7 @@ test('조사 리포트: 관리자만, 한 번에 모든 섹션', async () => {
 
 test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체크와 비교', async () => {
   assert.deepStrictEqual(await (await fetch(base + '/api/admin/stock-analysis', { headers: admin })).json(), { loaded: false });
+  assert.deepStrictEqual((await (await fetch(base + '/api/admin/optimal-display', { headers: admin })).json()).ready, false);
   await fetch(base + '/api/admin/stores/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows: [{ code: 'CBA0017', name: '롯데중동' }, { code: 'CBA0001', name: '롯데잠실' }] }) });
   const mk = async (name) => (await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name, code: name, category: '용품' }) })).json()).id;
   const a = await mk('STKA1'), b = await mk('STKB1');
@@ -643,6 +644,14 @@ test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체
   assert.deepStrictEqual([sa2.useAmount, sa2.byStatus.shown.avgSales, sa2.byStatus.shown.avgAmount, sa2.lift, sa2.salesInfo.from], [true, 8, 800000, 8, '2026-07-01']);
   const rep = await (await fetch(base + '/api/admin/report', { headers: admin })).json();
   assert.strictEqual(rep.reaction.products.find((x) => x.code === 'STKA1').salesAmount, 800000);
+  // 적정 진열·재고 + 평수 + 매장 조사 비교
+  const sz = await (await fetch(base + '/api/admin/sizes/import', { method: 'POST', headers: admin, body: JSON.stringify({ fileName: 'size.xlsx', names: { CBA0017: 'FJ 롯데백화점 중동점' }, rows: [['CBA0017', '22.39PY'], ['ZZZ', '10PY']] }) })).json();
+  assert.deepStrictEqual([sz.stores, sz.unmatched], [1, 1]);
+  const od = await (await fetch(base + '/api/admin/optimal-display?cover=28&min=2', { headers: admin })).json();
+  const jd = od.stores.find((x) => x.name === '롯데중동');
+  assert.deepStrictEqual([od.ready, od.opt.coverDays, jd.py, jd.sold, jd.recSku, jd.survey.checked, jd.survey.shown], [true, 28, 22.39, 2, 2, true, 1]);
+  assert.strictEqual(jd.survey.toHang, 1); // 권장(B, 판매 있음)인데 '창고만' · 재고 있음 → 걸기 후보
+  assert.ok((await (await fetch(base + '/api/admin/optimal-display.csv', { headers: admin })).text()).includes('롯데중동'));
   await fetch(base + '/api/admin/sales', { method: 'DELETE', headers: admin });
   await fetch(base + '/api/admin/stock', { method: 'DELETE', headers: admin });
   for (const st of ['롯데중동', '롯데잠실']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });

@@ -68,7 +68,7 @@ const OPTIONS = {
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], giftItems: d.giftItems, summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [], stock: d.stock || null, sales: d.sales || null };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], giftItems: d.giftItems, summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [], stock: d.stock || null, sales: d.sales || null, storeSizes: d.storeSizes || null };
   } catch {
     return { products: [], evaluations: [], ztec: [], gifts: [], summaries: {}, displays: [], stores: [] };
   }
@@ -895,6 +895,112 @@ function stockAnalysis() {
   };
 }
 
+// ---------- 🧮 적정 진열·재고 (판매 · 재고 · 평수 기준) + 매장 조사 비교 ----------
+// 기준값: 여기만 바꾸면 계산이 바뀜
+const OPT = { skuBuffer: 1.1, coreMultiplier: 1.5, coverDays: 56, minStockPerSku: 4, lowActive: 60, highActive: 80 }; // 재고: 8주치·SKU당 최소 4개(사이즈) — 화면에서 바꿔 볼 수 있음
+function importSizes(b) {
+  const mp = erpMapper(b.names && typeof b.names === 'object' ? b.names : {});
+  const sizes = {};
+  const unmatched = [];
+  for (const r of Array.isArray(b.rows) ? b.rows : []) {
+    const [code, py] = r;
+    const store = mp.store(code);
+    const v = parseFloat(String(py).replace(/[^\d.]/g, ''));
+    if (!store) { if (code) unmatched.push(String(code)); continue; }
+    if (v > 0) sizes[store] = v;
+  }
+  if (!Object.keys(sizes).length) return { error: '명단의 매장코드와 맞는 평수가 없어요. 첫 줄에 코드·평수 열이 있는지 확인해 주세요.' };
+  db.storeSizes = { sizes, fileName: cleanText(b.fileName, 120), uploadedAt: new Date().toISOString() };
+  saveDb();
+  return { ok: true, stores: Object.keys(sizes).length, unmatched: unmatched.length };
+}
+function optimalDisplay(over = {}) {
+  const OPT_ = { ...OPT, ...over };
+  const sl = db.sales;
+  if (!sl) return { ready: false, need: ['판매 자료'] };
+  const idx = skuIndex();
+  const days = Math.max(1, Math.round((Date.parse(sl.to) - Date.parse(sl.from)) / 864e5) + 1) || 1;
+  const sizes = (db.storeSizes && db.storeSizes.sizes) || {};
+  const stockMap = new Map((db.stock ? db.stock.items : []).map((x) => [x.store + '|' + x.sku, Math.max(0, x.stock)]));
+  const disp = new Map(db.displays.map((d) => [d.store + '|' + d.sku, d.status]));
+  const sku = (s) => { const k = idx.get(s); return k ? { sku: s, productId: k.product.id, code: k.product.code || k.product.name, name: k.product.name, color: k.color, line: lineOf(k.product), type: typeOf(k.product), imageUrl: imageUrl(k.product) } : null; };
+  // 전체 매장 판매 순위 (권장 목록을 채울 때 사용)
+  const net = new Map();
+  sl.items.forEach((x) => { if (idx.has(x.sku)) net.set(x.sku, (net.get(x.sku) || 0) + Math.max(0, x.amount)); });
+  const netRank = [...net.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const byStore = new Map();
+  sl.items.forEach((x) => { if (!idx.has(x.sku)) return; if (!byStore.has(x.store)) byStore.set(x.store, []); byStore.get(x.store).push(x); });
+  const storeNames = db.stores.length ? db.stores.map((s) => s.name) : [...byStore.keys()];
+  const evalByStore = new Map();
+  db.evaluations.filter((e) => isDone(e) && e.sales).forEach((e) => { const k = (matchStore(e.staff) || { name: e.staff }).name; if (!evalByStore.has(k)) evalByStore.set(k, []); evalByStore.get(k).push(e); });
+  const stores = storeNames.map((name) => {
+    const items = (byStore.get(name) || []).map((x) => ({ ...x, qty: Math.max(0, x.qty), amount: Math.max(0, x.amount) }));
+    const amount = items.reduce((a, x) => a + x.amount, 0), qty = items.reduce((a, x) => a + x.qty, 0);
+    const sold = items.filter((x) => x.qty > 0).sort((a, b) => b.amount - a.amount || b.qty - a.qty);
+    let acc = 0, core = 0;
+    for (const x of sold) { acc += x.amount; core++; if (acc >= amount * 0.8) break; }
+    const held = [...idx.keys()].filter((s) => (stockMap.get(name + '|' + s) || 0) > 0);
+    const heldSet = new Set(held);
+    const recCount = Math.min(idx.size, Math.max(Math.round(sold.length * OPT_.skuBuffer), Math.round(core * OPT_.coreMultiplier)));
+    const rec = sold.slice(0, recCount).map((x) => x.sku);
+    for (const s of netRank) { if (rec.length >= recCount) break; if (!rec.includes(s)) rec.push(s); }
+    const recSet = new Set(rec);
+    const qtyOf = new Map(items.map((x) => [x.sku, x]));
+    // SKU별 권장 재고 = 하루 판매 × 기간(최소 n개), 권장 목록 밖이면 0
+    const skuRows = [...new Set([...rec, ...held, ...[...idx.keys()].filter((s) => disp.has(name + '|' + s))])].map((s) => {
+      const it = qtyOf.get(s) || { qty: 0, amount: 0 };
+      const stock = stockMap.get(name + '|' + s) || 0;
+      const recStock = recSet.has(s) ? Math.max(OPT_.minStockPerSku, Math.ceil((it.qty / days) * OPT_.coverDays)) : 0;
+      return { ...sku(s), qty: it.qty, amount: it.amount, stock, recStock, gap: stock - recStock, rec: recSet.has(s), status: disp.get(name + '|' + s) || '' };
+    });
+    const stockQty = skuRows.reduce((a, x) => a + x.stock, 0), recStockQty = skuRows.reduce((a, x) => a + x.recStock, 0);
+    // 매장 조사 비교: 진열 체크
+    const checked = [...idx.keys()].some((s) => disp.has(name + '|' + s));
+    const shown = skuRows.filter((x) => x.status === 'shown');
+    const toHang = skuRows.filter((x) => x.rec && x.status && x.status !== 'shown' && x.stock > 0).sort((a, b) => b.amount - a.amount); // 권장인데 진열 안 됨 (재고 있음)
+    const toAllocate = skuRows.filter((x) => x.rec && x.stock <= 0 && x.status !== 'shown' && (db.stock ? true : false)).sort((a, b) => b.amount - a.amount); // 권장인데 재고 없음
+    const toRemove = shown.filter((x) => !x.rec).sort((a, b) => a.amount - b.amount); // 진열 중인데 권장 밖
+    // 매장 조사 비교: 상품 평가(판매 반응) vs 실제 판매 (상품 단위, 매장 안 판매 순위 3등분)
+    const prodQty = new Map();
+    items.forEach((x) => { const k = idx.get(x.sku); prodQty.set(k.product.id, (prodQty.get(k.product.id) || 0) + x.qty); });
+    const evs = evalByStore.get(name) || [];
+    const ranked = [...new Set(db.products.filter((p) => p.active).map((p) => p.id))].map((id) => [id, prodQty.get(id) || 0]).sort((a, b) => b[1] - a[1]);
+    const tier = new Map(ranked.map(([id, q], i) => [id, q <= 0 ? 'poor' : i < ranked.length / 3 ? 'good' : i < (ranked.length * 2) / 3 ? 'normal' : 'poor']));
+    const evalRows = evs.filter((e) => tier.has(e.productId)).map((e) => {
+      const p = db.products.find((x) => x.id === e.productId);
+      return { code: p.code || p.name, said: e.sales, actual: tier.get(e.productId), qty: prodQty.get(e.productId) || 0 };
+    });
+    const agree = evalRows.filter((x) => x.said === x.actual).length;
+    const evalMiss = evalRows.filter((x) => (x.said === 'good' && x.actual === 'poor') || (x.said === 'poor' && x.actual === 'good'));
+    const active = held.length ? Math.round((held.filter((s) => (qtyOf.get(s) || {}).qty > 0).length / held.length) * 100) : null;
+    const py = sizes[name] || null;
+    return {
+      name, manager: (db.stores.find((s) => s.name === name) || {}).manager || '', py, amount, qty, perPy: py ? Math.round(amount / py) : null,
+      held: held.length, sold: sold.length, core, active, recSku: recCount, recPerPy: py ? Math.round((recCount / py) * 10) / 10 : null,
+      cutSku: Math.max(0, held.length - recCount),
+      judge: active == null ? '' : active < OPT_.lowActive ? 'over' : active >= OPT_.highActive ? 'room' : 'ok',
+      stockQty, recStockQty, overStock: skuRows.reduce((a, x) => a + Math.max(0, x.gap), 0), shortStock: skuRows.reduce((a, x) => a + Math.max(0, -x.gap), 0),
+      survey: {
+        checked, shown: shown.length, shownPerPy: py && checked ? Math.round((shown.length / py) * 10) / 10 : null,
+        recShown: shown.filter((x) => x.rec).length, toHang: toHang.length, toAllocate: toAllocate.length, toRemove: toRemove.length,
+        evals: evalRows.length, agreePct: evalRows.length ? Math.round((agree / evalRows.length) * 100) : null, evalMiss: evalMiss.length,
+      },
+      detail: { toHang: toHang.slice(0, 40), toAllocate: toAllocate.slice(0, 40), toRemove: toRemove.slice(0, 40), evalMiss: evalMiss.slice(0, 30),
+        stockGap: skuRows.filter((x) => x.gap !== 0).sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap)).slice(0, 40) },
+    };
+  }).filter((s) => s.amount > 0 || s.held > 0);
+  const sum = (f) => stores.reduce((a, s) => a + (f(s) || 0), 0);
+  return {
+    ready: true, opt: OPT_, days, salesInfo: { from: sl.from, to: sl.to }, hasStock: !!db.stock, hasSizes: !!db.storeSizes,
+    sizesInfo: db.storeSizes ? { fileName: db.storeSizes.fileName, uploadedAt: db.storeSizes.uploadedAt, stores: Object.keys(db.storeSizes.sizes).length } : null,
+    totals: { stores: stores.length, over: stores.filter((s) => s.judge === 'over').length, ok: stores.filter((s) => s.judge === 'ok').length, room: stores.filter((s) => s.judge === 'room').length,
+      cutSku: sum((s) => s.cutSku), overStock: sum((s) => s.overStock), shortStock: sum((s) => s.shortStock), stockQty: sum((s) => s.stockQty), recStockQty: sum((s) => s.recStockQty),
+      toHang: sum((s) => s.survey.toHang), toRemove: sum((s) => s.survey.toRemove), checkedStores: stores.filter((s) => s.survey.checked).length,
+      agreePct: (() => { const n = sum((s) => s.survey.evals); return n ? Math.round((stores.reduce((a, s) => a + (s.survey.agreePct || 0) * s.survey.evals, 0) / n)) : null; })() },
+    stores: stores.sort((a, b) => (b.perPy ?? -1) - (a.perPy ?? -1) || b.amount - a.amount),
+  };
+}
+
 // ---------- AI 의견 요약 (Claude API) ----------
 // Railway Variables 에 ANTHROPIC_API_KEY 를 넣으면 켜짐
 let aiClient = null;
@@ -1199,6 +1305,21 @@ async function handle(req, res) {
       return send(res, r.error ? 400 : 200, r);
     }
     if (m === 'DELETE' && p === '/api/admin/sales') { db.sales = null; saveDb(); return send(res, 200, { ok: true }); }
+    if (m === 'POST' && p === '/api/admin/sizes/import') {
+      const r = importSizes(await readBody(req, 256 * 1024));
+      return send(res, r.error ? 400 : 200, r);
+    }
+    const optQ = () => { const c = Number(url.searchParams.get('cover')), mn = Number(url.searchParams.get('min')); const o = {}; if (c >= 7 && c <= 180) o.coverDays = Math.round(c); if (mn >= 0 && mn <= 20) o.minStockPerSku = Math.round(mn); return o; };
+    if (m === 'GET' && p === '/api/admin/optimal-display') return send(res, 200, optimalDisplay(optQ()));
+    if (m === 'GET' && p === '/api/admin/optimal-display.csv') {
+      const o = optimalDisplay(optQ());
+      if (!o.ready) return send(res, 400, { error: '판매 자료를 먼저 올려 주세요.' });
+      const J = { over: '구색 과다 (축소 검토)', ok: '적정', room: '구색 효율 높음 (확대 여지)' };
+      const rows = [['매장', '담당자', '평수', `26FW 매출(${o.salesInfo.from}~${o.salesInfo.to})`, '평당 매출', '보유 SKU', '판매된 SKU', 'SKU 활성률(%)', '매출 80% SKU', '권장 진열 SKU', '줄일 SKU', '진열 SKU(조사)', '권장 중 진열됨', '걸기 후보(권장·재고 있음·미진열)', '빼기 후보(진열·권장 밖)', '배분 필요(권장·재고 없음)', '현재 재고', '권장 재고', '과잉 재고', '부족 재고', '평가 일치율(%)', '판정']];
+      o.stores.forEach((s) => rows.push([s.name, s.manager, s.py ?? '', s.amount, s.perPy ?? '', s.held, s.sold, s.active ?? '', s.core, s.recSku, s.cutSku, s.survey.checked ? s.survey.shown : '', s.survey.checked ? s.survey.recShown : '', s.survey.toHang, s.survey.toRemove, s.survey.toAllocate, s.stockQty, s.recStockQty, s.overStock, s.shortStock, s.survey.agreePct ?? '', J[s.judge] || '']));
+      const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+      return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="optimal-display.csv"' });
+    }
     if (m === 'GET' && p === '/api/admin/space-swaps.csv') {
       const sp = spaceEfficiency();
       const cell = (x) => (x ? `${x.code} ${x.color}`.trim() : '');
