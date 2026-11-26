@@ -1168,7 +1168,7 @@ async function loadOptimal() {
 // 🌡️ 기온·계절 반영 카드: 복종별 계절 지수 + 주별 판매 흐름
 function seasonCard(o) {
   if (!o.seasonal) return el('div', { class: 'card' }, el('h2', { style: 'margin:0 0 4px' }, '🌡️ 기온·계절 반영'),
-    el('p', { class: 'hint', style: 'margin:0' }, '지금 올라간 판매 자료에는 주별 정보가 없어요. 📦 재고 대조 화면에서 판매 자료 엑셀을 한 번 더 올리면, 최근 4주 판매 흐름(기온 변화)을 반영해 권장 진열·재고를 다시 계산해요.'));
+    el('p', { class: 'hint', style: 'margin:0' }, '아직 반영 전이에요. 지금 올라간 판매 자료는 주별 판매가 들어가기 전에 올린 파일이라서요. 이 화면 맨 위 자료 상자의 [📁 새 판매 자료]로 같은 판매 엑셀을 한 번만 다시 올리면, 최근 판매 흐름(기온 변화)을 반영해 권장 진열·재고를 다시 계산해요.'));
   const se = o.seasonal;
   // 7일 안 된 마지막 주는 그래프에서 뺌
   const spark = (all) => { const weeks = Array.from({ length: se.fullWeeks || all.length }, (_, i) => all[i] || 0); const mx = Math.max(1, ...weeks); return el('span', { class: 'spark', title: se.weekStarts.map((d, i) => `${d}~ ${weeks[i] || 0}개`).join('\n') }, weeks.map((v, i) => el('i', { class: i >= weeks.length - 4 ? 'r' : '', style: `height:${Math.max(4, (v / mx) * 100)}%` }))); };
