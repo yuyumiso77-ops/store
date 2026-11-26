@@ -621,6 +621,26 @@ test('조사 리포트: 관리자만, 한 번에 모든 섹션', async () => {
   await fetch(base + `/api/admin/products/${prod.id}`, { method: 'DELETE', headers: admin });
 });
 
+test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체크와 비교', async () => {
+  assert.deepStrictEqual(await (await fetch(base + '/api/admin/stock-analysis', { headers: admin })).json(), { loaded: false });
+  await fetch(base + '/api/admin/stores/import', { method: 'POST', headers: admin, body: JSON.stringify({ rows: [{ code: 'CBA0017', name: '롯데중동' }, { code: 'CBA0001', name: '롯데잠실' }] }) });
+  const mk = async (name) => (await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name, code: name, category: '용품' }) })).json()).id;
+  const a = await mk('STKA1'), b = await mk('STKB1');
+  await fetch(base + '/api/display', { method: 'POST', headers: staff, body: JSON.stringify({ store: '롯데중동', items: [{ sku: 'P-' + a, status: 'shown' }, { sku: 'P-' + b, status: 'stock' }] }) });
+  await fetch(base + '/api/display', { method: 'POST', headers: staff, body: JSON.stringify({ store: '롯데잠실', items: [{ sku: 'P-' + a, status: 'none' }] }) });
+  const imp = (rows) => fetch(base + '/api/admin/stock/import', { method: 'POST', headers: admin, body: JSON.stringify({ asOf: '2026-11-25', fileName: 't.xlsx', stores: { CBA0017: 'FJ 롯데백화점 중동점', CBA0001: 'FJ 롯데백화점 잠실점', X9: 'FJ 순천점' }, rows }) });
+  assert.strictEqual((await imp([['CBA0017', 'NOPE', '', 1, 1]])).status, 400); // 맞는 상품 없음
+  const r = await (await imp([['CBA0017', 'STKA1', '', 2, 6], ['CBA0017', 'STKB1', '', 10, 2], ['CBA0001', 'STKA1', '', 3, 0], ['X9', 'STKA1', '', 1, 1], ['CBA0017', '31734', '**', 86, 9]])).json();
+  assert.deepStrictEqual([r.stores, r.skus, r.unmatchedStores], [2, 2, ['FJ 순천점']]);
+  const sa = await (await fetch(base + '/api/admin/stock-analysis', { headers: admin })).json();
+  assert.deepStrictEqual([sa.byStatus.shown.avgSales, sa.byStatus.stock.avgSales, sa.lift, sa.totals.idleQty], [6, 2, 3, 10]);
+  assert.strictEqual(sa.mismatches.counts.hasStockButNone, 1); // 잠실: 재고 3인데 '없음'
+  assert.strictEqual(sa.byStore.find((x) => x.name === '롯데중동').perSlot, 6);
+  await fetch(base + '/api/admin/stock', { method: 'DELETE', headers: admin });
+  for (const st of ['롯데중동', '롯데잠실']) await fetch(base + `/api/admin/stores/${encodeURIComponent(st)}?confirm=${encodeURIComponent(st)}`, { method: 'DELETE', headers: admin });
+  for (const id of [a, b]) await fetch(base + `/api/admin/products/${id}`, { method: 'DELETE', headers: admin });
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);

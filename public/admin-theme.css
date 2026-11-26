@@ -78,3 +78,11 @@ body.admin .card:has(> .stats:first-child) > .stats + * { margin-top: 12px; }
 .bulk-ai-wrap { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .bulk-ai-msg { font-size: .8rem; color: #6b7280; max-width: 360px; }
 .bulk-ai-btn:disabled { opacity: .75; cursor: default; }
+/* 재고 대조 표 */
+.stock-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.stock-table th, .stock-table td { text-align: left; padding: 10px; border-bottom: 1px solid #eef0f3; vertical-align: middle; white-space: nowrap; }
+.stock-table th { color: #6b7280; font-weight: 500; font-size: .84rem; border-bottom-color: #e5e7eb; }
+.stock-table td.n, .stock-table th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.stock-table .minibar { display: inline-block; width: 120px; height: 8px; background: #eef1f6; border-radius: 2px; overflow: hidden; vertical-align: middle; }
+.stock-table .minibar i { display: block; height: 100%; background: var(--accent); }
+.tw { overflow-x: auto; }

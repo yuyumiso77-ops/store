@@ -68,7 +68,7 @@ const OPTIONS = {
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], giftItems: d.giftItems, summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [] };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], giftItems: d.giftItems, summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [], stock: d.stock || null };
   } catch {
     return { products: [], evaluations: [], ztec: [], gifts: [], summaries: {}, displays: [], stores: [] };
   }
@@ -79,7 +79,7 @@ function saveDb() {
   DB_VER++;
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+  fs.writeFileSync(tmp, JSON.stringify(db)); // 들여쓰기 없이 (재고·진열 데이터가 커서)
   fs.renameSync(tmp, DB_FILE);
 }
 
@@ -746,6 +746,97 @@ function buildReport() {
   };
 }
 
+// ---------- 📦 매장 재고 (ERP 매장시점재고현황) × 진열 체크 ----------
+// 재고 파일: 매장코드 × 품번 × 색상별 재고수량·판매수량 합계. SKU는 품번 + 색상명으로 맞춤
+const normColor = (c) => String(c || '').toUpperCase().replace(/\s+/g, '');
+function importStock(b) {
+  const idx = skuIndex();
+  const byCodeColor = new Map();
+  idx.forEach((k) => byCodeColor.set(`${k.product.code}|${normColor(k.color)}`, k.sku));
+  const storeByCode = new Map(db.stores.filter((s) => s.code).map((s) => [String(s.code).trim(), s.name]));
+  const cleanName = (n) => String(n || '').replace(/^FJ\s*/, '').replace(/백화점\s*/, '').replace(/\s+/g, '');
+  const storeOf = (code, name) => storeByCode.get(String(code).trim()) || (matchStore(cleanName(name)) || {}).name || null;
+  const names = b.stores && typeof b.stores === 'object' ? b.stores : {};
+  const items = new Map();
+  const unmatchedStores = new Set();
+  let skipped = 0;
+  for (const r of Array.isArray(b.rows) ? b.rows : []) {
+    if (!Array.isArray(r) || r.length < 5) { skipped++; continue; }
+    const [code, prod, color, stock, sales] = r;
+    const sku = byCodeColor.get(`${String(prod).trim()}|${normColor(color)}`);
+    if (!sku) { skipped++; continue; } // 조사 대상(26FW) 상품이 아님
+    const store = storeOf(code, names[code]);
+    if (!store) { unmatchedStores.add(names[code] || String(code)); continue; }
+    const k = store + '|' + sku;
+    const it = items.get(k) || { store, sku, stock: 0, sales: 0 };
+    it.stock += Number(stock) || 0; it.sales += Number(sales) || 0;
+    items.set(k, it);
+  }
+  if (!items.size) return { error: '조사 대상 상품(품번·색상)이나 매장(매장코드)과 맞는 재고가 없어요. 파일을 확인해 주세요.' };
+  db.stock = {
+    asOf: cleanText(b.asOf, 20), fileName: cleanText(b.fileName, 120), uploadedAt: new Date().toISOString(),
+    items: [...items.values()], unmatchedStores: [...unmatchedStores].slice(0, 50),
+  };
+  saveDb();
+  return { ok: true, items: db.stock.items.length, stores: new Set(db.stock.items.map((x) => x.store)).size, skus: new Set(db.stock.items.map((x) => x.sku)).size, unmatchedStores: db.stock.unmatchedStores, skipped };
+}
+function stockAnalysis() {
+  const st = db.stock;
+  if (!st) return { loaded: false };
+  const idx = skuIndex();
+  const disp = new Map(db.displays.map((d) => [d.store + '|' + d.sku, d.status]));
+  const checkedStores = new Set(db.displays.map((d) => d.store));
+  const sku = (s) => { const k = idx.get(s); return k ? { sku: s, code: k.product.code || k.product.name, name: k.product.name, color: k.color, line: lineOf(k.product), type: typeOf(k.product), imageUrl: imageUrl(k.product) } : null; };
+  const pairs = st.items.filter((x) => idx.has(x.sku)).map((x) => ({ ...x, stock: Math.max(0, x.stock), status: disp.get(x.store + '|' + x.sku) || '' }));
+  // 상태별 실제 판매 (진열 효과)
+  const G = {};
+  ['shown', 'stock', 'none', 'notReceived', ''].forEach((s) => (G[s] = { pairs: 0, sales: 0, stock: 0, zeroSales: 0 }));
+  pairs.forEach((p) => { const g = G[p.status]; g.pairs++; g.sales += p.sales; g.stock += p.stock; if (p.sales <= 0) g.zeroSales++; });
+  const grp = (s) => ({ ...G[s], avgSales: G[s].pairs ? Math.round((G[s].sales / G[s].pairs) * 10) / 10 : null, sellThrough: G[s].sales + G[s].stock ? Math.round((G[s].sales / (G[s].sales + G[s].stock)) * 100) : null });
+  const byStatus = { shown: grp('shown'), stock: grp('stock'), none: grp('none'), notReceived: grp('notReceived'), unchecked: grp('') };
+  const lift = byStatus.shown.avgSales && byStatus.stock.avgSales ? Math.round((byStatus.shown.avgSales / byStatus.stock.avgSales) * 10) / 10 : null;
+  // 복종별: 진열 자리 비율 vs 실제 판매 비율 (진열된 자리 기준)
+  const shown = pairs.filter((p) => p.status === 'shown');
+  const totSlots = shown.length, totSales = shown.reduce((a, p) => a + Math.max(0, p.sales), 0);
+  const tmap = new Map();
+  shown.forEach((p) => { const s = sku(p.sku); const k = `${s.line}|${s.type}`; const t = tmap.get(k) || { line: s.line, type: s.type, slots: 0, sales: 0, stock: 0 }; t.slots++; t.sales += Math.max(0, p.sales); t.stock += p.stock; tmap.set(k, t); });
+  const byType = [...tmap.values()].map((t) => {
+    const space = totSlots ? t.slots / totSlots : 0, contrib = totSales ? t.sales / totSales : 0;
+    return { ...t, spacePct: Math.round(space * 1000) / 10, salesPct: Math.round(contrib * 1000) / 10, perSlot: Math.round((t.sales / t.slots) * 10) / 10, efficiency: space ? Math.round((contrib / space) * 100) / 100 : null };
+  }).sort((a, b) => b.efficiency - a.efficiency);
+  // 매장별
+  const smap = new Map();
+  pairs.forEach((p) => {
+    const s = smap.get(p.store) || { name: p.store, checked: checkedStores.has(p.store), slots: 0, shownSales: 0, idleQty: 0, idleSkus: 0, stockQty: 0, sales: 0, mismatch: 0 };
+    s.stockQty += p.stock; s.sales += Math.max(0, p.sales);
+    if (p.status === 'shown') { s.slots++; s.shownSales += Math.max(0, p.sales); }
+    if (p.status === 'stock' && p.stock > 0) { s.idleQty += p.stock; s.idleSkus++; }
+    if (((p.status === 'none' || p.status === 'notReceived') && p.stock > 0) || (p.status === 'shown' && p.stock <= 0)) s.mismatch++;
+    smap.set(p.store, s);
+  });
+  const byStore = [...smap.values()].map((s) => ({ ...s, perSlot: s.slots ? Math.round((s.shownSales / s.slots) * 10) / 10 : null }))
+    .sort((a, b) => (a.perSlot ?? 999) - (b.perSlot ?? 999));
+  // 불일치 (체크 정확도)
+  const mm = (pred, label) => pairs.filter(pred).map((p) => ({ store: p.store, ...sku(p.sku), stock: p.stock, sales: p.sales, status: p.status, label }));
+  const hasStockButNone = mm((p) => (p.status === 'none' || p.status === 'notReceived') && p.stock > 0, '재고 있는데 없음·미입고로 체크');
+  const shownNoStock = mm((p) => p.status === 'shown' && p.stock <= 0, '재고 0인데 진열로 체크');
+  // SKU 단위 집계
+  const agg = (list, valueOf) => {
+    const m = new Map();
+    list.forEach((p) => { const a = m.get(p.sku) || { ...sku(p.sku), stores: [], qty: 0 }; a.stores.push(p.store); a.qty += valueOf(p); m.set(p.sku, a); });
+    return [...m.values()].sort((a, b) => b.qty - a.qty || b.stores.length - a.stores.length).slice(0, 20);
+  };
+  const idleTop = agg(pairs.filter((p) => p.status === 'stock' && p.stock > 0), (p) => p.stock);
+  const deadShown = agg(pairs.filter((p) => p.status === 'shown' && p.sales <= 0 && p.stock > 0), (p) => p.stock);
+  return {
+    loaded: true, asOf: st.asOf, fileName: st.fileName, uploadedAt: st.uploadedAt, unmatchedStores: st.unmatchedStores,
+    totals: { stores: smap.size, checkedStores: [...smap.values()].filter((s) => s.checked).length, pairs: pairs.length, stockQty: pairs.reduce((a, p) => a + p.stock, 0), sales: pairs.reduce((a, p) => a + Math.max(0, p.sales), 0),
+      idleQty: byStatus.stock.stock, mismatches: hasStockButNone.length + shownNoStock.length },
+    byStatus, lift, byType, byStore, idleTop, deadShown,
+    mismatches: { hasStockButNone: hasStockButNone.slice(0, 3000), shownNoStock: shownNoStock.slice(0, 3000), counts: { hasStockButNone: hasStockButNone.length, shownNoStock: shownNoStock.length } },
+  };
+}
+
 // ---------- AI 의견 요약 (Claude API) ----------
 // Railway Variables 에 ANTHROPIC_API_KEY 를 넣으면 켜짐
 let aiClient = null;
@@ -978,6 +1069,7 @@ async function handle(req, res) {
   if (m === 'GET' && p === '/style.css') return serveStatic(res, 'style.css');
   if (m === 'GET' && p === '/admin-theme.css') return serveStatic(res, 'admin-theme.css');
   if (m === 'GET' && p === '/bulk-ai.js') return serveStatic(res, 'bulk-ai.js');
+  if (m === 'GET' && p === '/xlsx-lite.js') return serveStatic(res, 'xlsx-lite.js');
   if (m === 'GET' && (p === '/logo.png' || p === '/favicon.png')) return serveStatic(res, p.slice(1));
 
   // 관리자
@@ -1034,6 +1126,14 @@ async function handle(req, res) {
     if (m === 'GET' && p === '/api/admin/display') return send(res, 200, displayReport());
     if (m === 'GET' && p === '/api/admin/display-analysis') return send(res, 200, displayAnalysis());
     if (m === 'GET' && p === '/api/admin/space-efficiency') return send(res, 200, spaceEfficiency());
+    if (m === 'GET' && p === '/api/admin/stock-analysis') return send(res, 200, stockAnalysis());
+    if (m === 'POST' && p === '/api/admin/stock/import') {
+      let b;
+      try { b = JSON.parse((await readRaw(req, 8 * 1024 * 1024)).toString('utf8')); } catch { return send(res, 400, { error: '재고 데이터를 읽지 못했어요 (너무 크거나 형식 오류).' }); }
+      const r = importStock(b);
+      return send(res, r.error ? 400 : 200, r);
+    }
+    if (m === 'DELETE' && p === '/api/admin/stock') { db.stock = null; saveDb(); return send(res, 200, { ok: true }); }
     if (m === 'GET' && p === '/api/admin/space-swaps.csv') {
       const sp = spaceEfficiency();
       const cell = (x) => (x ? `${x.code} ${x.color}`.trim() : '');
