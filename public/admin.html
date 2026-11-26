@@ -1142,7 +1142,6 @@ async function loadOptimal() {
       o.tiers ? el('li', {}, `권장 재고 = SKU별 예상 하루 판매 × 등급별 기간 (+핵심 SKU 안전재고), 최소 수량도 등급별. 등급 = 평당 매출 상·중·하 1/3 (평수 없으면 매출). ` +
         Object.values(o.tiers).map((t) => `${t.label} ${t.stores}매장: SKU당 최소 ${t.min}개 · ${t.coverWeeks}주치${t.safetyWeeks ? ` + 핵심 SKU 안전재고 ${t.safetyWeeks}주` : ''}`).join(' / ') + `. 권장 목록 밖 SKU의 권장 재고는 0. 판매 기간 ${o.days}일.`)
         : el('li', {}, `권장 재고 = SKU별 예상 하루 판매 × ${O.coverDays}일 (최소 ${O.minStockPerSku}개, 모든 매장 같은 기준). 권장 목록 밖 SKU의 권장 재고는 0. 판매 기간 ${o.days}일.`),
-      el('li', {}, 'RT 추천 = 같은 SKU에서 권장보다 남는 매장 → 모자라는 매장. 받는 쪽은 상위 등급·예상 판매 큰 매장부터, 보내는 쪽은 권장 밖 재고·하위 등급부터.'),
       el('li', {}, `SKU 활성률 = 보유(재고>0) SKU 중 판매가 있었던 비율. ${O.lowActive}% 미만 = 구색 과다, ${O.highActive}% 이상 = 확대 여지.`),
       el('li', {}, '매장 조사 비교: 걸기 후보 = 권장인데 진열 안 됨(재고 있음) · 빼기 후보 = 진열 중인데 권장 밖 · 배분 필요 = 권장인데 재고 없음 · 평가 일치율 = 매장의 판매 반응 평가(잘 팔림/보통/안 팔림)가 실제 판매 순위(상·중·하)와 맞은 비율.')));
   const rowsBox = el('div');
@@ -1182,45 +1181,9 @@ async function loadOptimal() {
         o.hasStock ? stat(`+${num(t.overStock)} / −${num(t.shortStock)}`, '과잉 재고 / 부족 재고 (수량)') : null,
         o.hasStock && o.seasonal ? stat(num(t.offSeasonStock) + '개', '비시즌 복종 재고 (계절 지수 0.6 이하: 반팔 등) — 정리·이동 후보') : null,
         stat(`${num(t.toHang)} · ${num(t.toRemove)}`, `걸기 후보 · 빼기 후보 (진열 체크한 ${t.checkedStores}매장)`),
-        o.hasStock && o.rt ? stat(`${num(o.rt.qty)}개`, `RT로 채울 수 있는 부족분 (${o.rt.coveredPct ?? 0}% · ${num(o.rt.lines)}건)`) : null,
         stat(t.agreePct == null ? '-' : t.agreePct + '%', '매장 평가와 실제 판매 일치율')),
       rowsBox),
-    o.hasStock && o.rt ? rtCard(o) : null, seasonCard(o), method);
-}
-// 🔁 RT(매장 간 재고 이동) 추천
-function rtCard(o) {
-  const rt = o.rt;
-  const T = { A: '상위', B: '중위', C: '하위' };
-  const stores = [...new Set(rt.moves.flatMap((x) => [x.from, x.to]))].sort();
-  const toSel = el('select', { class: 'opt-sel' }, el('option', { value: '' }, '받는 매장 전체'), stores.map((n) => el('option', { value: n }, n)));
-  const fromSel = el('select', { class: 'opt-sel' }, el('option', { value: '' }, '보내는 매장 전체'), stores.map((n) => el('option', { value: n }, n)));
-  const box = el('div');
-  const draw = () => {
-    const list = rt.moves.filter((x) => (!toSel.value || x.to === toSel.value) && (!fromSel.value || x.from === fromSel.value));
-    const shown = list.slice(0, 200);
-    box.replaceChildren(el('p', { class: 'hint', style: 'margin:8px 0' }, `${num(list.length)}건 · ${num(list.reduce((a, x) => a + x.qty, 0))}개` + (list.length > 200 ? ' (앞 200건만 표시, 전체는 CSV)' : '')),
-      el('div', { class: 'tw' }, el('table', { class: 'stock-table' },
-        el('tr', {}, ['상품', '보내는 매장', '', '받는 매장', '수량', '받는 매장 예상 주간 판매'].map((h, i) => el('th', { class: i >= 4 ? 'n' : '' }, h))),
-        shown.map((x) => el('tr', {},
-          el('td', {}, el('span', { class: 'opt-it' }, x.imageUrl ? el('img', { class: 'opt-img', src: x.imageUrl, alt: x.code }) : null, el('span', {}, el('b', {}, `${x.code} ${x.color}`), el('div', { class: 'hint', style: 'font-size:.75rem' }, `${x.line} ${x.type}`)))),
-          el('td', {}, x.from, ' ', el('span', { class: 'tier t' + x.fromTier }, T[x.fromTier] || '')), el('td', { class: 'hint' }, '→'),
-          el('td', {}, el('b', {}, x.to), ' ', el('span', { class: 'tier t' + x.toTier }, T[x.toTier] || '')),
-          el('td', { class: 'n' }, el('b', {}, x.qty + '개')), el('td', { class: 'n' }, x.toForecastWeek + '개'))))));
-  };
-  toSel.onchange = draw; fromSel.onchange = draw;
-  draw();
-  const pairs = el('details', { style: 'margin-top:12px' }, el('summary', { class: 'q', style: 'cursor:pointer;margin:0' }, `📦 매장 간 묶음 보기 (${num(rt.pairCount)}개 경로 · 많은 순)`),
-    el('div', { class: 'tw', style: 'margin-top:8px' }, el('table', { class: 'stock-table' },
-      el('tr', {}, ['보내는 매장', '', '받는 매장', 'SKU 수', '수량'].map((h, i) => el('th', { class: i >= 3 ? 'n' : '' }, h))),
-      rt.pairs.map((x) => el('tr', { style: 'cursor:pointer', onclick: () => { toSel.value = x.to; fromSel.value = x.from; draw(); box.scrollIntoView({ behavior: 'smooth', block: 'start' }); } },
-        el('td', {}, x.from, ' ', el('span', { class: 'tier t' + x.fromTier }, T[x.fromTier] || '')), el('td', { class: 'hint' }, '→'),
-        el('td', {}, el('b', {}, x.to), ' ', el('span', { class: 'tier t' + x.toTier }, T[x.toTier] || '')), el('td', { class: 'n' }, x.lines), el('td', { class: 'n' }, el('b', {}, x.qty + '개')))))));
-  return el('div', { class: 'card' },
-    el('div', { class: 'product-head' },
-      el('div', {}, el('h2', { style: 'margin:0 0 4px' }, '🔁 RT 추천 (매장 간 재고 이동)'),
-        el('p', { class: 'hint', style: 'margin:0;line-height:1.6' }, `같은 SKU가 권장보다 남는 매장 → 모자라는 매장으로 옮겨요. 받는 쪽은 상위 등급·지금 잘 팔리는 매장부터, 보내는 쪽은 권장 밖 재고·하위 등급부터. 부족분 ${num(rt.need)}개 중 ${num(rt.qty)}개(${rt.coveredPct ?? 0}%)를 RT로 채울 수 있고, 나머지 ${num(rt.remaining)}개는 본사 배분이 필요해요.`)),
-      el('div', { class: 'actions' }, toSel, fromSel, el('a', { class: 'btn', href: '/api/admin/rt.csv' + optQs() }, 'RT CSV'))),
-    box, pairs);
+    seasonCard(o), method);
 }
 // 🌡️ 기온·계절 반영 카드: 복종별 계절 지수 + 주별 판매 흐름
 function seasonCard(o) {

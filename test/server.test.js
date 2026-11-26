@@ -654,10 +654,8 @@ test('매장 재고 연결: 매장코드·품번·색상으로 맞춰 진열 체
   assert.deepStrictEqual([od.ready, od.opt.coverDays, jd.py, jd.sold, jd.recSku, jd.survey.checked, jd.survey.shown], [true, 28, 22.39, 2, 2, true, 1]);
   assert.strictEqual(jd.survey.toHang, 1); // 권장(B, 판매 있음)인데 '창고만' · 재고 있음 → 걸기 후보
   assert.ok(od.seasonal && od.seasonal.types[0].factor > 1);
-  // 등급별 재고 + RT: 롯데중동(상위)은 A 권장 재고(판매 속도 × 4주 + 안전재고 2주)보다 재고가 모자라고, 롯데잠실은 A가 권장 밖이라 재고 3이 남음 → RT 3개
+  // 등급별 재고: 평수 있는 매장 중 평당 매출 상위 → A
   assert.strictEqual(jd.tier, 'A');
-  assert.ok(od.rt.moves.some((m) => m.from === '롯데잠실' && m.to === '롯데중동' && m.code === 'STKA1' && m.qty === 3), JSON.stringify(od.rt.moves));
-  assert.ok((await (await fetch(base + '/api/admin/rt.csv?cover=28&min=2', { headers: admin })).text()).includes('롯데잠실'));
   assert.ok((await (await fetch(base + '/api/admin/optimal-display.csv', { headers: admin })).text()).includes('롯데중동'));
   await fetch(base + '/api/admin/sales', { method: 'DELETE', headers: admin });
   await fetch(base + '/api/admin/stock', { method: 'DELETE', headers: admin });
