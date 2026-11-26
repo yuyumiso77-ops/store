@@ -677,6 +677,66 @@ function spaceEfficiency() {
   };
 }
 
+// ---------- 📄 조사 리포트 (인쇄·PDF용, 지금 데이터로 한 번에) ----------
+function buildReport() {
+  const sm = summary();
+  const prods = sm.products.filter((p) => p.active && p.count);
+  const pick = (p) => ({ code: p.code, name: p.name, line: lineOf(p), type: typeOf(p), imageUrl: p.imageUrl, count: p.count, avgReaction: p.avgReaction,
+    goodPct: Math.round((p.sales.good / p.count) * 100), poorPct: Math.round((p.sales.poor / p.count) * 100), displayRate: p.displayRate,
+    pros: p.pros.slice(0, 3).map((x) => x.name), cons: p.cons.slice(0, 3).map((x) => x.name) });
+  const enough = prods.filter((p) => p.count >= 3);
+  const rank = (dir) => enough.slice().sort((a, b) => dir * (a.avgReaction - b.avgReaction) || b.count - a.count).slice(0, 10).map(pick);
+  const typeMap = new Map();
+  prods.forEach((p) => {
+    const k = `${lineOf(p)}|${typeOf(p)}`;
+    const t = typeMap.get(k) || { line: lineOf(p), type: typeOf(p), n: 0, rsum: 0, good: 0, poor: 0, products: 0 };
+    t.n += p.count; t.rsum += p.avgReaction * p.count; t.good += p.sales.good; t.poor += p.sales.poor; t.products++;
+    typeMap.set(k, t);
+  });
+  const byType = [...typeMap.values()].map((t) => ({ line: t.line, type: t.type, products: t.products, evals: t.n, avgReaction: Math.round((t.rsum / t.n) * 10) / 10, goodPct: Math.round((t.good / t.n) * 100), poorPct: Math.round((t.poor / t.n) * 100) }))
+    .sort((a, b) => (a.line + a.type).localeCompare(b.line + b.type));
+  const reasons = (field) => countBy(db.evaluations.filter(isDone).map((e) => e[field] || [])).slice(0, 8);
+  const da = displayAnalysis();
+  const sp = spaceEfficiency();
+  const pr = storeProgress();
+  const z = ztecSummary();
+  const g = giftSummary();
+  const ai = (k) => { const x = db.summaries[k]; if (!x) return null; const src = summarySource(k); return { ...x.result, at: x.at, stale: !!(src && src.basis !== x.basis) }; };
+  const allDone = db.evaluations.filter(isDone);
+  return {
+    at: new Date().toISOString(),
+    overview: {
+      targetStores: pr.stores.length, participated: pr.stores.filter((x) => x.status !== 'none').length, doneStores: pr.stores.filter((x) => x.status === 'done').length,
+      evaluations: allDone.length, skipped: sm.skippedEvaluations, products: sm.activeProducts, evaluatedProducts: prods.length,
+      avgReaction: allDone.length ? Math.round((allDone.reduce((a, e) => a + e.reaction, 0) / allDone.length) * 10) / 10 : null,
+      sales: { good: allDone.filter((e) => e.sales === 'good').length, normal: allDone.filter((e) => e.sales === 'normal').length, poor: allDone.filter((e) => e.sales === 'poor').length },
+      displayChecks: da.totals.checks, displayRate: da.totals.checks - da.totals.notReceived ? Math.round((da.totals.shown / (da.totals.checks - da.totals.notReceived)) * 100) : null,
+      spaceScore: sp.totals.score, ztec: z.count, gifts: g.count,
+    },
+    progress: {
+      totalProducts: pr.totalProducts, totalSkus: pr.totalSkus,
+      byManager: [...new Set(pr.stores.map((x) => x.manager || '담당자 없음'))].map((m) => {
+        const l = pr.stores.filter((x) => (x.manager || '담당자 없음') === m);
+        return { manager: m, total: l.length, done: l.filter((x) => x.status === 'done').length, progress: l.filter((x) => x.status === 'progress').length, none: l.filter((x) => x.status === 'none').map((x) => x.name) };
+      }),
+      flagged: pr.stores.filter((x) => x.flags.length).map((x) => ({ name: x.name, flags: x.flags.map((f) => f.label) })),
+    },
+    reaction: { top: rank(-1), bottom: rank(1), byType, sellReasons: reasons('sellReasons'), noBuyReasons: reasons('noBuyReasons'), pros: countBy(allDone.map((e) => e.pros || [])).slice(0, 8), cons: countBy(allDone.map((e) => e.cons || [])).slice(0, 8) },
+    display: {
+      totals: da.totals, byType: da.byType.map((t) => ({ line: t.line, type: t.type, rate: t.rate, shown: t.shown, stock: t.stock, none: t.none, notReceived: t.notReceived })),
+      groups: ['expand', 'star', 'review'].map((k) => ({ key: k, items: da.products.filter((p) => p.group === k).map((p) => ({ code: p.code, name: p.name, type: p.type, displayRate: p.displayRate, avgReaction: p.avgReaction, goodPct: p.goodPct })) })),
+      notReceived: da.notReceived.slice(0, 10).map((k) => ({ code: k.code, color: k.color, n: k.notReceived })),
+    },
+    space: { totals: sp.totals, byType: sp.byType.filter((t) => t.known), lowStores: sp.stores.filter((x) => x.score != null).slice(0, 10).map((x) => ({ name: x.name, score: x.score, slots: x.slots, poor: x.poor, goodStock: x.goodStock.length, swaps: x.swaps.length })),
+      wasted: sp.wasted.slice(0, 10).map((k) => ({ code: k.code, color: k.color, n: k.stores.length })), idle: sp.idle.slice(0, 10).map((k) => ({ code: k.code, color: k.color, n: k.stores.length })) },
+    ztec: { count: z.count, avgReaction: z.avgReaction, ease: z.ease, reactionDist: z.reactionDist },
+    gift: { count: g.count, freq: g.freq, delay: g.delay, impact: g.impact, threshold: g.threshold, items: g.items, avgReaction: g.avgReaction,
+      giftItems: g.giftItems.filter((x) => x.answered).map((x) => ({ name: x.name, photo: x.photos[0], avg: x.avg, count: x.count, na: x.na, nr: x.nr })).sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1)) },
+    ai: { display: ai('display'), ztec: ai('ztec'), gift: ai('gift') },
+    labels: { giftFreq: OPTIONS.giftFreq, giftDelay: OPTIONS.giftDelay, giftImpact: OPTIONS.giftImpact, giftThreshold: OPTIONS.giftThreshold, reactions: OPTIONS.reactions },
+  };
+}
+
 // ---------- AI 의견 요약 (Claude API) ----------
 // Railway Variables 에 ANTHROPIC_API_KEY 를 넣으면 켜짐
 let aiClient = null;
@@ -872,10 +932,12 @@ async function handle(req, res) {
   if (m === 'GET' && (p === '/logo.png' || p === '/favicon.png')) return serveStatic(res, p.slice(1));
 
   // 관리자
-  if (p === '/admin' || p.startsWith('/api/admin/')) {
+  if (p === '/admin' || p === '/admin/report' || p.startsWith('/api/admin/')) {
     if (!guard(req, res, 'admin')) return;
 
     if (m === 'GET' && p === '/admin') return serveStatic(res, 'admin.html');
+    if (m === 'GET' && p === '/admin/report') return serveStatic(res, 'report.html');
+    if (m === 'GET' && p === '/api/admin/report') return send(res, 200, buildReport());
     if (m === 'GET' && p === '/api/admin/summary') return send(res, 200, summary());
 
     // ---- 조사 대상 매장 ----

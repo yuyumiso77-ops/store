@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>매장 조사 리포트</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+  body { background: var(--bg); }
+  .rp { max-width: 920px; margin: 0 auto; padding: 20px 16px 60px; }
+  .rp-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .rp-cover { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 26px 26px 22px; margin-bottom: 18px; }
+  .rp-cover img { height: 26px; display: block; margin-bottom: 18px; }
+  .rp-cover h1 { font-size: 1.7rem; margin: 0 0 6px; }
+  .rp-cover .meta { color: var(--muted); font-size: .9rem; }
+  .rp section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; margin-bottom: 18px; }
+  .rp h2 { font-size: 1.2rem; margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; }
+  .rp h2 .no { color: var(--accent); font-weight: 800; }
+  .rp h3 { font-size: 1rem; margin: 18px 0 8px; }
+  .rp .lead { color: var(--muted); font-size: .88rem; margin: 0 0 14px; line-height: 1.6; }
+  .rp .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .rp .kpi { background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; }
+  .rp .kpi b { font-size: 1.45rem; display: block; }
+  .rp .kpi span { font-size: .8rem; color: var(--muted); }
+  .rp table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+  .rp th, .rp td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .rp th { color: var(--muted); font-weight: 600; font-size: .8rem; white-space: nowrap; }
+  .rp td.n, .rp th.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .rp .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 18px; }
+  .rp .minibar { display: inline-block; width: 70px; height: 7px; background: var(--line); border-radius: 4px; overflow: hidden; vertical-align: middle; margin-right: 6px; }
+  .rp .minibar i { display: block; height: 100%; background: var(--s1); }
+  .rp .pill { display: inline-block; font-size: .72rem; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .rp .pill.good { border-color: #2f8f5b; color: #2f8f5b; } .rp .pill.bad { border-color: var(--danger); color: var(--danger); }
+  .rp .ai-box { background: var(--accent-soft); border-radius: 12px; padding: 14px 16px; margin-top: 14px; }
+  .rp .ai-box .ai-head { margin-top: 0; }
+  .rp .empty { color: var(--muted); font-size: .88rem; }
+  .rp .thumb { width: 34px; height: 34px; object-fit: contain; background: #fff; border-radius: 6px; border: 1px solid var(--line); vertical-align: middle; margin-right: 6px; }
+  .rp .tags { font-size: .78rem; color: var(--muted); }
+  .rp .notes li { margin-bottom: 4px; }
+  .rp .wr { word-break: keep-all; overflow-wrap: anywhere; }
+  .rp .tw { overflow-x: auto; }
+  @media (max-width: 600px) { .rp .tw table { min-width: 460px; } }
+  @media print { .rp .tw { overflow: visible; } .rp .tw table { min-width: 0; } }
+  @media print {
+    @page { size: A4; margin: 12mm; }
+    body { background: #fff; }
+    body * { visibility: visible !important; } /* 공용 style.css의 인쇄 숨김 규칙 해제 */
+    .rp { max-width: none; padding: 0; }
+    .rp-bar { display: none; }
+    .rp section, .rp-cover { border: 0; padding: 0; margin: 0 0 8mm; break-inside: auto; }
+    .rp section { break-before: page; }
+    .rp section.keep { break-before: auto; }
+    .rp table, .rp .ai-box, .rp .kpis { break-inside: avoid; }
+    html { font-size: 13px; }
+    .rp h3, .rp h2 { break-after: avoid; }
+    .rp .two { grid-template-columns: 1fr 1fr; gap: 6mm; }
+    .rp .ai-grid { grid-template-columns: 1fr 1fr; }
+    .rp .kpis { grid-template-columns: repeat(4, 1fr); }
+    .rp .tr { break-inside: avoid; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<main class="rp">
+  <div class="rp-bar">
+    <a class="btn" href="/admin">← 관리자 화면</a>
+    <div style="display:flex;gap:8px"><button type="button" class="btn" id="reload">🔄 최신 데이터로</button><button type="button" class="btn accent" id="print">🖨 인쇄 · PDF 저장</button></div>
+  </div>
+  <div id="report"><p class="hint">리포트를 만드는 중…</p></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  Object.entries(attrs).forEach(([k, v]) => (k === 'class' ? (n.className = v) : k.startsWith('on') ? (n[k] = v) : n.setAttribute(k, v)));
+  kids.flat().forEach((c) => c !== '' && c != null && c !== false && n.append(c instanceof Node ? c : document.createTextNode(String(c))));
+  return n;
+};
+const fmt1 = (v) => (v == null ? '-' : Number(v).toFixed(1));
+const pct = (v) => (v == null ? '-' : v + '%');
+const pctOf = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '-');
+const bar = (v, max = 100) => el('span', { class: 'minibar' }, el('i', { style: `width:${max ? Math.min(100, (v / max) * 100) : 0}%` }));
+const table = (head, rows, numCols = []) => el('div', { class: 'tw' }, el('table', {},
+  el('tr', {}, head.map((h, i) => el('th', { class: numCols.includes(i) ? 'n' : '' }, h))),
+  rows.map((r) => el('tr', {}, r.map((c, i) => el('td', { class: numCols.includes(i) ? 'n' : '' }, c))))));
+const kpi = (v, l) => el('div', { class: 'kpi' }, el('b', {}, v), el('span', {}, l));
+const sec = (no, title, lead, ...body) => el('section', {}, el('h2', {}, el('span', { class: 'no' }, no), title), lead ? el('p', { class: 'lead' }, lead) : null, ...body);
+function aiBox(x, heading, titles) {
+  if (!x) return el('p', { class: 'empty', style: 'margin-top:12px' }, `🤖 ${heading}: 아직 만든 AI 요약이 없어요. 관리자 화면에서 '요약 만들기'를 누르면 리포트에도 들어가요.`);
+  const list = (t, items) => (items && items.length ? el('div', { class: 'ai-sec' }, el('b', {}, t), el('ul', {}, items.map((i) => el('li', {}, String(i).replace(/([·,/])/g, '$1​'))))) : null);
+  return el('div', { class: 'ai-box' }, el('div', { class: 'q', style: 'margin:0 0 4px' }, `🤖 ${heading}`), el('p', { class: 'ai-head' }, x.headline),
+    el('div', { class: 'ai-grid' }, list(titles[0], x.strengths), list(titles[1], x.weaknesses), list(titles[2], x.requests), list(titles[3], x.actions)),
+    el('p', { class: 'hint', style: 'margin:0' }, `${new Date(x.at).toLocaleString('ko-KR')} 요약` + (x.stale ? ' · ⚠️ 그 뒤 새 데이터가 있어요 (관리자 화면에서 다시 요약하면 반영돼요)' : '') + ' · AI 요약은 틀릴 수 있어요'));
+}
+const chipsOf = (arr) => arr.map((x) => `${x.name} ${x.n}`).join(' · ') || '-';
+
+function render(r) {
+  const o = r.overview;
+  const L = r.labels;
+  const at = new Date(r.at);
+  document.title = `매장 조사 리포트 ${at.toLocaleDateString('ko-KR')}`;
+  const out = [];
+
+  out.push(el('div', { class: 'rp-cover' },
+    el('img', { src: '/logo.png', alt: 'FootJoy' }),
+    el('h1', {}, '26FW 매장 반응·진열 조사 리포트'),
+    el('div', { class: 'meta' }, `${at.toLocaleString('ko-KR')} 기준 · 조사 대상 ${o.targetStores}매장 · 본사 내부용`)));
+
+  // 1. 한눈에
+  const s = o.sales, sn = s.good + s.normal + s.poor;
+  out.push(Object.assign(sec('1', '한눈에 보기', '지금까지 들어온 조사 결과의 핵심 숫자예요.',
+    el('div', { class: 'kpis' },
+      kpi(`${o.participated} / ${o.targetStores}`, `참여 매장 (전부 완료 ${o.doneStores})`),
+      kpi(o.evaluations.toLocaleString(), `상품 평가 (제외 ${o.skipped}건)`),
+      kpi(`${o.evaluatedProducts} / ${o.products}`, '평가된 상품'),
+      kpi(fmt1(o.avgReaction), '평균 고객 반응 (5점)'),
+      kpi(pctOf(s.good, sn), '잘 팔림 응답 비율'),
+      kpi(pct(o.displayRate), `진열률 (체크 ${o.displayChecks.toLocaleString()}건)`),
+      kpi(o.spaceScore == null ? '-' : o.spaceScore + '점', '공간 효율 (진열 자리 판매 점수)'),
+      kpi(`${o.ztec} · ${o.gifts}`, 'Z-TEC · 사은품 응답 매장'))), { className: 'keep' }));
+
+  // 2. 참여 현황
+  const pg = r.progress;
+  out.push(Object.assign(sec('2', '매장 참여 현황', `완료 = 진열 체크 ${pg.totalSkus} SKU · 상품 평가 ${pg.totalProducts}개 · Z-TEC · 사은품을 모두 마친 매장`,
+    pg.byManager.length ? table(['담당자', '대상', '완료', '진행 중', '미참여', '미참여 매장'],
+      pg.byManager.map((m) => [m.manager, m.total, m.done, m.progress, m.none.length, el('span', { class: 'tags wr' }, m.none.join(', ') || '-')]), [1, 2, 3, 4])
+      : el('p', { class: 'empty' }, '조사 대상 매장 명단이 아직 없어요.'),
+    pg.flagged.length ? [el('h3', {}, `⚠️ 응답 점검이 필요한 매장 (${pg.flagged.length})`), table(['매장', '점검 사유'], pg.flagged.map((f) => [f.name, f.flags.join(', ')]))] : null), { className: 'keep' }));
+
+  // 3. 상품 반응
+  const rc = r.reaction;
+  const prodRows = (list) => list.map((p) => [el('span', {}, p.imageUrl ? el('img', { class: 'thumb', src: p.imageUrl, alt: '' }) : null, el('b', {}, p.code || p.name)), `${p.line} ${p.type}`, fmt1(p.avgReaction), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), p.count]);
+  out.push(sec('3', '상품별 고객 반응', '매장 직원이 판매하면서 느낀 고객 반응(5점)과 판매 반응이에요. 평가 3건 이상인 상품만 순위에 넣었어요.',
+    el('h3', {}, '👍 반응 좋은 상품 TOP 10'),
+    rc.top.length ? table(['상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', '평가'], prodRows(rc.top), [2, 3, 4, 5, 6]) : el('p', { class: 'empty' }, '데이터가 부족해요.'),
+    el('h3', {}, '👎 반응 낮은 상품 TOP 10'),
+    rc.bottom.length ? table(['상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', '평가'], prodRows(rc.bottom), [2, 3, 4, 5, 6]) : el('p', { class: 'empty' }, '데이터가 부족해요.'),
+    el('h3', {}, '복종별 반응'),
+    table(['복종', '상품', '평가', '평균 반응', '잘 팔림', '안 팔림'], rc.byType.map((t) => [`${t.line} ${t.type}`, t.products, t.evals, el('span', {}, bar(t.avgReaction, 5), fmt1(t.avgReaction)), pct(t.goodPct), pct(t.poorPct)]), [1, 2, 3, 4, 5]),
+    el('div', { class: 'two' },
+      el('div', {}, el('h3', {}, '고객이 좋아한 점'), el('p', { class: 'tags wr' }, chipsOf(rc.pros)), el('h3', {}, '판매를 도운 요인'), el('p', { class: 'tags wr' }, chipsOf(rc.sellReasons))),
+      el('div', {}, el('h3', {}, '고객이 아쉬워한 점'), el('p', { class: 'tags wr' }, chipsOf(rc.cons)), el('h3', {}, '판매를 막은 요인'), el('p', { class: 'tags wr' }, chipsOf(rc.noBuyReasons))))));
+
+  // 4. 진열 · 공간 효율
+  const sp = r.space, dt = r.display;
+  const st = sp.totals;
+  const G = { expand: '진열 확대 후보 (반응·판매 좋은데 진열 적음)', star: '효자 상품 (진열·반응·판매 모두 좋음)', review: '진열 재검토 (진열 많은데 부진)' };
+  out.push(sec('4', '진열 현황과 공간 효율', '좁은 매장 공간에 잘 팔리는 상품이 걸려 있는지 봐요. 진열 자리(진열 중인 SKU)마다 그 매장의 판매 반응으로 점수(잘 팔림 100·보통 50·안 팔림 0)를 매겼어요.',
+    el('div', { class: 'kpis' },
+      kpi(pct(o.displayRate), '전체 진열률 (미입고 제외)'),
+      kpi(st.score == null ? '-' : st.score + '점', '진열 자리 평균 판매 점수'),
+      kpi(pctOf(st.good, st.slots), `잘 팔리는 상품 자리 (${st.good})`),
+      kpi(pctOf(st.poor, st.slots), `안 팔리는 상품 자리 (${st.poor})`),
+      kpi(st.goodStock + '건', '창고 속 잘 팔리는 SKU'),
+      kpi(st.swaps + '건', '교체 추천')),
+    el('h3', {}, '복종별: 차지한 공간만큼 팔리나요?'),
+    sp.byType.length ? table(['복종', '진열 자리', '공간 점유', '판매 기여', '효율 지수', ''],
+      sp.byType.slice().sort((a, b) => b.efficiency - a.efficiency).map((t) => [`${t.line} ${t.type}`, t.slots, t.spacePct + '%', t.contribPct + '%', t.efficiency.toFixed(2),
+        el('span', { class: 'pill ' + (t.efficiency >= 1.1 ? 'good' : t.efficiency <= 0.9 ? 'bad' : '') }, t.efficiency >= 1.1 ? '공간 대비 잘 팔림' : t.efficiency <= 0.9 ? '공간 줄일 후보' : '보통')]), [1, 2, 3, 4])
+      : el('p', { class: 'empty' }, '상품 평가와 진열 체크가 더 쌓이면 계산돼요.'),
+    el('div', { class: 'two' },
+      el('div', {}, el('h3', {}, '공간 효율 낮은 매장 (하위 10)'), sp.lowStores.length ? table(['매장', '점수', '안 팔리는 진열', '창고 속 잘 팔림'], sp.lowStores.map((x) => [x.name, x.score, x.poor, x.goodStock]), [1, 2, 3]) : el('p', { class: 'empty' }, '-')),
+      el('div', {}, el('h3', {}, '복종별 진열률'), table(['복종', '진열률', '진열', '창고만', '없음'], dt.byType.map((t) => [`${t.line} ${t.type}`, el('span', {}, bar(t.rate || 0), pct(t.rate)), t.shown, t.stock, t.none]), [1, 2, 3, 4]))),
+    el('div', { class: 'two' },
+      el('div', {}, el('h3', {}, '🪑 자리만 차지하는 SKU'), sp.wasted.length ? table(['SKU', '안 팔리는데 진열'], sp.wasted.map((k) => [`${k.code} ${k.color}`, k.n + '매장']), [1]) : el('p', { class: 'empty' }, '-')),
+      el('div', {}, el('h3', {}, '📦 창고에서 노는 잘 팔리는 SKU'), sp.idle.length ? table(['SKU', '창고에만'], sp.idle.map((k) => [`${k.code} ${k.color}`, k.n + '매장']), [1]) : el('p', { class: 'empty' }, '-'))),
+    ...dt.groups.filter((g) => g.items.length).map((g) => {
+      const order = g.key === 'expand' ? (a, b) => a.displayRate - b.displayRate : g.key === 'review' ? (a, b) => a.goodPct - b.goodPct : (a, b) => b.goodPct - a.goodPct;
+      const list = g.items.slice().sort(order);
+      return [el('h3', {}, `${G[g.key]} · ${g.items.length}개`),
+        table(['상품', '복종', '진열률', '고객 반응', '잘 팔림'], list.slice(0, 10).map((p) => [el('b', {}, p.code || p.name), p.type, pct(p.displayRate), fmt1(p.avgReaction), pct(p.goodPct)]), [2, 3, 4]),
+        list.length > 10 ? el('p', { class: 'tags wr' }, `그 밖에 ${list.length - 10}개: ` + list.slice(10).map((p) => p.code || p.name).join(', ')) : null];
+    }),
+    dt.notReceived.length ? [el('h3', {}, '🚚 미입고 매장이 많은 SKU (배분 검토)'), el('p', { class: 'tags wr' }, dt.notReceived.map((k) => `${k.code} ${k.color} ${k.n}매장`).join(' · '))] : null,
+    aiBox(r.ai.display, 'AI 진열 분석 요약', ['👍 잘 되고 있는 점', '⚠️ 문제점', '🔍 추가로 확인할 점', '✅ 바로 할 조치'])));
+
+  // 5. Z-TEC
+  const z = r.ztec;
+  out.push(sec('5', 'Z-TEC 매장 의견', '매장당 한 번, Z-TEC(기능성 라인)에 대한 고객 반응과 설명 난이도를 받았어요.',
+    z.count ? el('div', { class: 'kpis' }, kpi(z.count + '매장', '응답 매장'), kpi(fmt1(z.avgReaction), '고객 반응 (5점)'), kpi(pctOf(z.ease.easy, z.count), '설명하기 쉬웠다'), kpi(pctOf(z.ease.hard, z.count), '설명하기 어려웠다')) : el('p', { class: 'empty' }, '아직 응답이 없어요.'),
+    z.count ? table(['고객 반응', '매장 수', ''], [1, 2, 3, 4, 5].map((n, i) => [L.reactions[n], z.reactionDist[i], bar(z.reactionDist[i], Math.max(...z.reactionDist))]), [1]) : null,
+    aiBox(r.ai.ztec, 'AI Z-TEC 의견 요약', ['👍 좋은 점', '👎 아쉬운 점', '💡 요청·아이디어', '✅ 검토할 조치'])));
+
+  // 6. 사은품
+  const g = r.gift;
+  const dist = (obj, labels) => table(['응답', '매장 수', ''], Object.entries(obj).map(([k, v]) => [labels[k] || k, v, bar(v, Math.max(1, ...Object.values(obj)))]), [1]);
+  out.push(sec('6', '사은품 니즈 (2026년)', '매장당 한 번, 올해 사은품에 대한 고객 반응과 원하는 사은품·기준 금액을 받았어요.',
+    g.count ? el('div', { class: 'kpis' }, kpi(g.count + '매장', '응답 매장'), kpi(pctOf(g.freq.often, g.count), '사은품 문의가 자주 있음'), kpi(pctOf(g.delay.often + g.delay.sometimes, g.count), '사은품 때문에 구매를 미룬 고객 있음'),
+      kpi(fmt1(g.avgReaction), '올해 사은품 고객 반응 (5점)'), kpi(g.items[0] ? g.items[0].name : '-', '가장 원하는 사은품')) : el('p', { class: 'empty' }, '아직 응답이 없어요.'),
+    g.giftItems.length ? [el('h3', {}, '🎁 2026 사은품별 반응 (높은 순)'), table(['사은품', '평균 반응', '평가 매장', '미입고', '증정 안 함'],
+      g.giftItems.map((x) => [el('span', {}, x.photo ? el('img', { class: 'thumb', src: x.photo, alt: '' }) : null, x.name), x.avg == null ? '-' : el('span', {}, bar(x.avg, 5), x.avg.toFixed(1)), x.count, x.nr || '-', x.na || '-']), [1, 2, 3, 4])] : null,
+    g.count ? el('div', { class: 'two' },
+      el('div', {}, el('h3', {}, '원하는 사은품 순위'), table(['사은품', '매장 수', ''], g.items.map((x) => [x.name, x.count, bar(x.count, g.items[0].count)]), [1])),
+      el('div', {}, el('h3', {}, '구매에 가장 도움 되는 기준 금액'), dist(g.threshold, L.giftThreshold))) : null,
+    g.count ? el('div', { class: 'two' },
+      el('div', {}, el('h3', {}, '고객 사은품 문의 빈도'), dist(g.freq, L.giftFreq)),
+      el('div', {}, el('h3', {}, '올해 사은품의 구매 도움'), dist(g.impact, L.giftImpact))) : null,
+    aiBox(r.ai.gift, 'AI 사은품 의견 요약', ['👍 좋은 점', '👎 아쉬운 점', '💡 요청·아이디어', '✅ 검토할 조치'])));
+
+  // 부록
+  out.push(sec('·', '데이터 기준', '',
+    el('ul', { class: 'notes hint' },
+      el('li', {}, '고객 반응·판매 반응은 매장 직원이 판매하면서 느낀 내용을 평가한 것으로, 실제 매출 수치가 아니에요.'),
+      el('li', {}, "'판매 경험 없음'·'미입고'로 표시한 평가는 평균·비율에서 빠져요."),
+      el('li', {}, '진열률은 미입고를 뺀 기준이에요. SKU = 품번 × 컬러.'),
+      el('li', {}, '공간 효율: 진열 자리마다 그 매장의 판매 반응(잘 팔림 100·보통 50·안 팔림 0)으로 점수를 매기고, 그 매장이 평가하지 않은 상품은 전체 매장 평균을 썼어요. 효율 지수 = 판매 기여 ÷ 공간 점유.'),
+      el('li', {}, 'AI 요약은 관리자 화면에서 마지막으로 만든 요약이에요. 틀릴 수 있으니 숫자와 함께 봐 주세요.'))));
+  $('report').replaceChildren(...out);
+}
+async function load() {
+  $('report').replaceChildren(el('p', { class: 'hint' }, '리포트를 만드는 중…'));
+  try {
+    const res = await fetch('/api/admin/report');
+    if (!res.ok) throw new Error('데이터를 불러오지 못했어요.');
+    render(await res.json());
+  } catch (ex) { $('report').replaceChildren(el('p', { class: 'error' }, ex.message)); }
+}
+$('print').onclick = () => window.print();
+$('reload').onclick = load;
+load();
+</script>
+</body>
+</html>

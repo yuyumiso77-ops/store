@@ -413,3 +413,4 @@ fieldset.gift:disabled { opacity: .55; }
 }
 .eff-idx .tag { white-space: nowrap; }
 .swap { padding-bottom: 6px; border-bottom: 1px dashed var(--line); } .swap:last-child { border-bottom: 0; }
+.brand-title .report-link { margin-left: auto; padding: 6px 12px; font-size: .9rem; }

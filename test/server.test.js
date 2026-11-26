@@ -582,6 +582,14 @@ test('공간 효율: 안 팔리는 진열 ↔ 창고 속 잘 팔리는 상품 �
   for (const id of [bad, good]) await fetch(base + `/api/admin/products/${id}`, { method: 'DELETE', headers: admin });
 });
 
+test('조사 리포트: 관리자만, 한 번에 모든 섹션', async () => {
+  assert.strictEqual((await fetch(base + '/admin/report', { headers: staff })).status, 401);
+  assert.strictEqual((await fetch(base + '/admin/report', { headers: admin })).status, 200);
+  const r = await (await fetch(base + '/api/admin/report', { headers: admin })).json();
+  for (const k of ['overview', 'progress', 'reaction', 'display', 'space', 'ztec', 'gift', 'ai', 'labels']) assert.ok(k in r, k);
+  assert.ok(Array.isArray(r.reaction.top) && Array.isArray(r.space.byType));
+});
+
 test('품목 필수', async () => {
   const r = await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: 'x', category: '식품' }) });
   assert.strictEqual(r.status, 400);
