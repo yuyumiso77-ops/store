@@ -74,7 +74,9 @@ function loadDb() {
   }
 }
 const db = loadDb();
+let DB_VER = 0; // 저장할 때마다 올라감 → 무거운 집계(summary) 재사용 판단
 function saveDb() {
+  DB_VER++;
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const tmp = DB_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
@@ -241,7 +243,14 @@ function gapOf(avgReaction, sales, n) {
   return '';
 }
 const isDone = (e) => (e.status || 'done') === 'done';
+let SUMMARY_CACHE = { ver: -1, val: null };
 function summary() {
+  if (SUMMARY_CACHE.ver === DB_VER && SUMMARY_CACHE.val) return SUMMARY_CACHE.val;
+  const val = computeSummary();
+  SUMMARY_CACHE = { ver: DB_VER, val };
+  return val;
+}
+function computeSummary() {
   const avg = (arr) => (arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null);
   const products = db.products.map((p) => {
     const all = db.evaluations.filter((e) => e.productId === p.id);
@@ -799,6 +808,44 @@ async function runSummary(key, title, body) {
     inflight.delete(key);
   }
 }
+// ---- AI 요약 한 번에 전부: 없거나 오래된(새 평가가 들어온) 요약만 골라 순서대로 만든다 ----
+const BULK = { running: false, total: 0, done: 0, failed: 0, skipped: 0, current: [], errors: [], startedAt: null, finishedAt: null };
+function bulkTargets() {
+  const keys = ['display', 'ztec', 'gift', ...db.products.filter((p) => p.active).map((p) => 'product:' + p.id)];
+  return keys.map((key) => ({ key, src: summarySource(key) })).filter(({ key, src }) => src && (!db.summaries[key] || db.summaries[key].basis !== src.basis));
+}
+const bulkName = (key) => { if (!key.startsWith('product:')) return { display: '진열 분석', ztec: 'Z-TEC', gift: '사은품' }[key] || key; const p = db.products.find((x) => 'product:' + x.id === key); return p ? p.code || p.name : key; };
+async function runBulkSummaries() {
+  const targets = bulkTargets();
+  Object.assign(BULK, { running: true, total: targets.length, done: 0, failed: 0, current: [], errors: [], startedAt: new Date().toISOString(), finishedAt: null });
+  const queue = targets.slice();
+  const worker = async () => {
+    while (queue.length) {
+      const { key } = queue.shift();
+      const src = summarySource(key); // 그사이 바뀌었을 수 있어 다시 계산
+      if (!src) { BULK.done++; continue; }
+      BULK.current.push(bulkName(key));
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const result = await runSummary(key, src.title, src.body);
+          db.summaries[key] = { basis: src.basis, count: src.count, at: new Date().toISOString(), result };
+          saveDb();
+          BULK.done++;
+          break;
+        } catch (ex) {
+          if ((ex.status === 429 || ex.status >= 500) && ex.status !== 503 && attempt < 2) { await new Promise((r) => setTimeout(r, 15000 * (attempt + 1))); continue; }
+          BULK.failed++; BULK.done++;
+          BULK.errors.push(`${bulkName(key)}: ${ex.status === 401 ? 'API 키 오류' : ex.status === 429 ? '사용량 제한' : ex.message}`.slice(0, 120));
+          console.error('AI 일괄 요약 실패:', key, ex.status, ex.message);
+          if (ex.status === 401 || ex.status === 503) queue.length = 0; // 키 문제면 더 진행해도 소용없음
+          break;
+        }
+      }
+      BULK.current = BULK.current.filter((n) => n !== bulkName(key));
+    }
+  };
+  try { await Promise.all([worker(), worker(), worker()]); } finally { BULK.running = false; BULK.finishedAt = new Date().toISOString(); BULK.current = []; }
+}
 // 요약할 내용과 '기준'(평가 수·최근 수정 시각)을 만든다. 기준이 바뀌면 다시 요약 필요
 function summarySource(key) {
   if (key === 'display') {
@@ -930,6 +977,7 @@ async function handle(req, res) {
   if (m === 'GET' && p === '/healthz') return send(res, 200, { ok: true, ai: !!process.env.ANTHROPIC_API_KEY }); // 키 값은 노출하지 않음
   if (m === 'GET' && p === '/style.css') return serveStatic(res, 'style.css');
   if (m === 'GET' && p === '/admin-theme.css') return serveStatic(res, 'admin-theme.css');
+  if (m === 'GET' && p === '/bulk-ai.js') return serveStatic(res, 'bulk-ai.js');
   if (m === 'GET' && (p === '/logo.png' || p === '/favicon.png')) return serveStatic(res, p.slice(1));
 
   // 관리자
@@ -1118,6 +1166,18 @@ async function handle(req, res) {
       return send(res, 200, { ok: true, moved });
     }
 
+    if (p === '/api/admin/ai-summary-all') {
+      if (m === 'POST' && !BULK.running) {
+        if (!getAi()) return send(res, 503, { error: 'AI 요약을 쓰려면 Railway Variables에 ANTHROPIC_API_KEY를 추가해 주세요.' });
+        runBulkSummaries().catch((ex) => console.error('AI 일괄 요약 중단:', ex.message));
+      }
+      if (m === 'GET' || m === 'POST') {
+        const all = ['display', 'ztec', 'gift', ...db.products.filter((x) => x.active).map((x) => 'product:' + x.id)];
+        const withData = all.filter((k) => summarySource(k));
+        const pending = BULK.running ? null : bulkTargets().length;
+        return send(res, 200, { ...BULK, pending, ready: withData.length - (pending ?? 0), withData: withData.length, aiEnabled: !!process.env.ANTHROPIC_API_KEY });
+      }
+    }
     // AI 의견 요약: GET = 저장된 요약, POST = 새로 요약
     const sm = p.match(/^\/api\/admin\/ai-summary\/(ztec|gift|display|product:[\w-]+)$/);
     if (sm) {

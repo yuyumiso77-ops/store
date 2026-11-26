@@ -235,6 +235,30 @@ test('AI 의견 요약: 키 없으면 안내, 있으면 요약하고 저장(기�
   _setAiClient(null);
 });
 
+test('AI 요약 전부 만들기: 없거나 오래된 것만, 진행 상황', async () => {
+  delete process.env.ANTHROPIC_API_KEY;
+  assert.strictEqual((await fetch(base + '/api/admin/ai-summary-all', { method: 'POST', headers: admin })).status, 503);
+  process.env.ANTHROPIC_API_KEY = 'test';
+  let calls = 0;
+  _setAiClient({ beta: { messages: { create: async () => { calls++; return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ headline: 'h', strengths: [], weaknesses: [], requests: [], actions: [] }) }] }; } } } });
+  const p = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '일괄 요약 상품', category: '용품' }) })).json();
+  await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: p.id, staff: '일괄점', reaction: 4, sales: 'good', pros: ['디자인'], sellReasons: ['기타'] }) });
+  let st = await (await fetch(base + '/api/admin/ai-summary-all', { headers: admin })).json();
+  assert.ok(st.pending >= 1);
+  await fetch(base + '/api/admin/ai-summary-all', { method: 'POST', headers: admin });
+  for (let i = 0; i < 50 && (st = await (await fetch(base + '/api/admin/ai-summary-all', { headers: admin })).json()).running; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.deepStrictEqual([st.running, st.failed, st.pending, st.done === st.total], [false, 0, 0, true]);
+  assert.ok(calls >= 1);
+  const before = calls;
+  await fetch(base + '/api/admin/ai-summary-all', { method: 'POST', headers: admin }); // 모두 최신이면 다시 부르지 않음
+  await new Promise((r) => setTimeout(r, 100));
+  assert.strictEqual(calls, before);
+  await fetch(base + `/api/admin/stores/${encodeURIComponent('일괄점')}?confirm=${encodeURIComponent('일괄점')}`, { method: 'DELETE', headers: admin });
+  await fetch(base + `/api/admin/products/${p.id}`, { method: 'DELETE', headers: admin });
+  delete process.env.ANTHROPIC_API_KEY;
+  _setAiClient(null);
+});
+
 test('평가 삭제: 한 건 / Z-TEC 한 건 / 매장 전체', async () => {
   const pr = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '삭제 테스트', category: '장갑' }) })).json();
   const ev = (store) => fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: pr.id, staff: store, reaction: 4, display: 'shown', pros: ['그립감'], sales: 'good', sellReasons: ['선물 수요'] }) });
