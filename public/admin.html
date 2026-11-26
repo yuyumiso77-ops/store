@@ -87,6 +87,8 @@
       <label class="hint">정렬
         <select id="dSort">
           <option value="rateAsc">진열률 낮은 순</option>
+          <option value="stDesc">판매율 높은 순</option>
+          <option value="stAsc">판매율 낮은 순</option>
           <option value="noneDesc">'없음' 많은 순</option>
           <option value="uncheckedDesc">미체크 많은 순</option>
           <option value="code">품번순</option>
@@ -1025,6 +1027,8 @@ function renderDisplayTab() {
   let list = base.filter((k) => (!DT || (k.type || k.category) === DT) && (!q || [k.code, k.name, k.color].some((v) => (v || '').toLowerCase().includes(q))));
   const val = {
     rateAsc: (k) => (k.rate == null ? 999 : k.rate),
+    stDesc: (k) => (k.st == null ? 999 : -k.st),
+    stAsc: (k) => (k.st == null ? 999 : k.st),
     noneDesc: (k) => -k.none,
     uncheckedDesc: (k) => -(nStores - k.checked),
     code: () => 0,
@@ -1039,6 +1043,7 @@ function renderDisplayTab() {
     const row = el('div', { class: 'srow', role: 'button', tabindex: '0' },
       k.imageUrl ? el('img', { class: 'rimg', src: k.imageUrl, alt: '', loading: 'lazy' }) : el('div', { class: 'rimg noimg' }, '없음'),
       el('div', { class: 'pc name' }, el('b', {}, `${k.code}${k.color ? ' · ' + k.color : ''}`), el('small', {}, `${k.line ? k.line + ' · ' : ''}${k.name}`)),
+      el('div', { class: 'pc num', title: k.plan ? `판매 ${k.sold.toLocaleString()} / 기획 ${k.plan.toLocaleString()}` : '판매현황표를 올리면 표시돼요' }, el('b', {}, k.st == null ? '-' : k.st + '%'), el('small', {}, k.plan ? `${k.sold.toLocaleString()}/${k.plan.toLocaleString()}` : '판매율')),
       el('div', { class: 'pc num' + (k.rate != null && k.rate < 50 ? ' low' : '') }, el('b', {}, k.rate == null ? '-' : k.rate + '%'), el('small', {}, '진열률')),
       el('div', { class: 'pc sales' },
         n ? el('div', { class: 'sbar' }, el('span', { class: 'g', style: `width:${w(k.shown)}%` }), el('span', { class: 'n', style: `width:${w(k.stock)}%` }), el('span', { class: 'p', style: `width:${w(k.none)}%` })) : el('div', { class: 'sbar empty' }),

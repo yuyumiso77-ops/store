@@ -389,8 +389,10 @@ function displayReport() {
     ds.forEach((d) => by[d.status].push(d.store));
     const n = ds.length;
     const base = n - by.notReceived.length; // 미입고는 진열률에서 제외
+    const ps = db.production && db.production.skus && db.production.skus[sku]; // 판매현황표: SKU별 기획·판매
     return {
       sku, color, productId: p.id, code: p.code || '', name: p.name, line: lineOf(p), type: typeOf(p), category: p.category, imageUrl: imageUrl(p),
+      plan: ps ? ps.plan : null, sold: ps ? ps.sold : null, st: ps && ps.plan ? Math.round((ps.sold / ps.plan) * 1000) / 10 : null,
       shown: by.shown.length, stock: by.stock.length, none: by.none.length, notReceived: by.notReceived.length, checked: n,
       rate: base ? Math.round((by.shown.length / base) * 100) : null, stores: by,
     };

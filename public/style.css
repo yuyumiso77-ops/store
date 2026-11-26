@@ -279,13 +279,13 @@ fieldset.gift:disabled { opacity: .55; }
 .seg.shown.on, .dlegend .seg.shown { background: #2f8f5b; border-color: #2f8f5b; color: #fff; }
 .seg.stock.on, .dlegend .seg.stock { background: #c9a227; border-color: #c9a227; color: #fff; }
 .seg.none.on, .dlegend .seg.none { background: #c0503f; border-color: #c0503f; color: #fff; }
-.srow { display: grid; grid-template-columns: 52px minmax(160px, 1.6fr) 64px minmax(200px, 2fr) 16px; gap: 10px; align-items: center; padding: 8px 10px; cursor: pointer; }
+.srow { display: grid; grid-template-columns: 52px minmax(160px, 1.6fr) 84px 64px minmax(200px, 2fr) 16px; gap: 10px; align-items: center; padding: 8px 10px; cursor: pointer; }
 .srow:hover, .srow.open { background: var(--accent-soft); }
 .sdetail { padding: 6px 14px 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; border-top: 1px solid var(--line); }
 .sgroup b { font-size: .85rem; }
 .sgroup b.tg { color: #2f8f5b; } .sgroup b.tn { color: #a7861c; } .sgroup b.tp { color: #c0503f; }
 @media (max-width: 760px) {
-  .srow { grid-template-columns: 52px 1fr 56px 16px; }
+  .srow { grid-template-columns: 52px 1fr 64px 56px 16px; }
   .srow .pc.sales { display: none; }
 }
 /* 진열 분석 */
