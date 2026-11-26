@@ -68,7 +68,7 @@ const OPTIONS = {
 function loadDb() {
   try {
     const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [] };
+    return { ...d, products: d.products || [], evaluations: d.evaluations || [], ztec: d.ztec || [], gifts: d.gifts || [], giftItems: d.giftItems, summaries: d.summaries || {}, displays: d.displays || [], stores: d.stores || [] };
   } catch {
     return { products: [], evaluations: [], ztec: [], gifts: [], summaries: {}, displays: [], stores: [] };
   }
@@ -300,17 +300,51 @@ function ztecSummary() {
 }
 
 // ---------- 사은품 니즈 (매장당 1회) ----------
+// 2026년 진행 사은품 목록 (처음 실행 시 repo의 gifts/ 사진으로 채움, 이후 관리자 화면에서 이름·사진·노출 관리)
+const DEFAULT_GIFTS = [
+  ['g01', '메쉬 미니 보스턴백', ['g01a']], ['g02', '패딩 미니 백팩', ['g02a']], ['g03', '마그네틱 골프 타월', ['g03a']],
+  ['g04', '플라워 볼파우치', ['g04a']], ['g05', '사피르 슈케어 키트', ['g05a']], ['g06', '토트백', ['g06a']],
+  ['g07', '거리측정기 파우치', ['g07a', 'g07b']], ['g08', 'Z-TEC 백팩', ['g08a']], ['g09', 'Z-TEC 메쉬 백팩', ['g09a', 'g09b']],
+  ['g10', '폴로 셔츠', ['g10a']], ['g11', '재킷 볼파우치', ['g11a']],
+];
+function seedGiftItems() {
+  if (Array.isArray(db.giftItems)) return;
+  fs.mkdirSync(IMG_DIR, { recursive: true });
+  db.giftItems = DEFAULT_GIFTS.map(([id, name, files]) => ({
+    id, name, active: true,
+    photos: files.map((f) => {
+      const file = `gift-${f}.jpg`;
+      try { fs.copyFileSync(path.join(__dirname, 'gifts', file), path.join(IMG_DIR, file)); } catch (ex) { console.error('사은품 사진 복사 실패:', file, ex.message); }
+      return file;
+    }),
+  }));
+  saveDb();
+}
+const giftItemView = (g) => ({ id: g.id, name: g.name, active: g.active, photos: g.photos.map((f) => `/images/${f}`) });
+const GIFT_NA = 'na'; // 우리 매장은 증정 안 함
+
 function giftSummary() {
   const g = db.gifts;
   const dist = (key) => Object.fromEntries(Object.keys(OPTIONS[key]).map((k) => [k, g.filter((e) => String(e[key.replace('gift', '').toLowerCase()]) === k).length]));
   const items = OPTIONS.giftItems.map((name) => ({ name, count: g.filter((e) => e.items.includes(name)).length })).filter((x) => x.count).sort((a, b) => b.count - a.count);
   const rated = g.filter((e) => e.reaction);
+  // 사은품별 평가가 있으면 그 평균을 매장의 '올해 사은품 반응'으로 사용
   return {
     count: g.length,
     freq: dist('giftFreq'), delay: dist('giftDelay'), impact: dist('giftImpact'), threshold: dist('giftThreshold'),
     items,
     avgReaction: rated.length ? Math.round((rated.reduce((a, e) => a + e.reaction, 0) / rated.length) * 10) / 10 : null,
     reactionDist: [1, 2, 3, 4, 5].map((n) => rated.filter((e) => e.reaction === n).length),
+    giftItems: db.giftItems.map((it) => {
+      const rv = g.map((e) => ({ store: e.store, ...((e.reviews || {})[it.id] || {}) })).filter((x) => x.r);
+      const sc = rv.filter((x) => x.r !== GIFT_NA);
+      return {
+        ...giftItemView(it), answered: rv.length, na: rv.length - sc.length, count: sc.length,
+        avg: sc.length ? Math.round((sc.reduce((a, x) => a + x.r, 0) / sc.length) * 10) / 10 : null,
+        dist: [1, 2, 3, 4, 5].map((n) => sc.filter((x) => x.r === n).length),
+        notes: rv.filter((x) => x.note).map((x) => ({ store: x.store, r: x.r, note: x.note })),
+      };
+    }),
     entries: g.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
   };
 }
@@ -613,15 +647,17 @@ function summarySource(key) {
     const L = (key, v) => OPTIONS[key][v] || v;
     const lines = g.map((e) => `- [${e.store}] 문의 ${L('giftFreq', e.freq)}, 사은품 때문에 구매 미룸 ${L('giftDelay', e.delay)}, 현재 사은품 ${e.reaction ? '반응 ' + OPTIONS.reactions[e.reaction] + ', ' : ''}${L('giftImpact', e.impact)}` +
       `, 원하는 품목 ${e.items.join('·')}, 적정 기준 ${L('giftThreshold', e.threshold)}` +
+      (Object.keys(e.reviews || {}).length ? ' / 사은품별: ' + db.giftItems.filter((it) => (e.reviews || {})[it.id]).map((it) => { const v = e.reviews[it.id]; return `${it.name} ${v.r === GIFT_NA ? '증정 안 함' : OPTIONS.reactions[v.r]}${v.note ? '(' + v.note + ')' : ''}`; }).join(', ') : '') +
       (e.currentNote ? ` / 현재 사은품 반응: ${e.currentNote}` : '') + (e.itemNote ? ` / 품목 의견: ${e.itemNote}` : '') + (e.idea ? ` / 아이디어: ${e.idea}` : ''));
     const d = (key, obj) => Object.entries(obj).map(([k, n]) => `${L(key, k)} ${n}`).join('·');
     return {
       basis: `${g.length}:${g.reduce((a, e) => (e.updatedAt > a ? e.updatedAt : a), '')}`,
       title: '2026년 사은품(구매 사은품) 니즈에 대한 매장 의견',
       body: [`응답 매장 ${gs.count}매장`, `고객 사은품 문의: ${d('giftFreq', gs.freq)}`, `사은품 때문에 구매를 미루거나 안 한 경우: ${d('giftDelay', gs.delay)}`,
-        `현재 사은품 평균 고객 반응 ${gs.avgReaction ?? '-'}/5, 구매 영향: ${d('giftImpact', gs.impact)}`, `원하는 사은품 순위: ${gs.items.map((x) => `${x.name} ${x.count}`).join(', ')}`,
+        `현재 사은품 평균 고객 반응 ${gs.avgReaction ?? '-'}/5, 구매 영향: ${d('giftImpact', gs.impact)}`,
+        `2026 사은품별 평균 반응(5점): ${gs.giftItems.filter((x) => x.count).map((x) => `${x.name} ${x.avg}(${x.count}매장)`).join(', ') || '없음'}`, `원하는 사은품 순위: ${gs.items.map((x) => `${x.name} ${x.count}`).join(', ')}`,
         `적정 사은품 기준 금액: ${d('giftThreshold', gs.threshold)}`, '', `매장 의견:\n${lines.join('\n')}`,
-        '', '요약 지침: strengths=현재 사은품에서 잘 먹히는 점, weaknesses=아쉬운 점, requests=매장·고객이 원하는 사은품과 조건, actions=본사가 다음 사은품 기획에 바로 반영할 일로 써 주세요.'].join('\n'),
+        '', '요약 지침: strengths=현재 사은품에서 잘 먹히는 점, weaknesses=아쉬운 점, requests=매장·고객이 원하는 사은품과 조건, actions=본사가 다음 사은품 기획에 바로 반영할 일로 써 주세요. 사은품별로 반응이 좋았던 것·나빴던 것을 구체적인 이름으로 짚어 주세요.'].join('\n'),
       count: g.length,
     };
   }
@@ -771,6 +807,48 @@ async function handle(req, res) {
     }
     // Z-TEC 의견 한 건 삭제
     if (m === 'GET' && p === '/api/admin/gifts') return send(res, 200, giftSummary());
+    // 2026 사은품 목록 관리
+    if (m === 'POST' && p === '/api/admin/gift-items') {
+      const b = await readBody(req);
+      const name = cleanText(b.name, 60);
+      if (!name) return send(res, 400, { error: '사은품 이름을 입력해 주세요.' });
+      const it = { id: 'g' + crypto.randomUUID().slice(0, 6), name, active: true, photos: [] };
+      db.giftItems.push(it);
+      saveDb();
+      return send(res, 201, giftItemView(it));
+    }
+    const gi = p.match(/^\/api\/admin\/gift-items\/([\w-]+)(\/photo)?$/);
+    if (gi) {
+      const it = db.giftItems.find((x) => x.id === gi[1]);
+      if (!it) return send(res, 404, { error: '사은품이 없어요.' });
+      if (!gi[2] && m === 'PATCH') {
+        const b = await readBody(req);
+        if (b.name !== undefined) { const n = cleanText(b.name, 60); if (!n) return send(res, 400, { error: '이름을 입력해 주세요.' }); it.name = n; }
+        if (b.active !== undefined) it.active = !!b.active;
+        saveDb();
+        return send(res, 200, giftItemView(it));
+      }
+      if (gi[2] && m === 'POST') {
+        const buf = await readRaw(req, 5 * 1024 * 1024);
+        const ext = imageType(buf);
+        if (!ext) return send(res, 400, { error: 'JPG·PNG·WEBP 이미지만 올릴 수 있어요.' });
+        if (it.photos.length >= 10) return send(res, 400, { error: '사진은 10장까지 올릴 수 있어요.' });
+        fs.mkdirSync(IMG_DIR, { recursive: true });
+        const file = `gift-${it.id}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+        fs.writeFileSync(path.join(IMG_DIR, file), buf);
+        it.photos.push(file);
+        saveDb();
+        return send(res, 201, giftItemView(it));
+      }
+      if (gi[2] && m === 'DELETE') {
+        const file = String(url.searchParams.get('file') || '').replace(/^\/images\//, '');
+        if (!it.photos.includes(file)) return send(res, 404, { error: '사진이 없어요.' });
+        it.photos = it.photos.filter((f) => f !== file);
+        if (!db.giftItems.some((x) => x.photos.includes(file))) fs.rmSync(path.join(IMG_DIR, file), { force: true });
+        saveDb();
+        return send(res, 200, giftItemView(it));
+      }
+    }
     const dg = p.match(/^\/api\/admin\/gifts\/([\w-]+)$/);
     if (dg && m === 'DELETE') {
       const before = db.gifts.length;
@@ -781,8 +859,11 @@ async function handle(req, res) {
     }
     if (m === 'GET' && p === '/api/admin/gifts.csv') {
       const L = (key, v) => OPTIONS[key][v] || v || '';
-      const rows = [['수정일시', '매장명', '사은품 문의 빈도', '사은품 때문에 구매 미룸', '현재 사은품 고객 반응(1~5)', '현재 사은품 구매 영향', '현재 사은품 반응 메모', '원하는 사은품', '품목 의견', '적정 기준 금액', '매장 아이디어']];
-      db.gifts.forEach((e) => rows.push([e.updatedAt, e.store, L('giftFreq', e.freq), L('giftDelay', e.delay), e.reaction || '', L('giftImpact', e.impact), e.currentNote, e.items.join(' / '), e.itemNote, L('giftThreshold', e.threshold), e.idea]));
+      const its = db.giftItems;
+      const rows = [['수정일시', '매장명', '사은품 문의 빈도', '사은품 때문에 구매 미룸', '올해 사은품 평균 반응(1~5)', '올해 사은품 구매 영향', '올해 사은품 전체 메모', '원하는 사은품', '품목 의견', '적정 기준 금액', '매장 아이디어',
+        ...its.flatMap((it) => [`[${it.name}] 반응`, `[${it.name}] 메모`])]];
+      db.gifts.forEach((e) => rows.push([e.updatedAt, e.store, L('giftFreq', e.freq), L('giftDelay', e.delay), e.reaction || '', L('giftImpact', e.impact), e.currentNote, e.items.join(' / '), e.itemNote, L('giftThreshold', e.threshold), e.idea,
+        ...its.flatMap((it) => { const v = (e.reviews || {})[it.id]; return v ? [v.r === GIFT_NA ? '증정 안 함' : v.r, v.note] : ['', '']; })]));
       const csv = '\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
       return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="gifts.csv"' });
     }
@@ -1049,7 +1130,7 @@ async function handle(req, res) {
   }
 
   if (m === 'GET' && p === '/api/options') {
-    return send(res, 200, { ...OPTIONS, products: db.products.filter((x) => x.active).map((x) => ({ ...publicProduct(x), imageUrl: imageUrl(x) })) });
+    return send(res, 200, { ...OPTIONS, giftCatalog: db.giftItems.filter((g) => g.active).map(giftItemView), products: db.products.filter((x) => x.active).map((x) => ({ ...publicProduct(x), imageUrl: imageUrl(x) })) });
   }
 
   // 매장 이름 자동완성용 (매장명만)
@@ -1116,12 +1197,22 @@ async function handle(req, res) {
     if (!(b.freq in OPTIONS.giftFreq)) return send(res, 400, { error: '1. 사은품 문의 빈도를 골라 주세요.' });
     if (!(b.delay in OPTIONS.giftDelay)) return send(res, 400, { error: '2. 사은품 때문에 구매를 미룬 경우를 골라 주세요.' });
     if (!(b.impact in OPTIONS.giftImpact)) return send(res, 400, { error: '3. 현재 사은품이 구매에 준 영향을 골라 주세요.' });
-    if (b.impact !== 'noGift' && !intIn(b.reaction, 1, 5)) return send(res, 400, { error: '3. 현재 사은품에 대한 고객 반응을 골라 주세요.' });
+    const reviews = {};
+    if (b.impact !== 'noGift') {
+      const src = b.reviews && typeof b.reviews === 'object' ? b.reviews : {};
+      for (const it of db.giftItems.filter((g) => g.active)) {
+        const v = src[it.id] || {};
+        if (!(v.r === GIFT_NA || intIn(v.r, 1, 5))) return send(res, 400, { error: `3-1. '${it.name}' 사은품의 고객 반응을 골라 주세요. (증정 안 했으면 '증정 안 함')` });
+        reviews[it.id] = { r: v.r, note: cleanText(v.note, 300) };
+      }
+    }
+    const scored = Object.values(reviews).filter((v) => v.r !== GIFT_NA);
+    b.reaction = scored.length ? Math.round(scored.reduce((a, v) => a + v.r, 0) / scored.length) : 0;
     const items = [...new Set(Array.isArray(b.items) ? b.items.filter((x) => OPTIONS.giftItems.includes(x)) : [])].slice(0, 3);
     if (!items.length) return send(res, 400, { error: '4. 고객이 원하는 사은품을 1~3개 골라 주세요.' });
     if (!(String(b.threshold) in OPTIONS.giftThreshold)) return send(res, 400, { error: '5. 적정 사은품 기준 금액을 골라 주세요.' });
     const data = {
-      store, freq: b.freq, delay: b.delay, impact: b.impact, reaction: b.impact === 'noGift' ? 0 : b.reaction,
+      store, freq: b.freq, delay: b.delay, impact: b.impact, reaction: b.impact === 'noGift' ? 0 : b.reaction, reviews,
       currentNote: cleanText(b.currentNote, 500), items, itemNote: cleanText(b.itemNote, 500), threshold: String(b.threshold), idea: cleanText(b.idea, 500),
       updatedAt: new Date().toISOString(),
     };
@@ -1214,6 +1305,7 @@ async function handle(req, res) {
 
 // 예전 데이터(사진 1장)를 사진 목록 구조로 옮기기 — 함수 정의 뒤에 실행
 db.products.forEach((p) => { photosOf(p); syncMain(p); });
+seedGiftItems();
 
 const server = http.createServer((req, res) => {
   // 검색엔진에 노출되지 않게 (페이지·이미지·CSV 모두)

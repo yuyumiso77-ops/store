@@ -165,10 +165,11 @@
           <span class="q">3. 올해 진행한 사은품은 구매에 도움이 됐나요? <span class="req">*</span></span>
           <div class="chips" id="gImpact"></div>
           <div id="gReactBox">
-            <span class="q sub-q">3-1. 그 사은품에 대한 고객 반응은? <span class="req">*</span></span>
-            <div class="chips" id="gReaction"></div>
-            <label class="q sub-q" for="gCurrentNote">3-2. 어떤 사은품이었고, 고객 반응은 어땠나요?</label>
-            <textarea id="gCurrentNote" maxlength="500" placeholder="예: 볼마커 사은품은 '또 볼마커냐'는 반응, 양말은 실용적이라 좋아했어요"></textarea>
+            <span class="q sub-q">3-1. 사은품별 고객 반응은 어땠나요? <span class="req">*</span></span>
+            <p class="hint" style="margin:0 0 8px">사진을 누르면 크게 볼 수 있어요. 우리 매장에서 증정하지 않은 사은품은 <b>🚫 증정 안 함</b>을 눌러 주세요.</p>
+            <div id="gGiftList" class="gift-list"></div>
+            <label class="q sub-q" for="gCurrentNote">3-2. 올해 사은품 전체에 대해 하고 싶은 말</label>
+            <textarea id="gCurrentNote" maxlength="500" placeholder="예: 가방류는 반응이 좋았지만 소진이 빨라 행사 중간에 품절됐어요"></textarea>
           </div>
         </div>
         <div class="card">
@@ -387,7 +388,7 @@ function syncMsg(sy) {
   return sy.display === 'notReceived' ? ` 진열 체크에도 컬러 ${sy.count}개를 '미입고'로 반영했어요.` : sy.display === 'cleared' ? ` 진열 체크의 '미입고' ${sy.count}개를 지웠어요.` : '';
 }
 // ---- 🎁 사은품 니즈 (매장당 1회) ----
-const GF = { freq: '', delay: '', impact: '', reaction: 0, items: [], threshold: '' };
+const GF = { freq: '', delay: '', impact: '', items: [], threshold: '', reviews: {} };
 const G_TEXTS = { currentNote: 'gCurrentNote', itemNote: 'gItemNote', idea: 'gIdea' };
 const gKey = () => { const st = $('staff').value.trim().toLowerCase().replace(/\s+/g, ''); return st ? `gdraft:${st}` : ''; };
 function gChips(id, items, key, multi) {
@@ -416,14 +417,57 @@ function drawGift() {
   gChips('gFreq', Object.entries(OPTS.giftFreq), 'freq');
   gChips('gDelay', Object.entries(OPTS.giftDelay), 'delay');
   gChips('gImpact', Object.entries(OPTS.giftImpact), 'impact');
-  gChips('gReaction', [1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${OPTS.reactions[n]}`]), 'reaction');
+  drawGiftReviews();
   gChips('gItems', OPTS.giftItems.map((x) => [x, x]), 'items', true);
   gChips('gThreshold', Object.entries(OPTS.giftThreshold), 'threshold');
   $('gReactBox').hidden = GF.impact === 'noGift';
 }
+// 3-1. 2026 사은품별 반응 (사진 카드)
+function drawGiftReviews() {
+  const box = $('gGiftList');
+  if (!box.children.length || box.dataset.n !== String(OPTS.giftCatalog.length)) {
+    box.dataset.n = OPTS.giftCatalog.length;
+    box.replaceChildren(...OPTS.giftCatalog.map((g) => {
+      const card = document.createElement('div');
+      card.className = 'gift-card';
+      card.dataset.id = g.id;
+      card.innerHTML = '<div class="gift-photo"></div><div class="gift-main"><b class="gname"></b><div class="chips small gchips"></div><input type="text" class="gnote" maxlength="300" placeholder="메모 (선택) 예: 여성 고객이 특히 좋아함"></div>';
+      card.querySelector('.gname').textContent = g.name;
+      if (g.photos[0]) {
+        const im = document.createElement('img');
+        im.src = g.photos[0]; im.alt = g.name; im.loading = 'lazy';
+        im.onclick = () => openLightbox({ photos: g.photos.map((url) => ({ url, label: g.name })) }, 0);
+        card.querySelector('.gift-photo').append(im);
+        if (g.photos.length > 1) { const c = document.createElement('span'); c.className = 'pcount'; c.textContent = `📷 ${g.photos.length}`; card.querySelector('.gift-photo').append(c); }
+      }
+      card.querySelector('.gnote').addEventListener('input', (ev) => { (GF.reviews[g.id] = GF.reviews[g.id] || {}).note = ev.target.value; G_TOUCH++; saveGDraft(); });
+      const chipsBox = card.querySelector('.gchips');
+      [...[1, 2, 3, 4, 5].map((n) => [n, `${FACES[n]} ${OPTS.reactions[n]}`]), ['na', '🚫 증정 안 함']].forEach(([v, label]) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.dataset.v = v; b.textContent = label;
+        b.onclick = () => { const r = (GF.reviews[g.id] = GF.reviews[g.id] || {}); r.r = r.r === v ? undefined : v; G_TOUCH++; paintGiftReviews(); saveGDraft(); };
+        chipsBox.append(b);
+      });
+      return card;
+    }));
+  }
+  paintGiftReviews();
+}
+function paintGiftReviews() {
+  let done = 0;
+  $('gGiftList').querySelectorAll('.gift-card').forEach((card) => {
+    const r = GF.reviews[card.dataset.id] || {};
+    card.querySelectorAll('.gchips button').forEach((b) => b.classList.toggle('on', String(r.r) === b.dataset.v));
+    const note = card.querySelector('.gnote');
+    if (document.activeElement !== note) note.value = r.note || '';
+    card.classList.toggle('answered', r.r != null);
+    if (r.r != null) done++;
+  });
+  $('gGiftList').dataset.done = `${done}/${OPTS.giftCatalog.length}`;
+}
 function fillGift(e) {
-  Object.assign(GF, { freq: '', delay: '', impact: '', reaction: 0, items: [], threshold: '' });
-  if (e) Object.keys(GF).forEach((k) => e[k] != null && (GF[k] = k === 'items' ? [...e[k]] : e[k]));
+  Object.assign(GF, { freq: '', delay: '', impact: '', items: [], threshold: '', reviews: {} });
+  if (e) Object.keys(GF).forEach((k) => e[k] != null && (GF[k] = structuredClone(e[k])));
   Object.entries(G_TEXTS).forEach(([k, id]) => ($(id).value = (e && e[k]) || ''));
   drawGift();
 }
@@ -454,12 +498,18 @@ async function loadGift(force) {
   $('gStatus').className = e ? 'hint pdone' : 'hint';
   $('gSave').textContent = e ? '사은품 의견 수정' : '사은품 의견 저장';
 }
+const missingGift = () => OPTS.giftCatalog.find((g) => !GF.reviews[g.id] || GF.reviews[g.id].r == null);
 async function saveGift() {
   $('gError').textContent = '';
   const err = !GF.freq ? '1. 사은품 문의 빈도를 골라 주세요.' : !GF.delay ? '2. 사은품 때문에 구매를 미룬 경우를 골라 주세요.'
-    : !GF.impact ? '3. 올해 사은품이 구매에 도움이 됐는지 골라 주세요.' : GF.impact !== 'noGift' && !GF.reaction ? '3-1. 사은품에 대한 고객 반응을 골라 주세요.'
+    : !GF.impact ? '3. 올해 사은품이 구매에 도움이 됐는지 골라 주세요.' : GF.impact !== 'noGift' && missingGift() ? `3-1. '${missingGift().name}' 사은품의 반응을 골라 주세요. (증정 안 했으면 '증정 안 함')`
     : !GF.items.length ? '4. 원하는 사은품을 1~3개 골라 주세요.' : !GF.threshold ? '5. 기준 금액을 골라 주세요.' : '';
-  if (err) { $('gError').textContent = err; return; }
+  if (err) {
+    $('gError').textContent = err;
+    const m = err.startsWith('3-1') && missingGift();
+    if (m) $('gGiftList').querySelector(`[data-id="${m.id}"]`).scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
   $('gSave').disabled = true;
   try {
     const body = { store: $('staff').value, ...GF };

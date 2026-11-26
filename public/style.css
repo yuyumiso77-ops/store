@@ -352,3 +352,23 @@ fieldset.gift:disabled { opacity: .55; }
 .bar.gbar > small { width: 3em; text-align: right; color: var(--muted); }
 .bar.gbar > :nth-last-child(2) { width: 2em; text-align: right; }
 .bar.gbar .fill { display: block; }
+.gift-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.gift-card { display: grid; grid-template-columns: 92px 1fr; gap: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.gift-card.answered { border-color: var(--accent); }
+.gift-photo { position: relative; width: 92px; height: 92px; border-radius: 10px; overflow: hidden; background: #fff; }
+.gift-photo img { width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; display: block; }
+.gift-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.gift-main .chips { gap: 5px; }
+.gift-main .chips button { padding: 5px 9px; font-size: .78rem; }
+.gift-main .gnote { padding: 6px 10px; font-size: .85rem; }
+.gres { display: grid; grid-template-columns: 110px 1fr; gap: 14px; align-items: start; }
+.gres img { width: 110px; height: 110px; object-fit: contain; background: #fff; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-in; }
+.gres .avg { font-size: 1.6rem; font-weight: 800; }
+.gitem-admin { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.gitem-admin.off { opacity: .5; }
+.gitem-admin .thumbs { display: flex; gap: 4px; }
+.gitem-admin .thumbs span { position: relative; }
+.gitem-admin .thumbs img { width: 44px; height: 44px; object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: 6px; }
+.gitem-admin .thumbs button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: var(--danger); color: #fff; font-size: .65rem; line-height: 18px; padding: 0; cursor: pointer; }
+.gitem-admin input[type=text] { flex: 1; min-width: 140px; padding: 6px 10px; }
+@media (max-width: 520px) { .gift-card { grid-template-columns: 72px 1fr; } .gift-photo { width: 72px; height: 72px; } .gres { grid-template-columns: 80px 1fr; } .gres img { width: 80px; height: 80px; } }

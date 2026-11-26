@@ -729,8 +729,42 @@ function setTab(t) {
 let OPTS_P = null;
 async function loadGiftTab() {
   const [g, opts] = await Promise.all([api('/api/admin/gifts'), OPTS_P || (OPTS_P = api('/api/options'))]);
-  $('giftBody').replaceChildren(...renderGift(g, opts));
+  $('giftBody').replaceChildren(...renderGift(g, opts), giftAdminCard(g.giftItems));
 }
+// 사은품 목록 관리: 이름 바꾸기, 매장 화면 노출, 사진 추가·삭제, 새 사은품
+function giftAdminCard(items) {
+  const reload = () => loadGiftTab();
+  const call = async (url, opts) => { try { await api(url, opts); reload(); } catch (ex) { alert(ex.message); } };
+  const nameIn = el('input', { type: 'text', placeholder: '새 사은품 이름 (예: 골프 양말 세트)', maxlength: '60' });
+  const det = el('details', { class: 'card', ontoggle: () => (GIFT_ADMIN_OPEN = det.open) },
+    el('summary', { class: 'q', style: 'cursor:pointer;margin:0' }, `⚙️ 2026 사은품 목록 관리 (${items.length}개)`),
+    el('p', { class: 'hint' }, '이름을 고치거나, 매장 화면에서 숨기거나, 사진을 추가·삭제할 수 있어요. 숨긴 사은품은 매장이 평가하지 않아도 돼요 (이미 받은 평가는 남아요).'),
+    ...items.map((it) => {
+      const inp = el('input', { type: 'text', value: it.name, maxlength: '60' });
+      const file = el('input', { type: 'file', accept: 'image/*', hidden: '' });
+      file.onchange = async () => {
+        const f = file.files[0]; if (!f) return;
+        let body; try { body = await shrink(f); } catch (ex) { return alert(ex.message); }
+        try {
+          const res = await fetch(`/api/admin/gift-items/${it.id}/photo`, { method: 'POST', body });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '사진 올리기 실패');
+          reload();
+        } catch (ex) { alert(ex.message); }
+      };
+      return el('div', { class: 'gitem-admin' + (it.active ? '' : ' off') },
+        el('div', { class: 'thumbs' }, it.photos.map((u) => el('span', {}, el('a', { href: u, target: '_blank', rel: 'noopener' }, el('img', { src: u, alt: '' })),
+          el('button', { type: 'button', title: '사진 삭제', onclick: () => confirm('이 사진을 지울까요?') && call(`/api/admin/gift-items/${it.id}/photo?file=${encodeURIComponent(u)}`, { method: 'DELETE' }) }, '×')))),
+        inp,
+        el('button', { type: 'button', class: 'btn', onclick: () => call(`/api/admin/gift-items/${it.id}`, { method: 'PATCH', body: JSON.stringify({ name: inp.value }) }) }, '이름 저장'),
+        el('label', { class: 'btn', style: 'cursor:pointer' }, file, '📷 사진 추가'),
+        el('button', { type: 'button', class: 'btn', onclick: () => call(`/api/admin/gift-items/${it.id}`, { method: 'PATCH', body: JSON.stringify({ active: !it.active }) }) }, it.active ? '🙈 숨기기' : '👁 다시 보이기'));
+    }),
+    el('div', { class: 'gitem-admin' }, nameIn,
+      el('button', { type: 'button', class: 'btn accent', onclick: () => call('/api/admin/gift-items', { method: 'POST', body: JSON.stringify({ name: nameIn.value }) }) }, '+ 사은품 추가')));
+  det.open = GIFT_ADMIN_OPEN;
+  return det;
+}
+let GIFT_ADMIN_OPEN = false;
 function distCard(title, dist, labels, n, note) {
   const max = Math.max(1, ...Object.values(dist));
   return el('div', { class: 'card' }, el('h2', { style: 'margin:0 0 8px' }, title), note ? el('p', { class: 'hint', style: 'margin:0 0 8px' }, note) : null,
@@ -739,6 +773,7 @@ function distCard(title, dist, labels, n, note) {
 }
 function renderGift(g, o) {
   if (!g.count) return [el('div', { class: 'card' }, el('p', { class: 'hint', style: 'margin:0' }, '아직 응답한 매장이 없어요. 매장 화면의 🎁 사은품 탭에서 매장마다 한 번 작성해요.'))];
+  const ranked = g.giftItems.filter((x) => x.answered).sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1) || b.count - a.count);
   const pct = (v) => Math.round((v / g.count) * 100) + '%';
   const items = Object.fromEntries(g.items.map((x) => [x.name, x.count]));
   const KINDS = [['all', '전체', () => true], ['currentNote', '🎁 현재 사은품 반응', (e) => e.currentNote], ['itemNote', '🛍 원하는 품목', (e) => e.itemNote], ['idea', '💡 아이디어', (e) => e.idea]];
@@ -772,13 +807,24 @@ function renderGift(g, o) {
       stat(fmt(g.avgReaction), '올해 사은품 고객 반응 (5점)'),
       stat(g.items[0] ? g.items[0].name : '-', '가장 원하는 사은품'))),
     el('div', { class: 'card' }, aiBlock('gift')),
+    el('div', { class: 'card' }, el('h2', { style: 'margin:0 0 4px' }, '🎁 2026 사은품별 반응'),
+      el('p', { class: 'hint', style: 'margin:0 0 10px' }, '평균 반응이 높은 순 · 5점 만점 · "증정 안 함" 매장은 평균에서 빠져요'),
+      ranked.length ? ranked.map((x) => el('div', { class: 'gres', style: 'padding:10px 0;border-top:1px solid var(--line)' },
+        x.photos[0] ? el('a', { href: x.photos[0], target: '_blank', rel: 'noopener' }, el('img', { src: x.photos[0], alt: x.name, loading: 'lazy' })) : el('div'),
+        el('div', {},
+          el('div', { style: 'display:flex;gap:10px;align-items:baseline;flex-wrap:wrap' }, el('b', {}, x.name), el('span', { class: 'avg' }, x.avg == null ? '-' : x.avg.toFixed(1)),
+            el('small', { class: 'hint' }, `평가 ${x.count}매장` + (x.na ? ` · 증정 안 함 ${x.na}매장` : ''))),
+          ...x.dist.map((v, i) => el('div', { class: 'bar gbar' }, el('span', { class: 'lbl' }, REACT[i + 1]),
+            el('span', { class: 'track' }, el('span', { class: 'fill', style: `width:${x.count ? (v / Math.max(...x.dist)) * 100 : 0}%` })), el('span', {}, `${v}`), el('small', {}, x.count ? Math.round((v / x.count) * 100) + '%' : ''))),
+          x.notes.length ? collapsibleList(x.notes, 3, (n) => el('li', {}, el('div', { class: 'note-line' }, n.note), el('div', { class: 'meta' }, `${n.store} · ${n.r === 'na' ? '증정 안 함' : REACT[n.r]}`)), '메모') : null)))
+        : el('p', { class: 'hint' }, '아직 사은품별 평가가 없어요.')),
     el('div', { class: 'grid2' },
       distCard('🛍 원하는 사은품 순위', items, {}, g.count, '매장마다 최대 3개 선택 · %는 응답 매장 중 비율'),
       distCard('💰 적정 사은품 기준 금액', g.threshold, o.giftThreshold, g.count, '이 금액 이상 구매 시 사은품을 주면 구매에 가장 도움이 된다는 응답'),
       distCard('🙋 고객 사은품 문의 빈도', g.freq, o.giftFreq, g.count),
       distCard('⏸ 사은품 때문에 구매를 미룬 고객', g.delay, o.giftDelay, g.count),
       distCard('🎁 올해 사은품의 구매 도움', g.impact, o.giftImpact, g.count),
-      distCard('🙂 올해 사은품 고객 반응', Object.fromEntries(g.reactionDist.map((v, i) => [i + 1, v])), Object.fromEntries([1, 2, 3, 4, 5].map((n) => [n, REACT[n]])), g.reactionDist.reduce((a, b) => a + b, 0))),
+      distCard('🙂 올해 사은품 고객 반응 (매장별 평균)', Object.fromEntries(g.reactionDist.map((v, i) => [i + 1, v])), Object.fromEntries([1, 2, 3, 4, 5].map((n) => [n, REACT[n]])), g.reactionDist.reduce((a, b) => a + b, 0))),
     el('div', { class: 'card' }, el('h2', { style: 'margin:0 0 8px' }, '매장 의견'), list),
   ];
 }
