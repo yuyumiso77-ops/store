@@ -588,6 +588,13 @@ test('조사 리포트: 관리자만, 한 번에 모든 섹션', async () => {
   const r = await (await fetch(base + '/api/admin/report', { headers: admin })).json();
   for (const k of ['overview', 'progress', 'reaction', 'display', 'space', 'ztec', 'gift', 'ai', 'labels']) assert.ok(k in r, k);
   assert.ok(Array.isArray(r.reaction.top) && Array.isArray(r.space.byType));
+  const prod = await (await fetch(base + '/api/admin/products', { method: 'POST', headers: admin, body: JSON.stringify({ name: '리포트 상세 상품', category: '용품' }) })).json();
+  await fetch(base + '/api/evaluations', { method: 'POST', headers: staff, body: JSON.stringify({ productId: prod.id, staff: '상세테스트점', reaction: 5, sales: 'good', pros: ['디자인'], sellReasons: ['기타'], prosNote: '반응 좋음' }) });
+  const d = await (await fetch(base + '/api/admin/product-report/' + prod.id, { headers: admin })).json();
+  assert.deepStrictEqual([d.product.count, d.product.avgReaction, d.product.pros[0].name, d.product.notes[0].prosNote, d.ai], [1, 5, '디자인', '반응 좋음', null]);
+  assert.strictEqual((await fetch(base + '/api/admin/product-report/nope', { headers: admin })).status, 404);
+  await fetch(base + `/api/admin/stores/${encodeURIComponent('상세테스트점')}?confirm=${encodeURIComponent('상세테스트점')}`, { method: 'DELETE', headers: admin });
+  await fetch(base + `/api/admin/products/${prod.id}`, { method: 'DELETE', headers: admin });
 });
 
 test('품목 필수', async () => {

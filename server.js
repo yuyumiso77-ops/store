@@ -229,7 +229,7 @@ function csvCell(v) {
 // ---------- 통계 ----------
 function countBy(lists) {
   const c = {};
-  lists.flat().forEach((x) => (c[x] = (c[x] || 0) + 1));
+  lists.flat().filter((x) => x != null && x !== '').forEach((x) => (c[x] = (c[x] || 0) + 1));
   return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([name, n]) => ({ name, n }));
 }
 // 고객 반응(상품 자체)과 실제 판매가 엇갈린 상품 찾기
@@ -681,7 +681,7 @@ function spaceEfficiency() {
 function buildReport() {
   const sm = summary();
   const prods = sm.products.filter((p) => p.active && p.count);
-  const pick = (p) => ({ code: p.code, name: p.name, line: lineOf(p), type: typeOf(p), imageUrl: p.imageUrl, count: p.count, avgReaction: p.avgReaction,
+  const pick = (p) => ({ id: p.id, code: p.code, name: p.name, line: lineOf(p), type: typeOf(p), imageUrl: p.imageUrl, count: p.count, avgReaction: p.avgReaction,
     goodPct: Math.round((p.sales.good / p.count) * 100), poorPct: Math.round((p.sales.poor / p.count) * 100), displayRate: p.displayRate,
     pros: p.pros.slice(0, 3).map((x) => x.name), cons: p.cons.slice(0, 3).map((x) => x.name) });
   const enough = prods.filter((p) => p.count >= 3);
@@ -939,6 +939,16 @@ async function handle(req, res) {
     if (m === 'GET' && p === '/admin') return serveStatic(res, 'admin.html');
     if (m === 'GET' && p === '/admin/report') return serveStatic(res, 'report.html');
     if (m === 'GET' && p === '/api/admin/report') return send(res, 200, buildReport());
+    const prp = p.match(/^\/api\/admin\/product-report\/([\w-]+)$/);
+    if (m === 'GET' && prp) {
+      const pr = summary().products.find((x) => x.id === prp[1]);
+      if (!pr) return send(res, 404, { error: '상품이 없어요.' });
+      const key = 'product:' + pr.id;
+      const saved = db.summaries[key];
+      const src = summarySource(key);
+      const ai = saved ? { ...saved.result, at: saved.at, count: saved.count, stale: !!(src && src.basis !== saved.basis) } : null;
+      return send(res, 200, { product: { ...pr, line: lineOf(pr), type: typeOf(pr), photos: photoList(db.products.find((x) => x.id === pr.id)) }, ai, aiEnabled: !!process.env.ANTHROPIC_API_KEY });
+    }
     if (m === 'GET' && p === '/api/admin/summary') return send(res, 200, summary());
 
     // ---- 조사 대상 매장 ----

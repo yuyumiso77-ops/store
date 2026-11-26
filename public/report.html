@@ -54,6 +54,31 @@
   .peek { position: fixed; z-index: 40; pointer-events: none; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 10px; box-shadow: 0 12px 32px rgba(17, 24, 39, .18); width: 280px; }
   .peek img { display: block; width: 100%; height: 260px; object-fit: contain; }
   .peek div { margin-top: 6px; font-size: .85rem; font-weight: 700; text-align: center; }
+  .rk-row { cursor: pointer; }
+  .rk-row .caret { color: var(--muted); font-size: .8rem; margin-left: 8px; display: inline-block; transition: transform .15s; }
+  .rk-row.open .caret { transform: rotate(180deg); }
+  .rk-row.open td { background: #f6f8fd; }
+  .rk-detail > td { background: #fbfcfe; padding: 18px 20px 22px; border-bottom: 1px solid var(--line); }
+  .rp .rk-detail:hover td { background: #fbfcfe; }
+  .pd { display: flex; flex-direction: column; gap: 16px; cursor: default; }
+  .pd-head { display: flex; align-items: center; gap: 4px; }
+  .pd-head .thumb { width: 84px; height: 84px; }
+  .pd-title { font-size: 1.15rem; font-weight: 700; }
+  .pd-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .pd-kpis .kpi { padding: 16px 18px; gap: 8px; }
+  .pd-kpis .kpi b { font-size: 1.35rem; }
+  .pd-kpis .kpi > .hint { order: 3; margin: 0; }
+  .pd-sales { order: 2; display: flex; flex-direction: column; gap: 6px; }
+  .pd-sbar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; background: #eef1f6; }
+  .pd-sbar i.g { background: var(--accent); } .pd-sbar i.n { background: #9db4e8; } .pd-sbar i.p { background: #d9dde5; }
+  .pd-ai-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .pd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .pd-block { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .pd-block h4 { margin: 0 0 8px; font-size: .92rem; }
+  .pd-list { margin: 0; padding-left: 20px; font-size: .9rem; }
+  .pd-list li { margin: 3px 0; } .pd-list li span { margin-right: 6px; } .pd-list li b { color: var(--muted); font-weight: 500; font-size: .82rem; }
+  .pd-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: .9rem; line-height: 1.55; }
+  .pd-notes li { border-bottom: 1px dashed var(--line); padding-bottom: 8px; } .pd-notes li:last-child { border-bottom: 0; }
   .zoom { position: fixed; inset: 0; z-index: 50; background: rgba(17, 24, 39, .72); display: flex; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out; }
   .zoom figure { margin: 0; background: #fff; border-radius: 16px; padding: 18px; max-width: min(92vw, 640px); text-align: center; }
   .zoom img { display: block; width: 100%; max-height: 74vh; object-fit: contain; }
@@ -94,6 +119,7 @@
     .rp tr:hover td { background: none; }
     .rp .thumb { width: 40px; height: 40px; margin-right: 8px; }
     .zoom, .peek { display: none !important; }
+    .rk-detail > td { background: none; } .pd-head .thumb { width: 56px; height: 56px; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
@@ -180,6 +206,88 @@ const RK_SORTS = [
 ];
 const RK = { type: 'all', n: 10, sort: 'reactionDesc', min: 3 };
 try { Object.assign(RK, JSON.parse(localStorage.getItem('reportRank') || '{}')); } catch {}
+// 순위표: 줄을 누르면 그 상품의 종합 평가가 바로 아래에 펼쳐짐
+const OPEN = new Set();
+function rankTable(shown, typeKey) {
+  const head = ['순위', '상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', '평가'], nums = [0, 3, 4, 5, 6, 7];
+  const tb = el('table', { class: 'rank-table' }, el('tr', {}, head.map((h, i) => el('th', { class: nums.includes(i) ? 'n' : '' }, h))));
+  shown.forEach((p, i) => {
+    const cells = [i + 1, el('span', {}, thumb(p.imageUrl, `${p.code || ''} ${p.name || ''}`.trim()), el('b', {}, p.code || p.name), el('span', { class: 'caret no-print' }, '▾')), typeKey(p),
+      el('span', {}, bar(p.avgReaction, 5), fmt1(p.avgReaction)), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), p.count];
+    const tr = el('tr', { class: 'rk-row' }, cells.map((c, j) => el('td', { class: nums.includes(j) ? 'n' : '' }, c)));
+    const detail = el('tr', { class: 'rk-detail' }, el('td', { colspan: String(head.length) }));
+    detail.hidden = !OPEN.has(p.id);
+    const toggle = () => {
+      detail.hidden = !detail.hidden;
+      tr.classList.toggle('open', !detail.hidden);
+      if (detail.hidden) OPEN.delete(p.id); else { OPEN.add(p.id); if (!detail.dataset.loaded) loadProductDetail(p.id, detail.firstChild, detail); }
+    };
+    tr.onclick = (e) => { if (e.target.closest('.thumb')) return; toggle(); };
+    if (!detail.hidden) { tr.classList.add('open'); loadProductDetail(p.id, detail.firstChild, detail); }
+    tb.append(tr, detail);
+  });
+  return el('div', { class: 'tw' }, tb);
+}
+const SALES_L = { good: '잘 팔림', normal: '보통', poor: '안 팔림' };
+async function loadProductDetail(id, td, row) {
+  td.replaceChildren(el('p', { class: 'hint', style: 'margin:8px 0' }, '불러오는 중…'));
+  try {
+    const res = await fetch('/api/admin/product-report/' + encodeURIComponent(id));
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || '불러오지 못했어요.');
+    row.dataset.loaded = '1';
+    td.replaceChildren(productDetail(d, () => loadProductDetail(id, td, row)));
+  } catch (ex) { td.replaceChildren(el('p', { class: 'error' }, ex.message)); }
+}
+function productDetail(d, reload) {
+  const p = d.product;
+  const n = p.count;
+  const sb = p.sales, sn = sb.good + sb.normal + sb.poor;
+  const w = (v) => (sn ? (v / sn) * 100 : 0);
+  const top = (list, k = 5) => (list && list.length ? el('ol', { class: 'pd-list' }, list.slice(0, k).map((x) => el('li', {}, el('span', {}, x.name), el('b', {}, `${x.n}매장`)))) : el('p', { class: 'empty' }, '-'));
+  const block = (t, list) => el('div', { class: 'pd-block' }, el('h4', {}, t), top(list));
+  const notes = (p.notes || []).filter((x) => x.prosNote || x.consNote || x.improvement);
+  const aiBtn = el('button', { type: 'button', class: 'btn no-print' }, d.ai ? (d.ai.stale ? '🔄 새 평가 반영해 다시 요약' : '🔄 다시 요약') : '🤖 AI 요약 만들기');
+  aiBtn.onclick = async (e) => {
+    e.stopPropagation();
+    aiBtn.disabled = true; aiBtn.textContent = '요약 중… (10~30초)';
+    try {
+      const r = await fetch(`/api/admin/ai-summary/product:${encodeURIComponent(p.id)}${d.ai ? '?force=1' : ''}`, { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'AI 요약에 실패했어요.');
+      reload();
+    } catch (ex) { aiBtn.disabled = false; aiBtn.textContent = '🤖 AI 요약 만들기'; alert(ex.message); }
+  };
+  const ai = d.ai
+    ? el('div', { class: 'ai-box', style: 'margin-top:0' }, el('div', { class: 'pd-ai-top' }, el('div', { class: 'q', style: 'margin:0' }, '🤖 AI 종합 평가 요약'), aiBtn),
+        el('p', { class: 'ai-head' }, d.ai.headline),
+        el('div', { class: 'ai-grid' }, [['👍 좋은 점', d.ai.strengths], ['👎 아쉬운 점', d.ai.weaknesses], ['💡 요청·아이디어', d.ai.requests], ['✅ 검토할 조치', d.ai.actions]].map(([t, l]) => (l && l.length ? el('div', { class: 'ai-sec' }, el('b', {}, t), el('ul', {}, l.map((x) => el('li', {}, String(x).replace(/([·,/])/g, '$1\u200b'))))) : null))),
+        el('p', { class: 'hint', style: 'margin:0' }, `평가 ${d.ai.count}건 기준 · ${new Date(d.ai.at).toLocaleString('ko-KR')} 요약` + (d.ai.stale ? ' · ⚠️ 그 뒤 새 평가가 있어요' : '') + ' · AI 요약은 틀릴 수 있어요'))
+    : el('div', { class: 'ai-box no-print', style: 'margin-top:0' }, el('div', { class: 'pd-ai-top' }, el('div', { class: 'q', style: 'margin:0' }, '🤖 AI 종합 평가 요약'), d.aiEnabled ? aiBtn : null),
+        el('p', { class: 'hint', style: 'margin:6px 0 0' }, d.aiEnabled ? '아직 이 상품의 AI 요약이 없어요. 버튼을 누르면 매장 의견을 한눈에 정리해요.' : 'AI 키가 설정되지 않아 요약을 만들 수 없어요.'));
+  return el('div', { class: 'pd', onclick: (e) => e.stopPropagation() },
+    el('div', { class: 'pd-head' },
+      p.imageUrl ? thumb(p.imageUrl, `${p.code || ''} ${p.name}`.trim()) : null,
+      el('div', {}, el('div', { class: 'pd-title' }, `${p.code || ''} ${p.name !== p.code ? p.name : ''}`.trim()), el('div', { class: 'hint' }, `${p.line} ${p.type} · 평가 ${n}매장` + (p.skipped && (p.skipped.nosale || p.skipped.notreceived) ? ` · 판매 경험 없음 ${p.skipped.nosale} · 미입고 ${p.skipped.notreceived}` : '')))),
+    el('div', { class: 'pd-kpis' },
+      el('div', { class: 'kpi' }, el('span', {}, '평균 고객 반응'), el('b', {}, `${fmt1(p.avgReaction)} / 5`)),
+      el('div', { class: 'kpi' }, el('span', {}, '판매 반응'), el('div', { class: 'pd-sales' },
+        el('div', { class: 'pd-sbar' }, el('i', { class: 'g', style: `width:${w(sb.good)}%` }), el('i', { class: 'n', style: `width:${w(sb.normal)}%` }), el('i', { class: 'p', style: `width:${w(sb.poor)}%` })),
+        el('div', { class: 'hint' }, `잘 팔림 ${sb.good} · 보통 ${sb.normal} · 안 팔림 ${sb.poor}`))),
+      el('div', { class: 'kpi' }, el('span', {}, '진열률'), el('b', {}, pct(p.displayRate)), el('div', { class: 'hint' }, `진열 ${p.display.shown} · 창고만 ${p.display.stock} · 없음 ${p.display.none}` + (p.display.notReceived ? ` · 미입고 ${p.display.notReceived}` : '')))),
+    ai,
+    el('div', { class: 'pd-grid' },
+      block('👍 고객이 좋아한 점', p.pros), block('👎 고객이 아쉬워한 점', p.cons),
+      block('💰 판매를 도운 요인', p.sellReasons), block('🚧 판매를 막은 요인', p.noBuyReasons)),
+    el('div', { class: 'pd-grid' },
+      el('div', { class: 'pd-block' }, el('h4', {}, '👥 주 고객층'), el('p', { class: 'tags' }, [...(p.ageGroups || []).slice(0, 3), ...(p.genders || []).slice(0, 2)].map((x) => `${x.name} ${x.n}`).join(' · ') || '-')),
+      p.missing && p.missing.length ? el('div', { class: 'pd-block' }, el('h4', {}, '🔍 찾는데 없었던 사이즈·컬러'), el('p', { class: 'tags' }, p.missing.slice(0, 6).map((x) => x.missing).join(' · '))) : null),
+    notes.length ? el('div', { class: 'pd-block' }, el('h4', {}, `💬 매장 의견 (${notes.length})`),
+      el('ul', { class: 'pd-notes' }, notes.slice(0, 6).map((x) => el('li', {},
+        x.prosNote ? el('div', {}, '👍 ', x.prosNote) : null, x.consNote ? el('div', {}, '👎 ', x.consNote) : null, x.improvement ? el('div', {}, '💡 ', x.improvement) : null,
+        el('div', { class: 'hint' }, `${x.staff}` + (x.status === 'nosale' ? ' · 판매 경험 없음' : ` · ${SALES_L[x.sales] || ''}`)))) ),
+      notes.length > 6 ? el('p', { class: 'hint' }, `그 밖에 ${notes.length - 6}개 의견은 관리자 화면에서 볼 수 있어요.`) : null) : null);
+}
 function rankingBlock(products) {
   const box = el('div', { class: 'rank' });
   const typeKey = (p) => `${p.line} ${p.type}`;
@@ -205,9 +313,7 @@ function rankingBlock(products) {
           el('div', { class: 'chips small' }, [1, 3, 5].map((m) => chip(RK.min === m, `평가 ${m}건 이상`, () => (RK.min = m)))))),
       el('h3', {}, `${RK.type === 'all' ? '전체 복종' : RK.type} · ${sortName.replace(/^\S+\s/, '')} · ${RK.n ? `1~${Math.min(RK.n, list.length)}위` : `전체 ${list.length}개`}`,
         el('small', { class: 'hint', style: 'font-weight:400;margin-left:6px' }, `(평가 ${RK.min}건 이상 ${list.length}개 중)`)),
-      shown.length ? table(['순위', '상품', '복종', '반응', '잘 팔림', '안 팔림', '진열률', '평가'],
-        shown.map((p, i) => [i + 1, el('span', {}, thumb(p.imageUrl, `${p.code || ''} ${p.name || ''}`.trim()), el('b', {}, p.code || p.name)), typeKey(p),
-          el('span', {}, bar(p.avgReaction, 5), fmt1(p.avgReaction)), pct(p.goodPct), pct(p.poorPct), pct(p.displayRate), p.count]), [0, 3, 4, 5, 6, 7])
+      shown.length ? el('div', {}, el('p', { class: 'hint no-print', style: 'margin:-4px 0 8px' }, '👆 상품 줄을 누르면 고객 반응 종합 평가가 펼쳐져요.'), rankTable(shown, typeKey))
         : el('p', { class: 'empty' }, '조건에 맞는 상품이 없어요. 기준(평가 건수)을 낮춰 보세요.'));
   };
   draw();
