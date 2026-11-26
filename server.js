@@ -898,7 +898,7 @@ function stockAnalysis() {
 
 // ---------- 🧮 적정 진열·재고 (판매 · 재고 · 평수 기준) + 매장 조사 비교 ----------
 // 기준값: 여기만 바꾸면 계산이 바뀜
-const OPT = { skuBuffer: 1.1, coreMultiplier: 1.5, coverDays: 56, minStockPerSku: 4, lowActive: 60, highActive: 80 }; // 재고: 8주치·SKU당 최소 4개(사이즈) — 화면에서 바꿔 볼 수 있음
+const OPT = { density: null, skuBuffer: 1.1, coreMultiplier: 1.5, coverDays: 56, minStockPerSku: 4, lowActive: 60, highActive: 80 }; // 재고: 8주치·SKU당 최소 4개(사이즈) — 화면에서 바꿔 볼 수 있음
 function importSizes(b) {
   const mp = erpMapper(b.names && typeof b.names === 'object' ? b.names : {});
   const sizes = {};
@@ -945,9 +945,29 @@ function optimalDisplay(over = {}) {
   const disp = new Map(db.displays.map((d) => [d.store + '|' + d.sku, d.status]));
   const sku = (s) => { const k = idx.get(s); return k ? { sku: s, productId: k.product.id, code: k.product.code || k.product.name, name: k.product.name, color: k.color, line: lineOf(k.product), type: typeOf(k.product), imageUrl: imageUrl(k.product) } : null; };
   // 전체 매장 판매 순위 (권장 목록을 채울 때 사용)
+  // 전체 매장 '지금 시점' 예상 매출 순위 (모자라는 자리를 채울 때 사용: 다른 매장에서 지금 잘 팔리는 시즌 상품)
   const net = new Map();
-  sl.items.forEach((x) => { if (idx.has(x.sku)) net.set(x.sku, (net.get(x.sku) || 0) + Math.max(0, x.amount)); });
+  sl.items.forEach((x) => { if (!idx.has(x.sku) || x.qty <= 0) return; net.set(x.sku, (net.get(x.sku) || 0) + forecast(x, x.sku) * (x.amount / x.qty)); });
   const netRank = [...net.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  // 공간 기준 밀도(평당 진열 SKU): 평당 매출 상위 1/3 매장이 실제로 진열한 SKU ÷ 평수의 중간값 (진열 체크 없으면 재고 SKU 기준)
+  const sizesAll = (db.storeSizes && db.storeSizes.sizes) || {};
+  const bench = (() => {
+    const rows = [];
+    const amtBy = new Map();
+    sl.items.forEach((x) => amtBy.set(x.store, (amtBy.get(x.store) || 0) + Math.max(0, x.amount)));
+    const shownBy = new Map(), heldBy = new Map();
+    db.displays.forEach((d) => { if (d.status === 'shown' && idx.has(d.sku)) shownBy.set(d.store, (shownBy.get(d.store) || 0) + 1); });
+    stockMap.forEach((q, k) => { if (q > 0) { const st = k.slice(0, k.lastIndexOf('|')); heldBy.set(st, (heldBy.get(st) || 0) + 1); } });
+    Object.entries(sizesAll).forEach(([st, py]) => { if (py > 0 && amtBy.get(st)) rows.push({ st, perPy: amtBy.get(st) / py, shown: shownBy.get(st) || 0, held: heldBy.get(st) || 0, py }); });
+    const top = rows.sort((a, b) => b.perPy - a.perPy).slice(0, Math.max(3, Math.ceil(rows.length / 3)));
+    const med = (a) => { const v = a.filter((x) => x > 0).sort((x, y) => x - y); return v.length ? v[Math.floor(v.length / 2)] : null; };
+    const byShown = med(top.filter((r) => r.shown > 0).map((r) => r.shown / r.py));
+    const byHeld = med(top.map((r) => r.held / r.py));
+    if (top.filter((r) => r.shown > 0).length >= 3 && byShown) return { value: Math.round(byShown * 10) / 10, source: '평당 매출 상위 매장의 진열 체크' };
+    if (byHeld) return { value: Math.round(byHeld * 10) / 10, source: '평당 매출 상위 매장의 보유 재고 SKU' };
+    return { value: 10, source: '기본값' };
+  })();
+  const density = OPT_.density || bench.value;
   const byStore = new Map();
   sl.items.forEach((x) => { if (!idx.has(x.sku)) return; if (!byStore.has(x.store)) byStore.set(x.store, []); byStore.get(x.store).push(x); });
   const storeNames = db.stores.length ? db.stores.map((s) => s.name) : [...byStore.keys()];
@@ -966,7 +986,10 @@ function optimalDisplay(over = {}) {
     const heldSet = new Set(held);
     // 지금 시점에 팔리는 SKU: 비시즌 복종(계절 지수 0.6 이하)이면서 최근에 안 팔린 SKU만 뺌
     const activeNow = hasWeeks ? sold.filter((x) => recentQty(x) > 0 || season.get(typeKeyOf(x.sku)).factor > 0.6) : sold;
-    const recCount = Math.min(idx.size, Math.max(Math.round(activeNow.length * OPT_.skuBuffer), Math.round(core * OPT_.coreMultiplier)));
+    const salesBased = Math.max(Math.round(activeNow.length * OPT_.skuBuffer), Math.round(core * OPT_.coreMultiplier));
+    const pySize = sizes[name] || 0;
+    const spaceMin = pySize ? Math.round(pySize * density) : 0; // 공간 기준 최소 진열 SKU (매장이 비어 보이지 않게)
+    const recCount = Math.min(idx.size, Math.max(salesBased, spaceMin));
     const rec = sold.slice(0, recCount).map((x) => x.sku);
     for (const s of netRank) { if (rec.length >= recCount) break; if (!rec.includes(s)) rec.push(s); }
     const recSet = new Set(rec);
@@ -1003,7 +1026,7 @@ function optimalDisplay(over = {}) {
     const py = sizes[name] || null;
     return {
       name, manager: (db.stores.find((s) => s.name === name) || {}).manager || '', py, amount, qty, perPy: py ? Math.round(amount / py) : null,
-      held: held.length, sold: sold.length, activeNow: activeNow.length, core, active, recSku: recCount, recPerPy: py ? Math.round((recCount / py) * 10) / 10 : null,
+      held: held.length, sold: sold.length, activeNow: activeNow.length, core, active, recSku: recCount, salesBased, spaceMin, filled: Math.max(0, recCount - Math.min(recCount, sold.length)), recPerPy: py ? Math.round((recCount / py) * 10) / 10 : null,
       cutSku: Math.max(0, held.length - recCount),
       judge: active == null ? '' : active < OPT_.lowActive ? 'over' : active >= OPT_.highActive ? 'room' : 'ok',
       stockQty, recStockQty, offSeasonStock, overStock: skuRows.reduce((a, x) => a + Math.max(0, x.gap), 0), shortStock: skuRows.reduce((a, x) => a + Math.max(0, -x.gap), 0),
@@ -1018,7 +1041,7 @@ function optimalDisplay(over = {}) {
   }).filter((s) => s.amount > 0 || s.held > 0);
   const sum = (f) => stores.reduce((a, s) => a + (f(s) || 0), 0);
   return {
-    ready: true, opt: OPT_, days, salesInfo: { from: sl.from, to: sl.to, fileName: sl.fileName }, stockInfo,
+    ready: true, opt: OPT_, density: { value: density, bench: bench.value, source: OPT_.density ? '직접 선택' : bench.source }, days, salesInfo: { from: sl.from, to: sl.to, fileName: sl.fileName }, stockInfo,
     seasonal: hasWeeks ? { fullWeeks: Math.floor(days / 7), recentDays, recentFrom: new Date(Date.parse(sl.from) + recentFrom * 7 * 864e5).toISOString().slice(0, 10), weekStarts: Array.from({ length: nW }, (_, i) => new Date(Date.parse(sl.from) + i * 7 * 864e5).toISOString().slice(5, 10)),
       types: [...season.values()].filter((t) => t.qty > 0).sort((a, b) => b.factor - a.factor).map((t) => ({ line: t.line, type: t.type, factor: t.factor, qty: t.qty, recent: t.recent, weeks: t.weeks })) } : null, hasStock: !!db.stock, hasSizes: !!db.storeSizes,
     sizesInfo: db.storeSizes ? { fileName: db.storeSizes.fileName, uploadedAt: db.storeSizes.uploadedAt, stores: Object.keys(db.storeSizes.sizes).length } : null,
@@ -1329,7 +1352,7 @@ async function handle(req, res) {
       const r = importSizes(await readBody(req, 256 * 1024));
       return send(res, r.error ? 400 : 200, r);
     }
-    const optQ = () => { const c = Number(url.searchParams.get('cover')), mn = Number(url.searchParams.get('min')); const o = {}; if (c >= 7 && c <= 180) o.coverDays = Math.round(c); if (mn >= 0 && mn <= 20) o.minStockPerSku = Math.round(mn); return o; };
+    const optQ = () => { const c = Number(url.searchParams.get('cover')), mn = Number(url.searchParams.get('min')); const o = {}; if (c >= 7 && c <= 180) o.coverDays = Math.round(c); if (mn >= 0 && mn <= 20) o.minStockPerSku = Math.round(mn); const dn = Number(url.searchParams.get('density')); if (dn > 0 && dn <= 40) o.density = dn; return o; };
     if (m === 'GET' && p === '/api/admin/optimal-display') return send(res, 200, optimalDisplay(optQ()));
     if (m === 'GET' && p === '/api/admin/optimal-display.csv') {
       const o = optimalDisplay(optQ());
