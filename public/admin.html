@@ -67,10 +67,6 @@
         <a class="btn accent" href="/api/admin/display-matrix.csv">매장 × SKU 표 CSV</a>
       </div>
     </div>
-    <div class="card">
-      <div class="stats" id="dStats"></div>
-      <div id="dStores" style="margin-top:12px"></div>
-    </div>
     <div class="chips bold-chips" id="dView" style="margin-bottom:12px">
       <button type="button" data-v="optimal">🧮 적정 진열·재고</button>
       <button type="button" data-v="analysis">📈 분석</button>
@@ -955,22 +951,6 @@ async function loadDisplayTab() {
 function renderDisplayTab() {
   const r = DREP;
   const t = r.totals;
-  const pct = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '-');
-  $('dStats').replaceChildren(
-    stat(r.stores.length + '매장', '체크한 매장'),
-    stat(r.totalSkus, 'SKU (품번 × 컬러)'),
-    stat(pct(t.shown, t.checks - t.notReceived), `전체 진열률(미입고 제외) · 진열 ${t.shown} · 창고 ${t.stock} · 없음 ${t.none}`),
-    stat(t.none, "'매장에 없음' 체크 수"),
-    stat(t.notReceived, "'미입고' 체크 수"),
-    stat(pct(t.checks, r.stores.length * r.totalSkus), '체크 완료율 (참여 매장 기준)'));
-  // 매장별 진행
-  const pills = el('div', { class: 'pills', hidden: '' }, r.stores.map((s) =>
-    el('span', { class: 'pill' + (s.checked >= r.totalSkus ? ' full' : '') }, `${s.name} ${s.checked}/${r.totalSkus}` + (s.none ? ` · 없음 ${s.none}` : '') + (s.notReceived ? ` · 미입고 ${s.notReceived}` : ''))));
-  const full = r.stores.filter((s) => s.checked >= r.totalSkus).length;
-  $('dStores').replaceChildren(...(r.stores.length
-    ? [el('span', { class: 'hint' }, `체크 완료 ${full}매장 · 진행 중 ${r.stores.length - full}매장 `),
-       el('button', { type: 'button', class: 'linkbtn', style: 'padding:0', onclick: (e) => { pills.hidden = !pills.hidden; e.target.textContent = pills.hidden ? '매장별 보기' : '접기'; } }, '매장별 보기'), pills]
-    : [el('span', { class: 'hint' }, '아직 진열 체크한 매장이 없어요. 평가 화면의 📦 진열 체크 탭에서 매장마다 체크해요.')]));
   // 필터
   const lines = [...new Set(r.skus.map((k) => k.line))];
   $('dLineF').replaceChildren(...(lines.length > 1 ? [['', '전체'], ...lines.map((l) => [l, l || '구분 없음'])].map(([k, l]) =>
