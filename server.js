@@ -929,6 +929,7 @@ async function handle(req, res) {
   if (m === 'GET' && p === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n');
   if (m === 'GET' && p === '/healthz') return send(res, 200, { ok: true, ai: !!process.env.ANTHROPIC_API_KEY }); // 키 값은 노출하지 않음
   if (m === 'GET' && p === '/style.css') return serveStatic(res, 'style.css');
+  if (m === 'GET' && p === '/admin-theme.css') return serveStatic(res, 'admin-theme.css');
   if (m === 'GET' && (p === '/logo.png' || p === '/favicon.png')) return serveStatic(res, p.slice(1));
 
   // 관리자

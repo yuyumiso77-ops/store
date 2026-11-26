@@ -1,0 +1,71 @@
+/* 관리자 화면 전용: 리포트·매출 현황 대시보드와 같은 톤 (흰 바탕 · 밑줄 탭 · 흰 카드 · 파란 강조)
+   매장 화면(style.css)은 건드리지 않도록 body.admin 아래에만 적용 */
+:root { --bg: #ffffff; --card: #ffffff; --text: #111827; --muted: #6b7280; --line: #e5e7eb; --accent: #2b5fcf; --accent-soft: #f6f7f9; --danger: #d14343; }
+body.admin { background: #fff; color: var(--text); }
+body.admin .wrap.wide { max-width: 1240px; padding: 36px 24px 80px; }
+
+/* 머리말: 로고 · 큰 제목 · 오른쪽 리포트 버튼 */
+body.admin .brand-title { gap: 14px; padding-bottom: 22px; }
+body.admin .brand-title img { height: 22px; }
+body.admin .brand-title .btitle { font-size: 1.9rem; font-weight: 700; letter-spacing: -0.02em; }
+body.admin .brand-title .tag { background: #f3f4f6; border: 0; color: #4b5563; border-radius: 6px; padding: 3px 9px; font-size: .8rem; }
+body.admin .brand-title .report-link { margin-left: auto; padding: 9px 16px; font-size: .92rem; }
+
+/* 밑줄 탭 */
+body.admin .modetabs#adminTabs { background: #fff; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 0; gap: 4px; margin: 0 0 34px; overflow-x: auto; scrollbar-width: none; position: sticky; top: 0; z-index: 5; }
+body.admin .modetabs#adminTabs::-webkit-scrollbar { display: none; }
+body.admin .modetabs#adminTabs button { flex: 0 0 auto; border-radius: 0; background: none; color: #4b5563; padding: 16px 22px 14px; font-size: 1.02rem; font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+body.admin .modetabs#adminTabs button:hover { color: var(--text); }
+body.admin .modetabs#adminTabs button.on { background: none; color: var(--text); font-weight: 700; border-bottom-color: var(--text); }
+
+/* 제목 · 설명 */
+body.admin h1 { font-size: 1.55rem; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 8px; }
+body.admin h2 { font-weight: 700; letter-spacing: -0.01em; }
+body.admin .sub { color: var(--muted); font-size: .95rem; line-height: 1.6; margin-bottom: 22px; }
+body.admin .product-head { margin-bottom: 6px; }
+
+/* 카드 · 숫자 카드 */
+body.admin .card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; box-shadow: none; }
+body.admin .stats { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+body.admin .stat { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 10px; }
+body.admin .stat .l { color: var(--muted); font-size: .9rem; }
+body.admin .stat .n { font-size: 1.55rem; font-weight: 600; letter-spacing: -0.01em; }
+body.admin .card .stats .stat { border-color: #eef0f3; }
+
+/* 버튼 · 선택 칩 */
+body.admin .btn { background: #fff; border: 1px solid var(--line); color: var(--text); border-radius: 10px; font-weight: 500; box-shadow: none; }
+body.admin .btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+body.admin .btn.danger { color: var(--danger); border-color: #f3c7c7; }
+body.admin .chips button { background: #fff; border: 1px solid var(--line); color: #374151; border-radius: 8px; font-weight: 500; }
+body.admin .chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+body.admin .chips.bold-chips button { font-weight: 600; }
+
+/* 표처럼 보이는 목록 · 막대 */
+body.admin .bar .track { background: #eef1f6; border-radius: 2px; }
+body.admin .bar .fill { background: var(--accent); border-radius: 2px; }
+body.admin .tag { border-radius: 6px; }
+body.admin .tag.good, body.admin .tag.st-done { border-color: #c9d7f5; color: var(--accent); background: #eef3fd; }
+body.admin .tag.gap, body.admin .tag.st-none { border-color: #f3c7c7; color: var(--danger); background: #fdf1f1; }
+body.admin .strow, body.admin .space-store > summary { background: #fff; }
+body.admin .strow { border-color: #eef0f3; border-radius: 12px; }
+
+/* AI 요약 상자 */
+body.admin .ai { background: #f8f9fb; border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+body.admin .ai-sec { background: #fff; }
+
+/* 입력칸 */
+body.admin input[type=text], body.admin input[type=search], body.admin select, body.admin textarea { background: #fff; border-color: var(--line); border-radius: 10px; }
+
+@media (max-width: 600px) {
+  body.admin .wrap.wide { padding: 22px 16px 60px; }
+  body.admin .brand-title .btitle { font-size: 1.35rem; }
+  body.admin .brand-title .report-link { margin-left: 0; }
+  body.admin .modetabs#adminTabs button { padding: 14px 14px 12px; font-size: .95rem; }
+  body.admin .stats { grid-template-columns: 1fr 1fr; gap: 10px; }
+  body.admin .stat { padding: 14px 16px; }
+  body.admin .stat .n { font-size: 1.25rem; }
+}
+body.admin .brand img { filter: none !important; }
+/* 숫자 카드만 담은 상자는 바깥 테두리를 없애 카드가 바로 보이게 (대시보드처럼) */
+body.admin .card:has(> .stats:first-child) { border: 0; padding: 0; background: none; }
+body.admin .card:has(> .stats:first-child) > .stats + * { margin-top: 12px; }
