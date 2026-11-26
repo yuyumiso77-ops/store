@@ -300,7 +300,7 @@ function computeSummary() {
     ...x,
     done: db.evaluations.filter((e) => e.staff === x.name && active.includes(e.productId)).length,
   }));
-  const productionInfo = db.production ? { fileName: db.production.fileName, uploadedAt: db.production.uploadedAt, products: Object.keys(db.production.products).length, hasSales: db.production.hasSales } : null;
+  const productionInfo = db.production ? { fileName: db.production.fileName, uploadedAt: db.production.uploadedAt, products: Object.keys(db.production.products).length, hasSales: db.production.hasSales, basis: db.production.basis || '생산수량' } : null;
   const salesInfo = db.sales ? { from: db.sales.from, to: db.sales.to } : null;
   return { productionInfo, salesInfo, totalEvaluations: db.evaluations.filter(isDone).length, skippedEvaluations: db.evaluations.filter((e) => !isDone(e)).length, activeProducts: active.length, staff, products, ztec: ztecSummary(), aiEnabled: !!process.env.ANTHROPIC_API_KEY };
 }
@@ -817,7 +817,7 @@ function importProduction(b) {
     matched++;
   }
   if (!matched) return { error: '조사 상품의 품번과 맞는 생산수량이 없어요. 첫 줄에 품번(상품코드)·생산수량 열이 있는지 확인해 주세요.' };
-  db.production = { fileName: cleanText(b.fileName, 120), uploadedAt: new Date().toISOString(), products, hasSales };
+  db.production = { fileName: cleanText(b.fileName, 120), basis: cleanText(b.basis, 20) || '생산수량', uploadedAt: new Date().toISOString(), products, hasSales };
   saveDb();
   return { ok: true, products: Object.keys(products).length, rows: matched, skipped, hasSales };
 }
