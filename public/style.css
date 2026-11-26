@@ -235,10 +235,14 @@ code { background: var(--accent-soft); padding: 0 4px; border-radius: 4px; }
 #ztecBody textarea { min-height: 64px; }
 .ai { background: var(--accent-soft); border-radius: 12px; padding: 12px 14px; }
 .ai-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.ai-head { font-weight: 600; margin: 10px 0 6px; }
-.ai-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
-.ai-sec ul { margin: 4px 0 0; padding-left: 18px; font-size: .9rem; }
-.ai-sec li { margin: 2px 0; }
+.ai-head { font-weight: 700; font-size: 1.02rem; line-height: 1.6; margin: 12px 0 12px; word-break: keep-all; overflow-wrap: anywhere; }
+.ai-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 12px; margin-bottom: 10px; }
+.ai-sec { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.ai-sec > b { display: block; font-size: .95rem; padding-bottom: 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.ai-sec ul { margin: 6px 0 0; padding-left: 18px; font-size: .9rem; line-height: 1.65; }
+.ai-sec li { margin: 0 0 8px; word-break: keep-all; overflow-wrap: anywhere; }
+.ai-sec li:last-child { margin-bottom: 0; }
+.ai-sec li::marker { color: var(--muted); }
 .ai-btn:disabled { opacity: .6; cursor: default; }
 .evrow { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .pill-x { border: none; background: none; cursor: pointer; padding: 0 0 0 2px; font-size: .75rem; opacity: .7; }

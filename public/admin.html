@@ -225,7 +225,7 @@ function aiBlock(key, opt = {}) {
     if (!sm) { btn.textContent = '🤖 요약 만들기'; body.append(el('p', { class: 'hint' }, opt.empty || '버튼을 누르면 매장 의견을 AI가 한눈에 정리해요. (10~30초)')); return; }
     btn.textContent = v.stale ? '🔄 새 평가 반영해서 다시 요약' : '🔄 다시 요약';
     const r = sm.result;
-    const sec = (t, list) => (list && list.length ? el('div', { class: 'ai-sec' }, el('b', {}, t), el('ul', {}, list.map((x) => el('li', {}, x)))) : '');
+    const sec = (t, list) => (list && list.length ? el('div', { class: 'ai-sec' }, el('b', {}, t), el('ul', {}, list.map((x) => el('li', {}, String(x).replace(/([·,/])/g, '$1\u200b'))))) : '');
     body.append(
       el('p', { class: 'ai-head' }, r.headline),
       el('div', { class: 'ai-grid' }, sec(titles[0], r.strengths), sec(titles[1], r.weaknesses), sec(titles[2], r.requests), sec(titles[3], r.actions)),
