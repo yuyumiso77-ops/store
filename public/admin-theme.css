@@ -69,3 +69,8 @@ body.admin .brand img { filter: none !important; }
 /* 숫자 카드만 담은 상자는 바깥 테두리를 없애 카드가 바로 보이게 (대시보드처럼) */
 body.admin .card:has(> .stats:first-child) { border: 0; padding: 0; background: none; }
 body.admin .card:has(> .stats:first-child) > .stats + * { margin-top: 12px; }
+/* 사진 확대 미리보기 */
+.peek { position: fixed; z-index: 60; pointer-events: none; background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 10px; box-shadow: 0 12px 32px rgba(17, 24, 39, .18); width: 280px; }
+.peek img { display: block; width: 100%; height: 260px; object-fit: contain; }
+.peek div { margin-top: 6px; font-size: .85rem; font-weight: 700; text-align: center; color: #111827; word-break: keep-all; }
+@media (hover: hover) { body.admin img:not(.brand img) { cursor: zoom-in; } }

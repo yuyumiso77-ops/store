@@ -1436,5 +1436,47 @@ $('addForm').onsubmit = async (e) => {
 };
 init();
 </script>
+<script>
+// ---- 작은 사진에 마우스를 올리면 옆에 크게 보여주기 (관리자 화면 전체, 로고·큰 사진 제외) ----
+(() => {
+  if (!matchMedia('(hover: hover)').matches) return; // 휴대폰 등 마우스 없는 기기는 그대로
+  let peek = null;
+  const isSmall = (im) => im.tagName === 'IMG' && !im.closest('.brand') && !im.closest('.peek') && im.clientWidth > 0 && im.clientWidth < 150 && im.clientHeight < 150;
+  const captionOf = (im) => {
+    if (im.alt) return im.alt;
+    const box = im.closest('.prow, .evrow, .sw, li, tr, .gres, .gitem-admin, .tile, .pc, .strow, .space-store, .card');
+    const b = box && box.querySelector('b, strong, .pname');
+    return b ? b.textContent.trim().slice(0, 60) : '';
+  };
+  const move = (e) => {
+    if (!peek) return;
+    const w = 302, h = peek.offsetHeight || 300, gap = 18;
+    let x = e.clientX + gap, y = e.clientY - h / 2;
+    if (x + w > innerWidth - 8) x = e.clientX - w - gap;
+    y = Math.max(8, Math.min(y, innerHeight - h - 8));
+    peek.style.left = x + 'px'; peek.style.top = y + 'px';
+  };
+  const hide = () => { if (peek) { peek.remove(); peek = null; } };
+  document.addEventListener('mouseover', (e) => {
+    const im = e.target;
+    if (!isSmall(im)) return;
+    hide();
+    peek = document.createElement('div');
+    peek.className = 'peek';
+    const big = document.createElement('img');
+    big.src = im.currentSrc || im.src; big.alt = '';
+    peek.append(big);
+    const cap = captionOf(im);
+    if (cap) { const d = document.createElement('div'); d.textContent = cap; peek.append(d); }
+    document.body.append(peek);
+    move(e);
+    const leave = () => { hide(); im.removeEventListener('mouseleave', leave); im.removeEventListener('mousemove', move); };
+    im.addEventListener('mousemove', move);
+    im.addEventListener('mouseleave', leave);
+  });
+  addEventListener('scroll', hide, { passive: true });
+  addEventListener('click', hide, true);
+})();
+</script>
 </body>
 </html>
